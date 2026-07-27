@@ -55,8 +55,8 @@ class Config:
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-    SECRET_KEY = "test-secret"
-    JWT_SECRET_KEY = "test-jwt-secret"
+    SECRET_KEY = "test-secret-key-for-pytest-only-0123456789"
+    JWT_SECRET_KEY = "test-jwt-secret-key-for-pytest-only-0123456789"
     # Deterministic Fernet key so tests never depend on the host environment.
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
