@@ -60,6 +60,29 @@ flask --app wsgi run --host 0.0.0.0 --port 5000
 Set `MONITORING_ENABLED=true` to start the 60-second polling scheduler. It is off
 by default so tests and one-off CLI commands never spawn background jobs.
 
+### AI provider
+
+The copilot defaults to **Gemini** — Flash-class models are cheap enough to leave
+enabled during a demo. Get a key at <https://aistudio.google.com/apikey> and set
+`AI_API_KEY`. The `google-genai` SDK is a normal dependency, so nothing extra is
+needed.
+
+| `AI_MODEL` | Notes |
+|---|---|
+| `gemini-2.5-flash-lite` | Cheapest; fine for this command-selection task |
+| `gemini-2.5-flash` | Default, better instruction-following |
+| `gemini-2.5-pro` | Only if the Flash models mis-read requests |
+
+Structured output is enforced by the API itself (`response_mime_type:
+application/json`), so parsing an `AIAction` does not depend on the model
+remembering to omit prose or code fences.
+
+To use Claude instead: `AI_PROVIDER=anthropic`, `AI_MODEL=claude-sonnet-5`, and
+`pip install "network-copilot[anthropic]"`.
+
+Without a key the API stays up and every non-AI endpoint works; `/api/ai/chat`
+answers `503 ai_not_configured` rather than failing as a server error.
+
 ## Verifying against the real lab
 
 Run this on the AI Server (management NIC `10.10.10.10/24`):
@@ -138,7 +161,8 @@ status alone and is what a client should branch on:
 |---|---|
 | 403 | `policy_violation` (the policy engine refused the command), `forbidden` (your role is not allowed) |
 | 409 | `invalid_state` (wrong change state), `conflict` (duplicate hostname or IP) |
-| 502 | `ssh_timeout`, `ssh_connection_error`, `ssh_authentication_error`, `device_unreachable` |
+| 502 | `ssh_timeout`, `ssh_connection_error`, `ssh_authentication_error`, `device_unreachable`, `ai_provider_error` |
+| 503 | `ai_not_configured` (no `AI_API_KEY`, or the provider SDK is missing) |
 
 ### Database path
 

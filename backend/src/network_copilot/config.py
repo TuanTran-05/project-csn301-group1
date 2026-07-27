@@ -65,8 +65,9 @@ class Config:
     RATELIMIT_ENABLED = _bool("RATELIMIT_ENABLED", True)
     RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
 
-    AI_PROVIDER = os.environ.get("AI_PROVIDER", "anthropic")
-    AI_MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5")
+    # Gemini Flash is the default: cheap enough to leave the copilot enabled.
+    AI_PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
+    AI_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
     AI_API_KEY = os.environ.get("AI_API_KEY")
 
     TESTING = False

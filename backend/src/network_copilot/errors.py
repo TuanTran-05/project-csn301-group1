@@ -61,6 +61,20 @@ class RateLimitError(AppError):
     error = "rate_limit_exceeded"
 
 
+class AIProviderNotConfiguredError(AppError):
+    """No usable AI provider. A misconfiguration, not a server fault."""
+
+    status_code = 503
+    error = "ai_not_configured"
+
+
+class AIProviderError(AppError):
+    """The upstream model service failed or refused the request."""
+
+    status_code = 502
+    error = "ai_provider_error"
+
+
 # Maps a bare HTTP status onto the shared JSON error contract.
 HTTP_ERROR_CODES = {
     400: "bad_request",
