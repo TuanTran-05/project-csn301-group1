@@ -8,3 +8,4 @@ htmlcov/
 .env
 *.db
 *.sqlite3
+instance/
