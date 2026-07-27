@@ -4,6 +4,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..auth.service import current_user, roles_required
 from ..errors import ValidationError
+from ..extensions import limiter
 from . import service
 from .schemas import ChangePreviewSchema
 
@@ -64,6 +65,7 @@ def approve(change_id: int):
 
 @bp.post("/<int:change_id>/apply")
 @roles_required("ADMIN")
+@limiter.limit("10 per minute")
 def apply(change_id: int):
     user = current_user()
     change = service.apply(change_id, user.id if user else None)

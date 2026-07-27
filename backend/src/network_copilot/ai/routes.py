@@ -4,6 +4,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..auth.service import current_user
 from ..errors import ValidationError
+from ..extensions import limiter
 from .schemas import ChatRequest
 from .service import AIService
 
@@ -12,6 +13,7 @@ bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 
 @bp.post("/chat")
 @jwt_required()
+@limiter.limit("20 per minute")
 def chat():
     try:
         data = ChatRequest.model_validate(request.get_json(silent=True) or {})

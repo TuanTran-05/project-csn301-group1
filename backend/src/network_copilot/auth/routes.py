@@ -2,12 +2,14 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
+from ..extensions import limiter
 from .service import authenticate, current_user, issue_token
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 
 @bp.post("/login")
+@limiter.limit("5 per minute", key_func=lambda: request.remote_addr or "anonymous")
 def login():
     payload = request.get_json(silent=True) or {}
     username = payload.get("username")

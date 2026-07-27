@@ -54,3 +54,36 @@ class DeviceConnectionError(AppError):
 class InvalidStateError(AppError):
     status_code = 409
     error = "invalid_state"
+
+
+class RateLimitError(AppError):
+    status_code = 429
+    error = "rate_limit_exceeded"
+
+
+# Maps a bare HTTP status onto the shared JSON error contract.
+HTTP_ERROR_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "validation_error",
+    429: "rate_limit_exceeded",
+    500: "internal_error",
+    502: "bad_gateway",
+    503: "service_unavailable",
+}
+
+
+def error_payload(status_code: int, message: str, details: dict | None = None) -> dict:
+    payload = {
+        "error": HTTP_ERROR_CODES.get(status_code, "error"),
+        "message": message,
+    }
+    if details:
+        payload["details"] = details
+    return payload
