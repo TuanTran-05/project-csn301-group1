@@ -93,6 +93,164 @@ def test_interpret_rejects_malformed_model_output(app, admin_user):
         service.interpret("hello", admin_user.id)
 
 
+# -- tolerating real model output ----------------------------------------
+# Even with response_mime_type=application/json, models sometimes emit more
+# than one JSON value or wrap the object in prose. Always take the first
+# complete object: merging several proposed actions would be unsafe.
+
+
+def test_interpret_takes_the_first_of_two_concatenated_objects(app, admin_user):
+    import json as _json
+
+    payload = _json.dumps(MONITOR_ACTION) + "\n" + _json.dumps(CONFIGURE_ACTION)
+    service, _ = service_with(app, payload)
+    action = service.interpret("hello", admin_user.id)
+    assert action.intent == "monitor"
+    assert action.device_hostname == "DIST-SW1"
+
+
+def test_interpret_ignores_trailing_prose(app, admin_user):
+    import json as _json
+
+    service, _ = service_with(
+        app, _json.dumps(MONITOR_ACTION) + "\n\nHy vong dieu nay huu ich!"
+    )
+    assert service.interpret("hello", admin_user.id).intent == "monitor"
+
+
+def test_interpret_ignores_leading_prose(app, admin_user):
+    import json as _json
+
+    service, _ = service_with(
+        app, "Day la ke hoach cua toi:\n" + _json.dumps(MONITOR_ACTION)
+    )
+    assert service.interpret("hello", admin_user.id).intent == "monitor"
+
+
+def test_interpret_handles_a_fenced_object_with_trailing_text(app, admin_user):
+    import json as _json
+
+    service, _ = service_with(
+        app, "```json\n" + _json.dumps(MONITOR_ACTION) + "\n```\nDone."
+    )
+    assert service.interpret("hello", admin_user.id).intent == "monitor"
+
+
+def test_interpret_preserves_nested_objects(app, admin_user):
+    import json as _json
+
+    nested = dict(MONITOR_ACTION, explanation="see {details} here")
+    service, _ = service_with(app, _json.dumps(nested) + _json.dumps(CONFIGURE_ACTION))
+    action = service.interpret("hello", admin_user.id)
+    assert action.explanation == "see {details} here"
+
+
+def test_interpret_rejects_a_json_array(app, admin_user):
+    service, _ = service_with(app, '[{"intent": "monitor"}]')
+    with pytest.raises(ValidationError):
+        service.interpret("hello", admin_user.id)
+
+
+def test_interpret_rejects_an_empty_response(app, admin_user):
+    service, _ = service_with(app, "")
+    with pytest.raises(ValidationError):
+        service.interpret("hello", admin_user.id)
+
+
+# -- the model declining the request --------------------------------------
+# A good model refuses a dangerous request itself and answers with no
+# commands. That is not a schema fault, and saying so confuses the operator.
+
+DECLINED_ACTION = {
+    "intent": "monitor",
+    "device_hostname": "ACC-SW1",
+    "commands": [],
+    "verification_commands": [],
+    "explanation": "Lenh 'write erase' khong duoc ho tro vi no xoa cau hinh.",
+}
+
+
+def test_interpret_retries_once_when_the_model_returns_broken_json(
+    app, dist_switch, admin_user
+):
+    """Observed with gemini-3.5-flash: a response occasionally repeats a
+    fragment and stops being valid JSON. One retry clears it."""
+    import json as _json
+
+    provider = FakeAIProvider(responses=['{"broken', _json.dumps(MONITOR_ACTION)])
+    action = AIService(provider=provider).interpret("hello", admin_user.id)
+    assert action.intent == "monitor"
+    assert provider.calls == 2
+
+
+def test_interpret_gives_up_after_one_retry(app, admin_user):
+    provider = FakeAIProvider(responses=['{"broken', '{"still broken'])
+    with pytest.raises(ValidationError):
+        AIService(provider=provider).interpret("hello", admin_user.id)
+    assert provider.calls == 2
+
+
+def test_a_valid_response_is_never_retried(app, dist_switch, admin_user):
+    provider = FakeAIProvider(responses=MONITOR_ACTION)
+    AIService(provider=provider).interpret("hello", admin_user.id)
+    assert provider.calls == 1
+
+
+def test_a_declined_request_is_not_retried(app, access_switch, admin_user):
+    """A refusal is a real answer. Asking again just costs money."""
+    provider = FakeAIProvider(
+        responses={
+            "intent": "monitor",
+            "device_hostname": "ACC-SW1",
+            "commands": [],
+            "verification_commands": [],
+            "explanation": "Khong ho tro lenh nay.",
+        }
+    )
+    with pytest.raises(ValidationError):
+        AIService(provider=provider).interpret("write erase", admin_user.id)
+    assert provider.calls == 1
+
+
+def test_declined_request_reports_the_models_reason(app, access_switch, admin_user):
+    service, _ = service_with(app, DECLINED_ACTION)
+    with pytest.raises(ValidationError) as exc:
+        service.interpret("write erase tren ACC-SW1", admin_user.id)
+    assert "khong duoc ho tro" in exc.value.message
+
+
+def test_declined_request_is_not_reported_as_a_schema_fault(
+    app, access_switch, admin_user
+):
+    service, _ = service_with(app, DECLINED_ACTION)
+    with pytest.raises(ValidationError) as exc:
+        service.interpret("write erase tren ACC-SW1", admin_user.id)
+    assert "schema" not in exc.value.message.lower()
+
+
+def test_declined_request_never_touches_a_device(
+    app, access_switch, admin_user, ssh_factory
+):
+    fake = ssh_factory.set_client(access_switch.hostname)
+    service, _ = service_with(app, DECLINED_ACTION)
+    with pytest.raises(ValidationError):
+        service.handle("write erase tren ACC-SW1", admin_user.id)
+    assert fake.calls == []
+
+
+def test_chat_endpoint_reports_a_declined_request_as_422(
+    client, admin_headers, app, access_switch
+):
+    from fakes.fake_ai_provider import FakeAIProvider as _Fake
+
+    app.config["AI_PROVIDER_INSTANCE"] = _Fake(responses=DECLINED_ACTION)
+    response = client.post(
+        "/api/ai/chat", headers=admin_headers, json={"message": "write erase ACC-SW1"}
+    )
+    assert response.status_code == 422
+    assert "khong duoc ho tro" in response.get_json()["message"]
+
+
 def test_interpret_rejects_an_incomplete_action(app, admin_user):
     service, _ = service_with(app, {"intent": "monitor"})
     with pytest.raises(ValidationError):

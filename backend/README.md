@@ -70,12 +70,24 @@ needed.
 | `AI_MODEL` | Notes |
 |---|---|
 | `gemini-2.5-flash-lite` | Cheapest; fine for this command-selection task |
-| `gemini-2.5-flash` | Default, better instruction-following |
+| `gemini-2.5-flash` | Default |
+| `gemini-3.5-flash` | Verified against the lab inventory |
 | `gemini-2.5-pro` | Only if the Flash models mis-read requests |
 
-Structured output is enforced by the API itself (`response_mime_type:
-application/json`), so parsing an `AIAction` does not depend on the model
-remembering to omit prose or code fences.
+Three settings make the copilot reliable, and were each chosen from measurements
+against `gemini-3.5-flash`, not from taste:
+
+- **`response_schema`** — asking only for `response_mime_type: application/json`
+  was not enough: responses occasionally repeated a fragment mid-string and
+  stopped being parseable. A schema constrains decoding, so the shape is a
+  guarantee.
+- **Thinking disabled** for command selection. With it on, 1 response in 4 was
+  unparseable and every call burned 190–315 extra tokens. Off, the answer is
+  byte-identical across runs. Free-text troubleshooting analysis still allows
+  thinking, where reasoning actually helps. A model that refuses to disable
+  thinking (`gemini-2.5-pro`) is retried once without the setting.
+- **One retry** when a response still fails to parse. A refusal is never
+  retried: it is a real answer, and asking again only costs money.
 
 To use Claude instead: `AI_PROVIDER=anthropic`, `AI_MODEL=claude-sonnet-5`, and
 `pip install "network-copilot[anthropic]"`.
@@ -196,9 +208,31 @@ src/network_copilot/
 └── ai/               # provider, AIAction schema, copilot service
 ```
 
+## Lab inventory
+
+`scripts/seed_lab.py` seeds these nine devices. **The hostnames must match the
+device hostnames in PNETLab exactly** — the copilot resolves a device by
+hostname, so a mismatch fails the request.
+
+| Hostname | Management IP | Role |
+|---|---|---|
+| `ISP-RTR` | 10.10.10.4 | isp |
+| `FW-01` | 10.10.10.3 | firewall |
+| `INTERNAL-RTR` | 10.10.10.11 | core |
+| `DIST-SW1` | 10.10.10.21 | distribution |
+| `DIST-SW2` | 10.10.10.22 | distribution |
+| `ACC-SW1` | 10.10.10.31 | access |
+| `ACC-SW2` | 10.10.10.32 | access |
+| `ACC-SW3` | 10.10.10.33 | access |
+| `DMZ-SW` | 10.10.10.34 | dmz |
+
+`INTERNAL-RTR` is a router that fills the `core` role in this topology. Role
+drives behaviour, not the device type: monitoring polls OSPF on core and
+distribution devices, and VLANs on access and distribution ones.
+
 ## Demo script
 
-1. Backend SSHes into `CORE-SW1`.
+1. Backend SSHes into `INTERNAL-RTR`.
 2. `show ip interface brief` returns output.
 3. Monitoring stores a snapshot.
 4. "Kiểm tra OSPF của DIST-SW1" runs a read-only command.

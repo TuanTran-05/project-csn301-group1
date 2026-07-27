@@ -161,6 +161,56 @@ def test_gemini_complete_includes_the_context_and_message():
     assert "devices" in contents
 
 
+# -- server-side schema enforcement ---------------------------------------
+# response_mime_type alone still let gemini-3.5-flash emit a repeated fragment
+# mid-string. A response_schema constrains decoding, so the shape is guaranteed.
+
+
+def test_gemini_passes_the_response_schema_through():
+    fake = FakeGenaiClient()
+    schema = {"type": "OBJECT", "properties": {"intent": {"type": "STRING"}}}
+    gemini_with(fake).complete("sys", "hi", {}, schema=schema)
+    assert fake.models.calls[0]["config"]["response_schema"] == schema
+
+
+def test_gemini_omits_the_schema_when_none_is_given():
+    fake = FakeGenaiClient()
+    gemini_with(fake).complete("sys", "hi", {})
+    assert "response_schema" not in fake.models.calls[0]["config"]
+
+
+def test_the_action_schema_matches_the_ai_action_model():
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction
+
+    properties = AI_ACTION_SCHEMA["properties"]
+    assert set(properties) == set(AIAction.model_fields)
+    assert properties["intent"]["enum"] == ["monitor", "configure", "troubleshoot"]
+    assert properties["commands"]["type"] == "ARRAY"
+    assert set(AI_ACTION_SCHEMA["required"]) == {
+        "intent",
+        "device_hostname",
+        "commands",
+        "explanation",
+    }
+
+
+def test_interpret_asks_the_provider_to_enforce_the_schema(app, dist_switch, admin_user):
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
+    from network_copilot.ai.service import AIService
+
+    provider = FakeAIProvider(
+        responses={
+            "intent": "monitor",
+            "device_hostname": "DIST-SW1",
+            "commands": ["show ip route"],
+            "verification_commands": [],
+            "explanation": "x",
+        }
+    )
+    AIService(provider=provider).interpret("hello", admin_user.id)
+    assert provider.prompts[0]["schema"] == AI_ACTION_SCHEMA
+
+
 def test_gemini_explain_does_not_force_json():
     fake = FakeGenaiClient(text="OSPF looks healthy.")
     result = gemini_with(fake).explain("sys", "why", {"diagnostics": []})
@@ -172,6 +222,65 @@ def test_gemini_uses_a_deterministic_temperature():
     fake = FakeGenaiClient()
     gemini_with(fake).complete("sys", "hi", {})
     assert fake.models.calls[0]["config"]["temperature"] == 0
+
+
+# -- thinking is off for command selection --------------------------------
+# Measured against gemini-3.5-flash: with thinking on, 1 in 4 responses was
+# unparseable and each call burned 190-315 thinking tokens. With it off the
+# response is byte-identical every time and costs nothing extra.
+
+
+def test_gemini_disables_thinking_for_structured_output():
+    fake = FakeGenaiClient()
+    gemini_with(fake).complete("sys", "hi", {})
+    assert fake.models.calls[0]["config"]["thinking_config"] == {"thinking_budget": 0}
+
+
+def test_gemini_allows_thinking_for_free_text_analysis():
+    fake = FakeGenaiClient(text="analysis")
+    gemini_with(fake).explain("sys", "why", {})
+    assert "thinking_config" not in fake.models.calls[0]["config"]
+
+
+def test_gemini_leaves_headroom_above_the_thinking_budget():
+    fake = FakeGenaiClient()
+    gemini_with(fake).complete("sys", "hi", {})
+    assert fake.models.calls[0]["config"]["max_output_tokens"] >= 2048
+
+
+class PickyModels(FakeModels):
+    """Rejects thinking_config, like a model that cannot disable thinking."""
+
+    def generate_content(self, model, contents, config):
+        if "thinking_config" in config:
+            self.calls.append({"model": model, "contents": contents, "config": config})
+            raise ValueError("thinking_budget is not supported for this model")
+        return super().generate_content(model, contents, config)
+
+
+class PickyClient:
+    def __init__(self, text='{"ok": true}'):
+        self.models = PickyModels(text)
+
+
+def test_gemini_retries_without_thinking_config_when_rejected():
+    fake = PickyClient()
+    result = GeminiProvider(
+        "test-key", "gemini-2.5-pro", client_factory=lambda: fake
+    ).complete("sys", "hi", {})
+
+    assert result == '{"ok": true}'
+    assert len(fake.models.calls) == 2
+    assert "thinking_config" in fake.models.calls[0]["config"]
+    assert "thinking_config" not in fake.models.calls[1]["config"]
+
+
+def test_gemini_gives_up_when_the_retry_also_fails():
+    fake = FakeGenaiClient(raise_with=RuntimeError("503 unavailable"))
+    with pytest.raises(AIProviderError):
+        gemini_with(fake).complete("sys", "hi", {})
+    # One attempt with thinking disabled, one without.
+    assert len(fake.models.calls) == 2
 
 
 def test_gemini_handles_an_empty_response():
@@ -210,7 +319,7 @@ def test_chat_endpoint_surfaces_provider_failure_as_502(
     client, admin_headers, app, dist_switch
 ):
     class BrokenProvider:
-        def complete(self, system_prompt, user_message, context):
+        def complete(self, system_prompt, user_message, context, schema=None):
             raise AIProviderError("The AI provider is unavailable.")
 
         def explain(self, system_prompt, user_message, context):

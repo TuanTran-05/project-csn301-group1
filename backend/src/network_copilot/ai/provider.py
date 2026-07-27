@@ -15,14 +15,30 @@ from ..errors import AIProviderError, AIProviderNotConfiguredError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_TOKENS = 2048
 # The model must choose between a small set of known commands, not be creative.
 DEFAULT_TEMPERATURE = 0
 
+# Thinking models spend output budget on reasoning before answering. For
+# picking one command off an allowlist that buys nothing: measured against
+# gemini-3.5-flash, leaving it on made 1 in 4 responses unparseable and cost
+# 190-315 extra tokens per call. Disabled, the answer is identical every time.
+NO_THINKING = {"thinking_budget": 0}
+
 
 class AIProvider(Protocol):
-    def complete(self, system_prompt: str, user_message: str, context: dict) -> str:
-        """Return a JSON string matching AIAction."""
+    def complete(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        schema: dict | None = None,
+    ) -> str:
+        """Return a JSON string matching AIAction.
+
+        ``schema`` lets a provider constrain decoding server-side. Providers
+        that cannot do that ignore it; the response is validated either way.
+        """
 
     def explain(self, system_prompt: str, user_message: str, context: dict) -> str:
         """Return free-text analysis of already collected diagnostics."""
@@ -66,7 +82,12 @@ class GeminiProvider:
         return self._client
 
     def _generate(
-        self, system_prompt: str, user_message: str, context: dict, json_mode: bool
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        json_mode: bool,
+        schema: dict | None = None,
     ) -> str:
         config = {
             "system_instruction": system_prompt,
@@ -77,13 +98,13 @@ class GeminiProvider:
             # Ask the API itself to guarantee JSON, so AIAction parsing does not
             # depend on the model remembering to skip prose or code fences.
             config["response_mime_type"] = "application/json"
+            config["thinking_config"] = dict(NO_THINKING)
+            if schema is not None:
+                config["response_schema"] = schema
 
+        contents = _build_prompt(user_message, context)
         try:
-            response = self._get_client().models.generate_content(
-                model=self.model,
-                contents=_build_prompt(user_message, context),
-                config=config,
-            )
+            response = self._call(contents, config)
         except AIProviderNotConfiguredError:
             raise
         except Exception as exc:
@@ -96,8 +117,35 @@ class GeminiProvider:
 
         return response.text or ""
 
-    def complete(self, system_prompt: str, user_message: str, context: dict) -> str:
-        return self._generate(system_prompt, user_message, context, json_mode=True)
+    def _call(self, contents: str, config: dict):
+        client = self._get_client()
+        try:
+            return client.models.generate_content(
+                model=self.model, contents=contents, config=config
+            )
+        except Exception:
+            if "thinking_config" not in config:
+                raise
+            # Some models (gemini-2.5-pro among them) refuse to disable
+            # thinking. Retry once without it rather than failing the request.
+            logger.warning(
+                "%s rejected thinking_config; retrying without it.", self.model
+            )
+            retry = {k: v for k, v in config.items() if k != "thinking_config"}
+            return client.models.generate_content(
+                model=self.model, contents=contents, config=retry
+            )
+
+    def complete(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        schema: dict | None = None,
+    ) -> str:
+        return self._generate(
+            system_prompt, user_message, context, json_mode=True, schema=schema
+        )
 
     def explain(self, system_prompt: str, user_message: str, context: dict) -> str:
         return self._generate(system_prompt, user_message, context, json_mode=False)
@@ -158,7 +206,15 @@ class AnthropicProvider:
             if getattr(block, "type", "") == "text"
         )
 
-    def complete(self, system_prompt: str, user_message: str, context: dict) -> str:
+    def complete(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        schema: dict | None = None,
+    ) -> str:
+        # Claude has no server-side schema enforcement here; the schema is
+        # already described in the system prompt and validated on the way back.
         return self._message(system_prompt, user_message, context)
 
     def explain(self, system_prompt: str, user_message: str, context: dict) -> str:
@@ -173,7 +229,13 @@ class NullProvider:
         "/api/ai/chat. Every other endpoint works without it."
     )
 
-    def complete(self, system_prompt: str, user_message: str, context: dict) -> str:
+    def complete(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        schema: dict | None = None,
+    ) -> str:
         raise AIProviderNotConfiguredError(self.MESSAGE)
 
     def explain(self, system_prompt: str, user_message: str, context: dict) -> str:

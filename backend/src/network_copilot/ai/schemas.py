@@ -19,6 +19,25 @@ class AIAction(BaseModel):
     explanation: str
 
 
+# Sent to providers that can constrain decoding server-side. Asking only for
+# "some JSON" was not enough: gemini-3.5-flash still produced a repeated
+# fragment mid-string. A schema makes the shape a guarantee, not a request.
+AI_ACTION_SCHEMA = {
+    "type": "OBJECT",
+    "required": ["intent", "device_hostname", "commands", "explanation"],
+    "properties": {
+        "intent": {
+            "type": "STRING",
+            "enum": ["monitor", "configure", "troubleshoot"],
+        },
+        "device_hostname": {"type": "STRING"},
+        "commands": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "verification_commands": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "explanation": {"type": "STRING"},
+    },
+}
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

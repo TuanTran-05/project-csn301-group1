@@ -28,7 +28,7 @@ from ..errors import ForbiddenError, PolicyViolationError, ValidationError
 from ..extensions import db
 from ..parsers import parse_command_output
 from .provider import build_provider
-from .schemas import AIAction
+from .schemas import AI_ACTION_SCHEMA, AIAction
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +55,21 @@ Reply with a single JSON object and nothing else. The schema is:
 }
 
 Rules:
-- Use "monitor" when the user wants to read state. Use only commands listed in
-  supported_commands.
-- Use "configure" only for the changes listed in supported_actions. Wrap them in
-  "configure terminal" ... "end".
-- Use "troubleshoot" when the user reports a problem. Propose read-only
-  diagnostic commands only.
+- "commands" is what will actually be run. It must never be empty.
+- "verification_commands" is only meaningful for "configure": read-only commands
+  that prove the change landed. Leave it empty for other intents.
+- Use "monitor" when the user wants to read state. Put the read-only commands in
+  "commands", using only entries from supported_commands.
+- Use "configure" only for the changes listed in supported_actions. Put them in
+  "commands", wrapped in "configure terminal" ... "end".
+- Use "troubleshoot" when the user reports a problem. Put the read-only
+  diagnostic commands in "commands" too, not in "verification_commands".
 - Never propose commands that erase, reload, format, debug or otherwise disrupt
   a device. They will be rejected.
-- The user may write in Vietnamese or English. Reply with JSON either way.
+- If you cannot answer with a supported command, return an empty "commands" list
+  and explain why in "explanation".
+- The user may write in Vietnamese or English. Reply with JSON either way, and
+  keep "explanation" to a single short sentence.
 """
 
 EXPLAIN_PROMPT = """You are a network operations assistant for a Cisco lab.
@@ -112,19 +118,29 @@ class AIService:
     # -- interpret --------------------------------------------------------
     @staticmethod
     def _extract_json(raw: str) -> dict:
+        """Pull the first complete JSON object out of a model response.
+
+        Models wrap the object in prose or code fences, and sometimes emit two
+        objects back to back, even when the API is asked for JSON. Only the
+        first one is honoured: silently merging several proposed actions would
+        mean running commands the user never saw.
+        """
         text = (raw or "").strip()
         fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
         if fenced is not None:
             text = fenced.group(1).strip()
-        if not text.startswith("{"):
-            start, end = text.find("{"), text.rfind("}")
-            if start == -1 or end == -1:
-                raise ValidationError("The AI response was not valid JSON.")
-            text = text[start : end + 1]
+
+        start = text.find("{")
+        if start == -1:
+            raise ValidationError("The AI response did not contain a JSON object.")
+
         try:
-            payload = json.loads(text)
+            # raw_decode stops at the end of the first value, so trailing prose
+            # or a second object does not invalidate the response.
+            payload, _end = json.JSONDecoder().raw_decode(text[start:])
         except json.JSONDecodeError as exc:
             raise ValidationError("The AI response was not valid JSON.") from exc
+
         if not isinstance(payload, dict):
             raise ValidationError("The AI response was not a JSON object.")
         return payload
@@ -132,8 +148,31 @@ class AIService:
     def interpret(self, message: str, user_id: int | None) -> AIAction:
         """Ask the model for a structured action. No side effects."""
         context = self.build_context()
-        raw = self.provider.complete(SYSTEM_PROMPT, message, context)
-        payload = self._extract_json(raw)
+
+        # Models occasionally emit malformed JSON (a repeated fragment, a
+        # truncated string). That is transient, so retry once. A well-formed
+        # refusal below is a real answer and is never retried.
+        payload = None
+        for attempt in range(2):
+            raw = self.provider.complete(
+                SYSTEM_PROMPT, message, context, schema=AI_ACTION_SCHEMA
+            )
+            try:
+                payload = self._extract_json(raw)
+                break
+            except ValidationError:
+                if attempt:
+                    raise
+                logger.warning("AI returned unparseable output; retrying once.")
+
+        # A capable model refuses a dangerous or unsupported request itself and
+        # answers with no commands. Surface its reason instead of a schema
+        # complaint, which reads like a backend fault.
+        if isinstance(payload.get("commands"), list) and not payload["commands"]:
+            raise ValidationError(
+                payload.get("explanation")
+                or "The AI could not map that request to a supported action."
+            )
 
         try:
             return AIAction(**payload)

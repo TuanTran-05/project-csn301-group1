@@ -15,12 +15,19 @@ class FakeAIProvider:
         self.prompts: list[dict] = []
         self.calls = 0
 
-    def complete(self, system_prompt: str, user_message: str, context: dict) -> str:
+    def complete(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context: dict,
+        schema: dict | None = None,
+    ) -> str:
         self.prompts.append(
             {
                 "system_prompt": system_prompt,
                 "user_message": user_message,
                 "context": context,
+                "schema": schema,
             }
         )
         self.calls += 1
