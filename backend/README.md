@@ -95,6 +95,97 @@ To use Claude instead: `AI_PROVIDER=anthropic`, `AI_MODEL=claude-sonnet-5`, and
 Without a key the API stays up and every non-AI endpoint works; `/api/ai/chat`
 answers `503 ai_not_configured` rather than failing as a server error.
 
+## Deploying to the AI Server node
+
+The AI Server is a Linux node inside PNETLab. `scripts/setup_ai_server.sh`
+handles the software side; the network side is manual.
+
+### 1. Pick a node image with Python 3.11+
+
+```bash
+python3 --version
+```
+
+The backend uses `X | None` annotations that Pydantic evaluates at runtime, so
+**3.10 fails at import**. Ubuntu 22.04 ships 3.10 — use Ubuntu 24.04 (3.12) or
+Debian 12 (3.11), or install `python3.11` alongside. The setup script checks
+this first and refuses to continue rather than failing later in a confusing way.
+
+### 2. Interfaces
+
+| NIC | Network | Address | Gateway |
+|---|---|---|---|
+| 1 | management (`MGMT-NET` bridge) | `10.10.10.10/24` | **none** |
+| 2 | production | `10.10.70.20/24` | `10.10.70.1` |
+| 3 | temporary: `Cloud0`/`pnet0` for package installs | DHCP | — |
+
+The management NIC has no gateway on purpose: every device sits in the same
+broadcast domain, so nothing needs routing.
+
+Check the real interface names with `ip link` — they are often `ens3/ens4/ens5`,
+not `eth0`. Then, on Ubuntu, `/etc/netplan/01-lab.yaml`:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    ens3:
+      dhcp4: true          # temporary, for installing packages
+    ens4:
+      dhcp4: false
+      addresses: [10.10.10.10/24]
+    ens5:
+      dhcp4: false
+      addresses: [10.10.70.20/24]
+      routes:
+        - to: default
+          via: 10.10.70.1
+```
+
+```bash
+sudo netplan apply
+```
+
+Detach NIC 3 once setup is done. Leaving it attached gives the node two default
+routes — the DHCP one and the production one — and traffic then follows
+whichever won, which is not something you want to debug mid-demo.
+
+### 3. Copy the code
+
+`git archive` ships exactly the committed files, so `.venv`, `.env` and the
+database are all left behind automatically. From the project root on your
+workstation:
+
+```bash
+git archive --format=tar.gz -o network-copilot.tar.gz HEAD
+```
+
+```bash
+scp network-copilot.tar.gz user@<node-ip>:~/
+```
+
+Then on the node:
+
+```bash
+mkdir -p ~/network-copilot && tar -xzf ~/network-copilot.tar.gz -C ~/network-copilot
+```
+
+### 4. Run setup
+
+```bash
+cd ~/network-copilot/backend && ./scripts/setup_ai_server.sh
+```
+
+It verifies the interpreter, builds the virtualenv, installs dependencies,
+writes a `.env` with freshly generated keys (mode 600), applies migrations and
+runs the test suite. It stops before seeding and lists what you still need to
+fill in — passwords are yours to choose, so it never invents them.
+
+`.env` is deliberately not transferred: the node generates its own keys. If you
+want to reuse a database seeded elsewhere, copy that `CREDENTIAL_ENCRYPTION_KEY`
+across as well, or the stored device passwords cannot be decrypted. Re-seeding
+is usually simpler.
+
 ## Verifying against the real lab
 
 Run this on the AI Server (management NIC `10.10.10.10/24`):
