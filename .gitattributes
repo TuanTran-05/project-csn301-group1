@@ -1,0 +1,10 @@
+# Shell scripts run on the Linux AI Server node. A CRLF line ending there makes
+# the shebang read as "/usr/bin/env bash\r", which fails with a bad-interpreter
+# error that does not mention line endings at all. Always store and check these
+# out as LF, whatever the developer's platform does.
+*.sh text eol=lf
+
+# Same reasoning for anything else executed by a POSIX shell or interpreter.
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
