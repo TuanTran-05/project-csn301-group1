@@ -41,3 +41,22 @@ def update_device(device_id: int):
 def delete_device(device_id: int):
     service.delete_device(device_id)
     return "", 204
+
+
+@bp.post("/<int:device_id>/test-connection")
+@roles_required("ADMIN")
+def test_connection(device_id: int):
+    device = service.get_device(device_id)
+    reachable, detail = service.check_reachability(device)
+    return (
+        jsonify(
+            {
+                "device_id": device.id,
+                "hostname": device.hostname,
+                "reachable": reachable,
+                "status": device.status,
+                "detail": detail,
+            }
+        ),
+        200,
+    )

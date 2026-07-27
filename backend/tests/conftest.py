@@ -6,6 +6,8 @@ from network_copilot.config import TestConfig
 from network_copilot.devices.model import Device
 from network_copilot.extensions import db as _db
 
+from fakes.fake_ssh_client import FakeSSHClient
+
 ADMIN_PASSWORD = "StrongPass123!"
 VIEWER_PASSWORD = "ViewerPass123!"
 
@@ -46,6 +48,42 @@ def admin_user(app):
 @pytest.fixture
 def viewer_user(app):
     return _create_user("viewer", VIEWER_PASSWORD, "VIEWER")
+
+
+class SSHFactoryStub:
+    """Registry of FakeSSHClient instances keyed by device hostname.
+
+    Installed as the app's SSH_CLIENT_FACTORY so no test ever opens a socket.
+    """
+
+    def __init__(self):
+        self.clients: dict[str, FakeSSHClient] = {}
+        self.default: FakeSSHClient | None = None
+
+    def __call__(self, device):
+        client = self.clients.get(device.hostname, self.default)
+        if client is None:
+            client = FakeSSHClient()
+            self.clients[device.hostname] = client
+        return client
+
+    def set_client(self, hostname: str, **kwargs) -> FakeSSHClient:
+        client = FakeSSHClient(**kwargs)
+        self.clients[hostname] = client
+        return client
+
+    def set_failing(self, hostname: str, error: Exception) -> FakeSSHClient:
+        return self.set_client(hostname, fail_with=error)
+
+    def get(self, hostname: str) -> FakeSSHClient:
+        return self.clients[hostname]
+
+
+@pytest.fixture
+def ssh_factory(app):
+    factory = SSHFactoryStub()
+    app.config["SSH_CLIENT_FACTORY"] = factory
+    return factory
 
 
 def _auth_headers(client, username: str, password: str) -> dict[str, str]:

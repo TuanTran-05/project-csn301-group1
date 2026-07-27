@@ -104,3 +104,27 @@ def set_device_status(device: Device, status: str) -> Device:
         device.last_seen_at = datetime.now(timezone.utc)
     db.session.commit()
     return device
+
+
+def check_reachability(device: Device) -> tuple[bool, str]:
+    """SSH into the device and record the resulting online/offline status.
+
+    Returns (reachable, human readable detail). The detail never contains
+    credentials because SSH errors only ever reference user@host:port.
+    """
+    from ..errors import AppError
+    from ..ssh.client import build_client_for_device
+
+    try:
+        client = build_client_for_device(device)
+        reachable = bool(client.test_connection())
+    except AppError as exc:
+        set_device_status(device, "offline")
+        return False, exc.message
+    except Exception:  # pragma: no cover - unexpected transport failure
+        set_device_status(device, "offline")
+        return False, "SSH connection failed."
+
+    set_device_status(device, "online" if reachable else "offline")
+    detail = "SSH connection succeeded." if reachable else "SSH connection failed."
+    return reachable, detail
