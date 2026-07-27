@@ -16,6 +16,7 @@ from typing import Callable
 
 import logging
 
+from ..audit.service import record_event
 from ..devices import service as device_service
 from ..devices.model import Device
 from ..errors import (
@@ -319,6 +320,20 @@ def create_preview(
     )
     db.session.add(change)
     db.session.commit()
+
+    record_event(
+        action="change.preview",
+        result="success",
+        user_id=user_id,
+        device_id=device.id,
+        message=description,
+        details={
+            "change_id": change.id,
+            "commands": canonical,
+            "risk_level": change.risk_level,
+            "source": source,
+        },
+    )
     return change
 
 
@@ -378,6 +393,13 @@ def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     change.approved_by_id = user_id
     change.approved_at = _now()
     db.session.commit()
+    record_event(
+        action="change.approve",
+        result="success",
+        user_id=user_id,
+        device_id=change.device_id,
+        details={"change_id": change.id, "risk_level": change.risk_level},
+    )
     return change
 
 
@@ -389,6 +411,13 @@ def cancel(change_id: int, user_id: int | None) -> ChangeRequest:
         )
     change.status = "cancelled"
     db.session.commit()
+    record_event(
+        action="change.cancel",
+        result="success",
+        user_id=user_id,
+        device_id=change.device_id,
+        details={"change_id": change.id},
+    )
     return change
 
 
@@ -483,12 +512,23 @@ def run_verification(change: ChangeRequest, client) -> tuple[bool, dict]:
 # -- apply ----------------------------------------------------------------
 
 
-def _fail(change: ChangeRequest, message: str) -> ChangeRequest:
+def _fail(change: ChangeRequest, message: str, user_id: int | None = None) -> ChangeRequest:
     change.status = "failed"
     change.error_message = message[:512]
     change.applied_at = _now()
     db.session.commit()
     logger.warning("Change %s failed: %s", change.id, message)
+    record_event(
+        action="change.apply",
+        result="failure",
+        user_id=user_id if user_id is not None else change.approved_by_id,
+        device_id=change.device_id,
+        message=message,
+        details={
+            "change_id": change.id,
+            "rollback_commands": change.rollback_commands or [],
+        },
+    )
     return change
 
 
@@ -512,7 +552,7 @@ def apply(change_id: int, user_id: int | None) -> ChangeRequest:
     try:
         client = build_client_for_device(device)
     except Exception as exc:  # pragma: no cover - missing credentials etc.
-        return _fail(change, f"Could not open an SSH session: {exc}")
+        return _fail(change, f"Could not open an SSH session: {exc}", user_id)
 
     # 1. Backup first. Without it, nothing is configured.
     try:
@@ -520,7 +560,7 @@ def apply(change_id: int, user_id: int | None) -> ChangeRequest:
         change.backup_id = backup.id
         db.session.commit()
     except SSHError as exc:
-        return _fail(change, f"Pre-change backup failed: {exc.message}")
+        return _fail(change, f"Pre-change backup failed: {exc.message}", user_id)
 
     # 2. Push the configuration.
     try:
@@ -528,14 +568,14 @@ def apply(change_id: int, user_id: int | None) -> ChangeRequest:
         change.apply_output = result.output
         db.session.commit()
     except SSHError as exc:
-        return _fail(change, f"Applying configuration failed: {exc.message}")
+        return _fail(change, f"Applying configuration failed: {exc.message}", user_id)
 
     # 3. Verify on the device itself.
     try:
         passed, results = run_verification(change, client)
     except SSHError as exc:
         change.verification_output = None
-        return _fail(change, f"Verification could not run: {exc.message}")
+        return _fail(change, f"Verification could not run: {exc.message}", user_id)
 
     change.verification_output = results
     if not passed:
@@ -543,6 +583,7 @@ def apply(change_id: int, user_id: int | None) -> ChangeRequest:
             change,
             "Verification failed; the device does not reflect the requested change. "
             "Review rollback_commands and apply them manually if required.",
+            user_id,
         )
 
     change.status = "success"
@@ -551,4 +592,16 @@ def apply(change_id: int, user_id: int | None) -> ChangeRequest:
     db.session.commit()
     device_service.set_device_status(device, "online")
     logger.info("Change %s applied and verified on %s.", change.id, device.hostname)
+    record_event(
+        action="change.apply",
+        result="success",
+        user_id=user_id,
+        device_id=change.device_id,
+        details={
+            "change_id": change.id,
+            "commands": change.commands or [],
+            "backup_id": change.backup_id,
+            "verification_commands": change.verification_commands or [],
+        },
+    )
     return change

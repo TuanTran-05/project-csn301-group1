@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
+from ..audit.service import record_event
 from .service import authenticate, current_user, issue_token
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -25,11 +26,25 @@ def login():
 
     user = authenticate(username, password)
     if user is None:
+        # The submitted password is deliberately never passed to the audit log.
+        record_event(
+            action="auth.login",
+            result="failure",
+            username=username,
+            message="Invalid credentials.",
+        )
         return (
             jsonify({"error": "unauthorized", "message": "Invalid credentials."}),
             401,
         )
 
+    record_event(
+        action="auth.login",
+        result="success",
+        user_id=user.id,
+        username=user.username,
+        details={"role": user.role},
+    )
     return jsonify({"access_token": issue_token(user), "user": user.to_dict()}), 200
 
 

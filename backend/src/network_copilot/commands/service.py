@@ -6,6 +6,7 @@ the policy engine first and records the outcome either way.
 
 import logging
 
+from ..audit.service import record_event
 from ..devices import service as device_service
 from ..errors import PolicyViolationError, ValidationError
 from ..extensions import db
@@ -72,6 +73,17 @@ def execute_readonly(
         logger.warning(
             "Blocked command on %s: %s", device.hostname, decision.reason
         )
+        record_event(
+            action="command.blocked",
+            result="blocked",
+            user_id=user_id,
+            device_id=device.id,
+            message=decision.reason,
+            details={
+                "command": decision.normalized_command or command,
+                "source": source,
+            },
+        )
         raise PolicyViolationError(
             decision.reason,
             {"command": decision.normalized_command, "device": device.hostname},
@@ -90,10 +102,18 @@ def execute_readonly(
             source=source,
         )
         device_service.set_device_status(device, "offline")
+        record_event(
+            action="command.readonly",
+            result="failure",
+            user_id=user_id,
+            device_id=device.id,
+            message=exc.message,
+            details={"command": decision.normalized_command, "source": source},
+        )
         raise
 
     device_service.set_device_status(device, "online")
-    return _record(
+    execution = _record(
         device_id=device.id,
         user_id=user_id,
         command=decision.normalized_command,
@@ -102,6 +122,18 @@ def execute_readonly(
         duration_ms=result.duration_ms,
         source=source,
     )
+    record_event(
+        action="command.readonly",
+        result="success",
+        user_id=user_id,
+        device_id=device.id,
+        details={
+            "command": decision.normalized_command,
+            "source": source,
+            "duration_ms": result.duration_ms,
+        },
+    )
+    return execution
 
 
 def list_history(

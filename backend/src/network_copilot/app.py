@@ -31,6 +31,7 @@ def _register_extensions(app: Flask) -> None:
 def _register_models() -> None:
     """Import models so SQLAlchemy and Alembic see every table."""
     from .auth import model as _auth_model  # noqa: F401
+    from .audit import model as _audit_model  # noqa: F401
     from .backups import model as _backup_model  # noqa: F401
     from .changes import model as _change_model  # noqa: F401
     from .commands import model as _command_model  # noqa: F401
@@ -40,6 +41,7 @@ def _register_models() -> None:
 
 
 def _register_blueprints(app: Flask) -> None:
+    from .audit.routes import bp as audit_bp
     from .auth.routes import bp as auth_bp
     from .changes.routes import bp as changes_bp
     from .commands.routes import bp as commands_bp
@@ -51,6 +53,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(commands_bp)
     app.register_blueprint(monitoring_bp)
     app.register_blueprint(changes_bp)
+    app.register_blueprint(audit_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
