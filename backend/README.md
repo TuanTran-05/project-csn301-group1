@@ -131,6 +131,22 @@ matched to a server log line:
 Unhandled exceptions always return a generic `internal_error`; tracebacks and
 internal state go to the server log only.
 
+Several failures share one HTTP status, so `error` is more specific than the
+status alone and is what a client should branch on:
+
+| Status | `error` values |
+|---|---|
+| 403 | `policy_violation` (the policy engine refused the command), `forbidden` (your role is not allowed) |
+| 409 | `invalid_state` (wrong change state), `conflict` (duplicate hostname or IP) |
+| 502 | `ssh_timeout`, `ssh_connection_error`, `ssh_authentication_error`, `device_unreachable` |
+
+### Database path
+
+`DATABASE_URL` accepts a relative sqlite path (`sqlite:///network_copilot.db`)
+and anchors it to the `backend/` directory. This is deliberate: Flask would
+otherwise resolve it against its instance folder, so `flask db upgrade` and a
+script that forgot `load_dotenv()` would silently use two different files.
+
 ## Architecture
 
 Routes only handle HTTP. All SSH, policy, monitoring, backup, audit and AI logic

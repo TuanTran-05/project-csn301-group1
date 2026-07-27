@@ -86,6 +86,94 @@ def test_error_responses_include_the_request_id(client):
     assert response.get_json()["request_id"] == response.headers["X-Request-ID"]
 
 
+# -- specific error codes survive the JSON contract -----------------------
+# Several distinct failures share one HTTP status. A client must still be able
+# to tell "the policy engine refused this" from "your role is not allowed".
+
+
+def test_policy_violation_keeps_its_own_error_code(
+    client, admin_headers, device, ssh_factory
+):
+    ssh_factory.set_client(device.hostname)
+    response = client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "write erase"},
+    )
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "policy_violation"
+
+
+def test_role_denial_is_reported_as_forbidden(client, viewer_headers):
+    response = client.post(
+        "/api/devices",
+        headers=viewer_headers,
+        json={
+            "hostname": "CORE-SW9",
+            "management_ip": "10.10.10.19",
+            "device_type": "cisco_ios",
+            "role": "core",
+        },
+    )
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "forbidden"
+
+
+def test_invalid_state_keeps_its_own_error_code(client, admin_headers, access_switch):
+    change_id = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
+        },
+    ).get_json()["id"]
+
+    # Applying without approving first.
+    response = client.post(f"/api/changes/{change_id}/apply", headers=admin_headers)
+    assert response.status_code == 409
+    assert response.get_json()["error"] == "invalid_state"
+
+
+def test_conflict_and_invalid_state_are_distinguishable(client, admin_headers):
+    payload = {
+        "hostname": "CORE-SW1",
+        "management_ip": "10.10.10.11",
+        "device_type": "cisco_ios",
+        "role": "core",
+    }
+    client.post("/api/devices", headers=admin_headers, json=payload)
+    duplicate = client.post("/api/devices", headers=admin_headers, json=payload)
+    assert duplicate.status_code == 409
+    assert duplicate.get_json()["error"] == "conflict"
+
+
+def test_ssh_failure_keeps_its_transport_error_code(
+    client, admin_headers, device, ssh_factory
+):
+    from network_copilot.ssh.exceptions import SSHTimeoutError
+
+    ssh_factory.set_failing(device.hostname, SSHTimeoutError("timed out"))
+    response = client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "show ip route"},
+    )
+    assert response.status_code == 502
+    assert response.get_json()["error"] == "ssh_timeout"
+
+
+def test_app_error_details_survive(client, admin_headers, device, ssh_factory):
+    ssh_factory.set_client(device.hostname)
+    body = client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "write erase"},
+    ).get_json()
+    assert body["details"]["command"] == "write erase"
+    assert body["request_id"]
+
+
 # -- unhandled exceptions -------------------------------------------------
 
 

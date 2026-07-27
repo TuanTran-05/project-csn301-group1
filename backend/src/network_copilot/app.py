@@ -102,7 +102,12 @@ def _register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(AppError)
     def handle_app_error(exc: AppError):
-        return _respond(exc.status_code, exc.message, exc.details)
+        # Keep the exception's own code: several failures share one HTTP status
+        # (policy_violation and forbidden are both 403, ssh_timeout and
+        # device_unreachable are both 502) and clients need to tell them apart.
+        payload = exc.to_dict()
+        payload["request_id"] = getattr(g, "request_id", None)
+        return jsonify(payload), exc.status_code
 
     @app.errorhandler(HTTPException)
     def handle_http_exception(exc: HTTPException):

@@ -12,14 +12,34 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+SQLITE_PREFIX = "sqlite:///"
+
+
+def _database_uri() -> str:
+    """Resolve DATABASE_URL, anchoring relative sqlite paths to BASE_DIR.
+
+    Flask resolves a relative sqlite path against its instance folder
+    (``src/instance/``), so the same DATABASE_URL would point at a different
+    file depending on how the process was started. Anchoring it here keeps
+    ``flask db upgrade``, the seed scripts and the running server on one file.
+    """
+    raw = os.environ.get("DATABASE_URL")
+    if not raw:
+        return f"{SQLITE_PREFIX}{BASE_DIR / 'network_copilot.db'}"
+
+    if raw.startswith(SQLITE_PREFIX):
+        path = raw[len(SQLITE_PREFIX) :]
+        if path and path != ":memory:" and not os.path.isabs(path):
+            return f"{SQLITE_PREFIX}{BASE_DIR / path}"
+    return raw
+
+
 class Config:
     """Base configuration, driven entirely by environment variables."""
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        "DATABASE_URL", f"sqlite:///{BASE_DIR / 'network_copilot.db'}"
-    )
+    SQLALCHEMY_DATABASE_URI = _database_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", SECRET_KEY)
