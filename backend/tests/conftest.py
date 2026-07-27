@@ -3,6 +3,7 @@ import pytest
 from network_copilot.app import create_app
 from network_copilot.auth.model import User
 from network_copilot.config import TestConfig
+from network_copilot.devices.model import Device
 from network_copilot.extensions import db as _db
 
 ADMIN_PASSWORD = "StrongPass123!"
@@ -53,6 +54,47 @@ def _auth_headers(client, username: str, password: str) -> dict[str, str]:
     )
     assert response.status_code == 200, response.get_data(as_text=True)
     return {"Authorization": f"Bearer {response.get_json()['access_token']}"}
+
+
+def _create_device(hostname: str, ip: str, role: str, device_type="cisco_ios") -> Device:
+    device = Device(
+        hostname=hostname,
+        management_ip=ip,
+        device_type=device_type,
+        role=role,
+        ssh_port=22,
+        status="unknown",
+        monitoring_enabled=True,
+    )
+    _db.session.add(device)
+    _db.session.commit()
+    return device
+
+
+@pytest.fixture
+def device(app):
+    """Default lab device: the core switch."""
+    return _create_device("CORE-SW1", "10.10.10.11", "core")
+
+
+@pytest.fixture
+def core_switch(device):
+    return device
+
+
+@pytest.fixture
+def access_switch(app):
+    return _create_device("ACC-SW1", "10.10.10.31", "access")
+
+
+@pytest.fixture
+def dist_switch(app):
+    return _create_device("DIST-SW1", "10.10.10.21", "distribution")
+
+
+@pytest.fixture
+def make_device(app):
+    return _create_device
 
 
 @pytest.fixture
