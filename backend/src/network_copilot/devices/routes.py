@@ -43,6 +43,31 @@ def delete_device(device_id: int):
     return "", 204
 
 
+@bp.get("/<int:device_id>/backups")
+@jwt_required()
+def list_backups(device_id: int):
+    from ..backups import service as backup_service
+
+    service.get_device(device_id)
+    backups = backup_service.list_backups(
+        device_id, limit=request.args.get("limit", default=50, type=int)
+    )
+    return jsonify({"items": [backup.to_dict() for backup in backups]}), 200
+
+
+@bp.get("/<int:device_id>/backups/<int:backup_id>")
+@roles_required("ADMIN")
+def get_backup(device_id: int, backup_id: int):
+    from ..backups import service as backup_service
+    from ..errors import NotFoundError
+
+    service.get_device(device_id)
+    backup = backup_service.get_backup(backup_id)
+    if backup is None or backup.device_id != device_id:
+        raise NotFoundError(f"Backup {backup_id} was not found.")
+    return jsonify(backup.to_dict(include_config=True)), 200
+
+
 @bp.post("/<int:device_id>/test-connection")
 @roles_required("ADMIN")
 def test_connection(device_id: int):

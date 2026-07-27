@@ -14,11 +14,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
+import logging
+
 from ..devices import service as device_service
 from ..devices.model import Device
-from ..errors import NotFoundError, PolicyViolationError, ValidationError
+from ..errors import (
+    InvalidStateError,
+    NotFoundError,
+    PolicyViolationError,
+    ValidationError,
+)
 from ..extensions import db
 from .model import ChangeRequest
+
+logger = logging.getLogger(__name__)
 
 # VLANs that must never be created, renamed or deleted.
 SYSTEM_VLANS = {1, 1002, 1003, 1004, 1005}
@@ -353,3 +362,193 @@ def list_changes(
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# -- approve / cancel -----------------------------------------------------
+
+
+def approve(change_id: int, user_id: int | None) -> ChangeRequest:
+    change = get_change(change_id)
+    if change.status != "pending_approval":
+        raise InvalidStateError(
+            f"Only a change in 'pending_approval' can be approved; "
+            f"change {change_id} is '{change.status}'."
+        )
+    change.status = "approved"
+    change.approved_by_id = user_id
+    change.approved_at = _now()
+    db.session.commit()
+    return change
+
+
+def cancel(change_id: int, user_id: int | None) -> ChangeRequest:
+    change = get_change(change_id)
+    if change.status not in {"pending_approval", "approved"}:
+        raise InvalidStateError(
+            f"A change in state '{change.status}' can no longer be cancelled."
+        )
+    change.status = "cancelled"
+    db.session.commit()
+    return change
+
+
+# -- verification ---------------------------------------------------------
+
+
+def _expected_vlans(commands: list[str]) -> list[dict]:
+    """VLAN id/name pairs the change is expected to produce."""
+    expected: list[dict] = []
+    current: dict | None = None
+
+    for command in commands:
+        vlan_match = re.match(r"^vlan (\d+)$", command)
+        if vlan_match is not None:
+            current = {"vlan_id": int(vlan_match.group(1)), "name": None}
+            expected.append(current)
+            continue
+
+        name_match = re.match(r"^name (.+)$", command)
+        if name_match is not None and current is not None:
+            current["name"] = name_match.group(1).strip()
+            continue
+
+        access_match = re.match(r"^switchport access vlan (\d+)$", command)
+        if access_match is not None:
+            vlan_id = int(access_match.group(1))
+            if not any(item["vlan_id"] == vlan_id for item in expected):
+                expected.append({"vlan_id": vlan_id, "name": None})
+            current = None
+
+    return expected
+
+
+def _verify_vlan_output(output: str, expected: list[dict]) -> tuple[bool, list[str]]:
+    from ..parsers import parse_vlan_brief
+
+    rows = {row["vlan_id"]: row for row in parse_vlan_brief(output)}
+    details: list[str] = []
+    passed = True
+
+    for item in expected:
+        row = rows.get(item["vlan_id"])
+        if row is None:
+            passed = False
+            details.append(f"VLAN {item['vlan_id']} is not present on the device.")
+            continue
+        if item["name"] and row["name"] != item["name"]:
+            passed = False
+            details.append(
+                f"VLAN {item['vlan_id']} is named '{row['name']}', "
+                f"expected '{item['name']}'."
+            )
+            continue
+        details.append(
+            f"VLAN {item['vlan_id']} ({row['name']}) is present and {row['status']}."
+        )
+
+    return passed, details
+
+
+def _verify_generic(output: str) -> tuple[bool, list[str]]:
+    if not output or not output.strip():
+        return False, ["The device returned no output."]
+    if "% Invalid input" in output or "% Incomplete command" in output:
+        return False, ["The device rejected the verification command."]
+    return True, ["Command returned output."]
+
+
+def run_verification(change: ChangeRequest, client) -> tuple[bool, dict]:
+    """Run each verification command and judge the result."""
+    expected_vlans = _expected_vlans(change.commands or [])
+    results: dict[str, dict] = {}
+    all_passed = True
+
+    for command in change.verification_commands or []:
+        result = client.run_show(command)
+        if command == "show vlan brief" and expected_vlans:
+            passed, details = _verify_vlan_output(result.output, expected_vlans)
+        else:
+            passed, details = _verify_generic(result.output)
+
+        results[command] = {
+            "passed": passed,
+            "output": result.output,
+            "details": details,
+        }
+        all_passed = all_passed and passed
+
+    return all_passed, results
+
+
+# -- apply ----------------------------------------------------------------
+
+
+def _fail(change: ChangeRequest, message: str) -> ChangeRequest:
+    change.status = "failed"
+    change.error_message = message[:512]
+    change.applied_at = _now()
+    db.session.commit()
+    logger.warning("Change %s failed: %s", change.id, message)
+    return change
+
+
+def apply(change_id: int, user_id: int | None) -> ChangeRequest:
+    """Backup, configure, then verify. Order is fixed and never skipped."""
+    from ..backups.service import capture_backup
+    from ..ssh.client import build_client_for_device
+    from ..ssh.exceptions import SSHError
+
+    change = get_change(change_id)
+    if change.status != "approved":
+        raise InvalidStateError(
+            f"Only an approved change can be applied; change {change_id} is "
+            f"'{change.status}'."
+        )
+
+    device = device_service.get_device(change.device_id)
+    change.status = "running"
+    db.session.commit()
+
+    try:
+        client = build_client_for_device(device)
+    except Exception as exc:  # pragma: no cover - missing credentials etc.
+        return _fail(change, f"Could not open an SSH session: {exc}")
+
+    # 1. Backup first. Without it, nothing is configured.
+    try:
+        backup = capture_backup(device, change_request_id=change.id, client=client)
+        change.backup_id = backup.id
+        db.session.commit()
+    except SSHError as exc:
+        return _fail(change, f"Pre-change backup failed: {exc.message}")
+
+    # 2. Push the configuration.
+    try:
+        result = client.run_config(list(change.commands or []))
+        change.apply_output = result.output
+        db.session.commit()
+    except SSHError as exc:
+        return _fail(change, f"Applying configuration failed: {exc.message}")
+
+    # 3. Verify on the device itself.
+    try:
+        passed, results = run_verification(change, client)
+    except SSHError as exc:
+        change.verification_output = None
+        return _fail(change, f"Verification could not run: {exc.message}")
+
+    change.verification_output = results
+    if not passed:
+        return _fail(
+            change,
+            "Verification failed; the device does not reflect the requested change. "
+            "Review rollback_commands and apply them manually if required.",
+        )
+
+    change.status = "success"
+    change.error_message = None
+    change.applied_at = _now()
+    db.session.commit()
+    device_service.set_device_status(device, "online")
+    logger.info("Change %s applied and verified on %s.", change.id, device.hostname)
+    return change

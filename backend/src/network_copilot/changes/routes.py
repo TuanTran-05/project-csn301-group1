@@ -52,3 +52,27 @@ def list_changes():
 @jwt_required()
 def get_change(change_id: int):
     return jsonify(service.get_change(change_id).to_dict()), 200
+
+
+@bp.post("/<int:change_id>/approve")
+@roles_required("ADMIN")
+def approve(change_id: int):
+    user = current_user()
+    change = service.approve(change_id, user.id if user else None)
+    return jsonify(change.to_dict()), 200
+
+
+@bp.post("/<int:change_id>/apply")
+@roles_required("ADMIN")
+def apply(change_id: int):
+    user = current_user()
+    change = service.apply(change_id, user.id if user else None)
+    return jsonify(change.to_dict()), 200
+
+
+@bp.post("/<int:change_id>/cancel")
+@roles_required("ADMIN")
+def cancel(change_id: int):
+    user = current_user()
+    change = service.cancel(change_id, user.id if user else None)
+    return jsonify(change.to_dict()), 200
