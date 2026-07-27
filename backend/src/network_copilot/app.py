@@ -41,6 +41,7 @@ def _register_models() -> None:
 
 
 def _register_blueprints(app: Flask) -> None:
+    from .ai.routes import bp as ai_bp
     from .audit.routes import bp as audit_bp
     from .auth.routes import bp as auth_bp
     from .changes.routes import bp as changes_bp
@@ -54,6 +55,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(monitoring_bp)
     app.register_blueprint(changes_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(ai_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
