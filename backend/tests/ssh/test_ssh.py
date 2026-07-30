@@ -33,6 +33,16 @@ def test_legacy_host_key_algorithm_is_enabled_for_old_cisco_devices():
     assert "ssh-rsa" in paramiko.Transport._preferred_keys
 
 
+def test_legacy_kex_algorithm_has_a_real_implementation():
+    """Paramiko 5.x kept the algorithm name in _preferred_kex but deleted the
+    class that actually performs it from _kex_info. Negotiation then succeeds
+    and the connection dies with a bare KeyError deep inside Transport.run(),
+    confirmed against a real device. Being *offered* is not being *usable*;
+    this guards against losing execution capability again on a future
+    Paramiko upgrade."""
+    assert "diffie-hellman-group14-sha1" in paramiko.Transport._kex_info
+
+
 def test_legacy_algorithms_are_appended_not_preferred():
     """Modern algorithms must still win the negotiation when a device offers
     them: the legacy entries are appended, never inserted ahead of anything

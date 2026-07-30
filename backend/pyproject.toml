@@ -14,7 +14,12 @@ dependencies = [
     "Flask-JWT-Extended>=4.6",
     "Flask-Limiter>=3.5",
     "SQLAlchemy>=2.0",
-    "paramiko>=3.4",
+    # Paramiko 5.0 deleted the SHA-1 based key-exchange implementations
+    # (diffie-hellman-group14-sha1 / group-exchange-sha1) outright, not just
+    # deprioritized them. The Cisco IOSv/IOSv-L2 images in this lab only speak
+    # those, confirmed against a real device: <5 keeps the last version with a
+    # working implementation, not just the algorithm's name in a list.
+    "paramiko>=3.4,<5",
     "APScheduler>=3.10",
     "pydantic>=2.6",
     "cryptography>=42.0",
