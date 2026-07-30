@@ -64,3 +64,23 @@ def test_list_messages_respects_the_limit(app):
         record_message(1, "g1", "user", f"message {i}")
     rows = list_messages(limit=2)
     assert len(rows) == 2
+
+
+def test_messages_endpoint_requires_authentication(client):
+    assert client.get("/api/chat/messages").status_code == 401
+
+
+def test_messages_endpoint_is_readable_by_viewer(client, viewer_headers):
+    response = client.get("/api/chat/messages", headers=viewer_headers)
+    assert response.status_code == 200
+    assert response.get_json()["items"] == []
+
+
+def test_messages_endpoint_returns_recorded_messages(client, admin_headers, app):
+    record_message(1, "g1", "user", "hello")
+    record_message(1, "g1", "assistant", "hi there")
+    response = client.get("/api/chat/messages", headers=admin_headers)
+    items = response.get_json()["items"]
+    assert len(items) == 2
+    assert items[0]["content"] == "hello"
+    assert items[1]["content"] == "hi there"
