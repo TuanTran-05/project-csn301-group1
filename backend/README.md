@@ -194,7 +194,7 @@ Run this on the AI Server (management NIC `10.10.10.10/24`):
 python scripts/smoke_test_lab.py
 ```
 
-It checks TCP/22, opens an SSH session and runs `show clock` on all nine devices,
+It checks TCP/22, opens an SSH session and runs `show clock` on all eight devices,
 exiting non-zero if any of them fails.
 
 ## Tests
@@ -301,7 +301,7 @@ src/network_copilot/
 
 ## Lab inventory
 
-`scripts/seed_lab.py` seeds these nine devices. **The hostnames must match the
+`scripts/seed_lab.py` seeds these eight devices. **The hostnames must match the
 device hostnames in PNETLab exactly** — the copilot resolves a device by
 hostname, so a mismatch fails the request.
 
@@ -313,7 +313,6 @@ hostname, so a mismatch fails the request.
 | `DIST-SW1` | 10.10.10.21 | distribution |
 | `DIST-SW2` | 10.10.10.22 | distribution |
 | `ACC-SW1` | 10.10.10.31 | access |
-| `ACC-SW2` | 10.10.10.32 | access |
 | `ACC-SW3` | 10.10.10.33 | access |
 | `DMZ-SW` | 10.10.10.34 | dmz |
 
