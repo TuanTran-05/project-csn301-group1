@@ -18,6 +18,7 @@ document.addEventListener("alpine:init", () => {
 
     // -- devices --
     devices: [],
+    _deviceRefreshGeneration: 0,
 
     init() {
       if (this.token) {
@@ -70,6 +71,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     logout() {
+      this._deviceRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
       localStorage.removeItem("nc_token");
@@ -93,8 +95,11 @@ document.addEventListener("alpine:init", () => {
     },
 
     async refreshDevices() {
+      const generation = this._deviceRefreshGeneration;
       const data = await this.authFetch("/api/devices");
-      this.devices = data.items;
+      if (generation === this._deviceRefreshGeneration) {
+        this.devices = data.items;
+      }
     },
   }));
 });
