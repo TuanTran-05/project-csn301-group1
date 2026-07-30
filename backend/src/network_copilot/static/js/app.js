@@ -20,6 +20,16 @@ document.addEventListener("alpine:init", () => {
     devices: [],
     _deviceRefreshGeneration: 0,
 
+    // -- changes (shared live state, keyed by id) --
+    changesById: {},
+    _changesRefreshGeneration: 0,
+
+    get pendingChanges() {
+      return Object.values(this.changesById).filter(
+        (change) => change.status === "pending_approval"
+      );
+    },
+
     init() {
       if (this.token) {
         this.authFetch("/api/auth/me")
@@ -72,26 +82,31 @@ document.addEventListener("alpine:init", () => {
 
     logout() {
       this._deviceRefreshGeneration += 1;
+      this._changesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
       localStorage.removeItem("nc_token");
       localStorage.removeItem("nc_user");
       this.stopPolling();
       this.devices = [];
+      this.changesById = {};
     },
 
     async startApp() {
       await this.refreshDevices();
+      await this.refreshChanges();
       this.startPolling();
     },
 
     startPolling() {
       this.stopPolling();
       this._deviceTimer = setInterval(() => this.refreshDevices(), 15000);
+      this._changesTimer = setInterval(() => this.refreshChanges(), 15000);
     },
 
     stopPolling() {
       clearInterval(this._deviceTimer);
+      clearInterval(this._changesTimer);
     },
 
     async refreshDevices() {
@@ -99,6 +114,58 @@ document.addEventListener("alpine:init", () => {
       const data = await this.authFetch("/api/devices");
       if (generation === this._deviceRefreshGeneration) {
         this.devices = data.items;
+      }
+    },
+
+    async refreshChanges() {
+      const generation = this._changesRefreshGeneration;
+      const data = await this.authFetch("/api/changes?limit=500");
+      if (generation === this._changesRefreshGeneration) {
+        this.changesById = Object.fromEntries(
+          data.items.map((change) => [change.id, change])
+        );
+      }
+    },
+
+    async approveChange(id) {
+      try {
+        const generation = this._changesRefreshGeneration;
+        const change = await this.authFetch(`/api/changes/${id}/approve`, {
+          method: "POST",
+        });
+        if (generation === this._changesRefreshGeneration) {
+          this.changesById[id] = change;
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+    },
+
+    async applyChange(id) {
+      try {
+        const generation = this._changesRefreshGeneration;
+        const change = await this.authFetch(`/api/changes/${id}/apply`, {
+          method: "POST",
+        });
+        if (generation === this._changesRefreshGeneration) {
+          this.changesById[id] = change;
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+    },
+
+    async cancelChange(id) {
+      try {
+        const generation = this._changesRefreshGeneration;
+        const change = await this.authFetch(`/api/changes/${id}/cancel`, {
+          method: "POST",
+        });
+        if (generation === this._changesRefreshGeneration) {
+          this.changesById[id] = change;
+        }
+      } catch (err) {
+        alert(err.message);
       }
     },
   }));

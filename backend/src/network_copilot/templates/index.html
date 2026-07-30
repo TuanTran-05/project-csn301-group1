@@ -46,7 +46,22 @@
           </template>
         </ul>
       </aside>
-      <p style="padding: 20px;">Chat and pending changes are added in later tasks.</p>
+      <p style="padding: 20px;">Chat is added in the next task.</p>
+      <aside class="sidebar changes-panel">
+        <h2>Thay đổi đang chờ</h2>
+        <ul>
+          <template x-for="change in pendingChanges" :key="change.id">
+            <li>
+              <div x-text="change.device ? change.device.hostname : ('Thiết bị #' + change.device_id)"></div>
+              <span class="risk-pill" x-text="change.risk_level"></span>
+              <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
+                <button @click="approveChange(change.id)">Approve</button>
+                <button @click="cancelChange(change.id)">Cancel</button>
+              </div>
+            </li>
+          </template>
+        </ul>
+      </aside>
     </div>
   </div>
 
