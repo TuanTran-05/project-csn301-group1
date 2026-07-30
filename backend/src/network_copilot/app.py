@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from .config import Config
@@ -32,6 +32,10 @@ def create_app(config_object: type | None = None) -> Flask:
     @app.get("/api/health")
     def health():
         return jsonify({"status": "ok"})
+
+    @app.get("/")
+    def index():
+        return render_template("index.html")
 
     return app
 
