@@ -16,6 +16,7 @@ document.addEventListener("alpine:init", () => {
     loginForm: { username: "", password: "" },
     loginError: "",
     _sessionGeneration: 0,
+    _authRetryTimer: null,
 
     // -- devices --
     devices: [],
@@ -39,25 +40,38 @@ document.addEventListener("alpine:init", () => {
     },
 
     init() {
-      if (this.token) {
-        const generation = this._sessionGeneration;
-        this.authFetch("/api/auth/me")
-          .then((user) => {
-            if (generation !== this._sessionGeneration) return;
-            this.currentUser = user;
-            localStorage.setItem("nc_user", JSON.stringify(user));
-            return this.startApp();
-          })
-          .catch(() => {
+      if (!this.token) return Promise.resolve();
+      const generation = this._sessionGeneration;
+      const token = this.token;
+      return this.authFetch("/api/auth/me")
+        .then((user) => {
+          if (
+            generation !== this._sessionGeneration ||
+            token !== this.token
+          ) return;
+          clearTimeout(this._authRetryTimer);
+          this._authRetryTimer = null;
+          this.currentUser = user;
+          localStorage.setItem("nc_user", JSON.stringify(user));
+          return this.startApp();
+        })
+        .catch(() => {
+          if (
+            generation !== this._sessionGeneration ||
+            token !== this.token
+          ) return;
+          if (this.currentUser) return this.startApp();
+          clearTimeout(this._authRetryTimer);
+          this._authRetryTimer = setTimeout(() => {
             if (
               generation === this._sessionGeneration &&
-              this.token &&
-              this.currentUser
+              token === this.token &&
+              !this.currentUser
             ) {
-              return this.startApp();
+              return this.init();
             }
-          });
-      }
+          }, 5000);
+        });
     },
 
     async authFetch(path, options = {}) {
@@ -99,6 +113,8 @@ document.addEventListener("alpine:init", () => {
         if (generation !== this._sessionGeneration) return;
         this.token = data.access_token;
         this.currentUser = data.user;
+        clearTimeout(this._authRetryTimer);
+        this._authRetryTimer = null;
         localStorage.setItem("nc_token", this.token);
         localStorage.setItem("nc_user", JSON.stringify(this.currentUser));
         this.loginForm = { username: "", password: "" };
@@ -115,6 +131,8 @@ document.addEventListener("alpine:init", () => {
       this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
+      clearTimeout(this._authRetryTimer);
+      this._authRetryTimer = null;
       localStorage.removeItem("nc_token");
       localStorage.removeItem("nc_user");
       this.stopPolling();
@@ -222,7 +240,7 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
-    _clientMessage(role, content, payload) {
+    _clientMessage(role, content, payload, knownServerIds = []) {
       this._clientMessageSequence += 1;
       return {
         id: `client-${this._clientMessageSequence}`,
@@ -232,7 +250,48 @@ document.addEventListener("alpine:init", () => {
         payload: payload || null,
         created_at: new Date().toISOString(),
         _client: true,
+        _knownServerIds: knownServerIds,
       };
+    },
+
+    _messagesMatch(clientMessage, serverMessage) {
+      return (
+        clientMessage.role === serverMessage.role &&
+        clientMessage.content === serverMessage.content &&
+        (!clientMessage.username ||
+          !serverMessage.username ||
+          clientMessage.username === serverMessage.username) &&
+        !(clientMessage._knownServerIds || []).includes(serverMessage.id)
+      );
+    },
+
+    _messageTimestamp(message) {
+      if (!message.created_at) return null;
+      let value = message.created_at;
+      if (!message._client && !/(?:Z|[+-]\d\d:\d\d)$/i.test(value)) {
+        value += "Z";
+      }
+      const timestamp = Date.parse(value);
+      return Number.isFinite(timestamp) ? timestamp : null;
+    },
+
+    _sortMessages() {
+      this.messages.sort((left, right) => {
+        const leftTime = this._messageTimestamp(left);
+        const rightTime = this._messageTimestamp(right);
+        if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        if (
+          !left._client &&
+          !right._client &&
+          typeof left.id === "number" &&
+          typeof right.id === "number"
+        ) {
+          return left.id - right.id;
+        }
+        return 0;
+      });
     },
 
     _ingestMessage(message) {
@@ -241,13 +300,7 @@ document.addEventListener("alpine:init", () => {
           return;
         }
         const clientIndex = this.messages.findIndex(
-          (item) =>
-            item._client &&
-            item.role === message.role &&
-            item.content === message.content &&
-            (!item.username ||
-              !message.username ||
-              item.username === message.username)
+          (item) => item._client && this._messagesMatch(item, message)
         );
         if (clientIndex >= 0) {
           this.messages.splice(clientIndex, 1, message);
@@ -255,8 +308,13 @@ document.addEventListener("alpine:init", () => {
           this.messages.push(message);
         }
       } else {
+        const serverMatch = this.messages.some(
+          (item) => !item._client && this._messagesMatch(message, item)
+        );
+        if (serverMatch) return;
         this.messages.push(message);
       }
+      this._sortMessages();
       const change = message.payload && message.payload.change;
       if (change && change.id != null && !(change.id in this.changesById)) {
         this.changesById[change.id] = change;
@@ -313,9 +371,14 @@ document.addEventListener("alpine:init", () => {
       const text = this.draftMessage.trim();
       if (!text || this.sending) return;
       const generation = this._messagesRefreshGeneration;
+      const knownServerIds = this.messages
+        .filter((message) => !message._client)
+        .map((message) => message.id);
       this.draftMessage = "";
       this.sending = true;
-      this._ingestMessage(this._clientMessage("user", text, null));
+      this._ingestMessage(
+        this._clientMessage("user", text, null, knownServerIds)
+      );
       this.$nextTick(() => {
         if (generation === this._messagesRefreshGeneration) {
           this._scrollToBottom();
@@ -331,7 +394,8 @@ document.addEventListener("alpine:init", () => {
           this._clientMessage(
             "assistant",
             payload.explanation || "Request completed.",
-            payload
+            payload,
+            knownServerIds
           )
         );
       } catch (err) {
@@ -346,7 +410,8 @@ document.addEventListener("alpine:init", () => {
             typeof payload.message === "string"
               ? payload.message
               : "Request failed.",
-            payload
+            payload,
+            knownServerIds
           )
         );
       } finally {
