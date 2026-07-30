@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Network Copilot</title>
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
 </head>
 <body x-data="app()" x-init="init()">
@@ -46,7 +47,52 @@
           </template>
         </ul>
       </aside>
-      <p style="padding: 20px;">Chat is added in the next task.</p>
+      <main class="chat-panel">
+        <div class="chat-log" x-ref="chatLog">
+          <template x-for="message in messages" :key="message.id">
+            <div class="bubble" :class="'bubble-' + message.role">
+              <div class="bubble-meta">
+                <span x-text="message.username || 'AI'"></span>
+                <span x-text="new Date(message.created_at).toLocaleTimeString('vi-VN')"></span>
+              </div>
+              <div class="bubble-content" x-text="message.content"></div>
+
+              <template x-if="message.payload && message.payload.change && changesById[message.payload.change.id]">
+                <div class="action-card" x-data="{ get change() { return changesById[message.payload.change.id]; } }">
+                  <div class="action-card-header">
+                    <span x-text="'Thay đổi #' + change.id"></span>
+                    <span class="risk-pill" x-text="change.risk_level"></span>
+                    <span class="status-pill" x-text="change.status"></span>
+                  </div>
+                  <pre x-text="(change.commands || []).join('\n')"></pre>
+                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
+                    <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
+                    <button x-show="change.status === 'approved'" @click="applyChange(change.id)">Apply</button>
+                    <button
+                      x-show="change.status === 'pending_approval' || change.status === 'approved'"
+                      @click="cancelChange(change.id)"
+                    >Cancel</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="bubble bubble-assistant bubble-pending" x-show="sending" x-cloak>
+            Đang xử lý...
+          </div>
+        </div>
+
+        <form class="chat-input" @submit.prevent="sendMessage()">
+          <input
+            type="text"
+            x-model="draftMessage"
+            :disabled="sending"
+            placeholder="Hỏi AI về trạng thái mạng hoặc yêu cầu thay đổi cấu hình..."
+          />
+          <button type="submit" :disabled="sending">Gửi</button>
+        </form>
+      </main>
       <aside class="sidebar changes-panel">
         <h2>Thay đổi đang chờ</h2>
         <ul>

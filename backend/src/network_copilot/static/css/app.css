@@ -251,6 +251,7 @@ body {
 
 .bubble-content {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .action-card {

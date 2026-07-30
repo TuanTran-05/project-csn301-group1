@@ -15,6 +15,7 @@ document.addEventListener("alpine:init", () => {
     currentUser: storedUser(),
     loginForm: { username: "", password: "" },
     loginError: "",
+    _sessionGeneration: 0,
 
     // -- devices --
     devices: [],
@@ -24,6 +25,12 @@ document.addEventListener("alpine:init", () => {
     changesById: {},
     _changesRefreshGeneration: 0,
 
+    // -- chat --
+    messages: [],
+    draftMessage: "",
+    sending: false,
+    _messagesRefreshGeneration: 0,
+
     get pendingChanges() {
       return Object.values(this.changesById).filter(
         (change) => change.status === "pending_approval"
@@ -32,8 +39,10 @@ document.addEventListener("alpine:init", () => {
 
     init() {
       if (this.token) {
+        const generation = this._sessionGeneration;
         this.authFetch("/api/auth/me")
           .then((user) => {
+            if (generation !== this._sessionGeneration) return;
             this.currentUser = user;
             localStorage.setItem("nc_user", JSON.stringify(user));
             return this.startApp();
@@ -64,11 +73,13 @@ document.addEventListener("alpine:init", () => {
 
     async login() {
       this.loginError = "";
+      const generation = this._sessionGeneration;
       try {
         const data = await this.authFetch("/api/auth/login", {
           method: "POST",
           body: JSON.stringify(this.loginForm),
         });
+        if (generation !== this._sessionGeneration) return;
         this.token = data.access_token;
         this.currentUser = data.user;
         localStorage.setItem("nc_token", this.token);
@@ -81,8 +92,10 @@ document.addEventListener("alpine:init", () => {
     },
 
     logout() {
+      this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
       this._changesRefreshGeneration += 1;
+      this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
       localStorage.removeItem("nc_token");
@@ -90,11 +103,19 @@ document.addEventListener("alpine:init", () => {
       this.stopPolling();
       this.devices = [];
       this.changesById = {};
+      this.messages = [];
+      this.draftMessage = "";
+      this.sending = false;
     },
 
     async startApp() {
+      const generation = this._sessionGeneration;
+      await this.hydrateMessages();
+      if (generation !== this._sessionGeneration) return;
       await this.refreshDevices();
+      if (generation !== this._sessionGeneration) return;
       await this.refreshChanges();
+      if (generation !== this._sessionGeneration) return;
       this.startPolling();
     },
 
@@ -102,11 +123,13 @@ document.addEventListener("alpine:init", () => {
       this.stopPolling();
       this._deviceTimer = setInterval(() => this.refreshDevices(), 15000);
       this._changesTimer = setInterval(() => this.refreshChanges(), 15000);
+      this._messagesTimer = setInterval(() => this.pollMessages(), 7000);
     },
 
     stopPolling() {
       clearInterval(this._deviceTimer);
       clearInterval(this._changesTimer);
+      clearInterval(this._messagesTimer);
     },
 
     async refreshDevices() {
@@ -166,6 +189,86 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (err) {
         alert(err.message);
+      }
+    },
+
+    _ingestMessage(message) {
+      this.messages.push(message);
+      const change = message.payload && message.payload.change;
+      if (change && change.id != null && !(change.id in this.changesById)) {
+        this.changesById[change.id] = change;
+      }
+    },
+
+    _isScrolledToBottom() {
+      const el = this.$refs.chatLog;
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    },
+
+    _scrollToBottom() {
+      const el = this.$refs.chatLog;
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+
+    async hydrateMessages() {
+      const generation = this._messagesRefreshGeneration;
+      const data = await this.authFetch("/api/chat/messages");
+      if (generation !== this._messagesRefreshGeneration) return;
+      for (const message of data.items) this._ingestMessage(message);
+      this.$nextTick(() => {
+        if (generation === this._messagesRefreshGeneration) {
+          this._scrollToBottom();
+        }
+      });
+    },
+
+    async pollMessages() {
+      const generation = this._messagesRefreshGeneration;
+      const wasAtBottom = this._isScrolledToBottom();
+      const data = await this.authFetch("/api/chat/messages");
+      if (generation !== this._messagesRefreshGeneration) return;
+      const known = new Set(this.messages.map((message) => message.id));
+      let appended = false;
+      for (const message of data.items) {
+        if (!known.has(message.id)) {
+          this._ingestMessage(message);
+          known.add(message.id);
+          appended = true;
+        }
+      }
+      if (appended && wasAtBottom) {
+        this.$nextTick(() => {
+          if (generation === this._messagesRefreshGeneration) {
+            this._scrollToBottom();
+          }
+        });
+      }
+    },
+
+    async sendMessage() {
+      const text = this.draftMessage.trim();
+      if (!text || this.sending) return;
+      const generation = this._messagesRefreshGeneration;
+      this.draftMessage = "";
+      this.sending = true;
+      try {
+        await this.authFetch("/api/ai/chat", {
+          method: "POST",
+          body: JSON.stringify({ message: text }),
+        });
+      } catch (err) {
+        // Chat failures are recorded server-side as system messages. Fetch
+        // immediately instead of waiting for the next scheduled poll.
+      } finally {
+        if (generation !== this._messagesRefreshGeneration) return;
+        try {
+          await this.pollMessages();
+        } finally {
+          if (generation === this._messagesRefreshGeneration) {
+            this.sending = false;
+          }
+        }
       }
     },
   }));
