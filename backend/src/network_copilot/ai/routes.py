@@ -4,12 +4,36 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..auth.service import current_user
 from ..chat.service import record_message as record_chat_message
-from ..errors import AppError, ValidationError
+from ..errors import ValidationError
 from ..extensions import limiter
 from .schemas import ChatRequest
 from .service import AIService
 
 bp = Blueprint("ai", __name__, url_prefix="/api/ai")
+
+
+@bp.after_app_request
+def record_failed_chat_response(response):
+    """Store one safe transcript entry for each authenticated chat failure."""
+    if request.endpoint != "ai.chat" or 200 <= response.status_code < 300:
+        return response
+
+    try:
+        user = current_user()
+    except RuntimeError:
+        # JWT verification did not complete, so this is an unauthenticated 401.
+        return response
+    if user is None:
+        return response
+
+    payload = response.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = {"error": "request_failed", "message": "Request failed."}
+    content = payload.get("message")
+    if not isinstance(content, str):
+        content = "Request failed."
+    record_chat_message(user.id, user.username, "system", content, payload)
+    return response
 
 
 @bp.post("/chat")
@@ -30,13 +54,7 @@ def chat():
     username = user.username if user else None
 
     record_chat_message(user_id, username, "user", data.message)
-    try:
-        result = AIService().handle(data.message, user_id)
-    except AppError as exc:
-        record_chat_message(
-            user_id, username, "system", exc.message, {"error": exc.error}
-        )
-        raise
+    result = AIService().handle(data.message, user_id)
     record_chat_message(
         user_id, username, "assistant", result.get("explanation", ""), result
     )
