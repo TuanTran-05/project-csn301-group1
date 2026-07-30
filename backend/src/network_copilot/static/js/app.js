@@ -16,6 +16,9 @@ document.addEventListener("alpine:init", () => {
     loginForm: { username: "", password: "" },
     loginError: "",
 
+    // -- devices --
+    devices: [],
+
     init() {
       if (this.token) {
         this.authFetch("/api/auth/me")
@@ -71,9 +74,27 @@ document.addEventListener("alpine:init", () => {
       this.currentUser = null;
       localStorage.removeItem("nc_token");
       localStorage.removeItem("nc_user");
+      this.stopPolling();
+      this.devices = [];
     },
 
-    // Filled in by Task 8 (devices), Task 9 (changes), Task 10 (chat).
-    async startApp() {},
+    async startApp() {
+      await this.refreshDevices();
+      this.startPolling();
+    },
+
+    startPolling() {
+      this.stopPolling();
+      this._deviceTimer = setInterval(() => this.refreshDevices(), 15000);
+    },
+
+    stopPolling() {
+      clearInterval(this._deviceTimer);
+    },
+
+    async refreshDevices() {
+      const data = await this.authFetch("/api/devices");
+      this.devices = data.items;
+    },
   }));
 });

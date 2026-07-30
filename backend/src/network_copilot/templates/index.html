@@ -34,7 +34,19 @@
       <button class="logout-btn" @click="logout()">Đăng xuất</button>
     </header>
     <div class="main-grid">
-      <p style="padding: 20px;">Devices, chat, and pending changes are added in later tasks.</p>
+      <aside class="sidebar devices-panel">
+        <h2>Thiết bị</h2>
+        <ul>
+          <template x-for="device in devices" :key="device.id">
+            <li>
+              <span class="status-dot" :class="'status-' + device.status"></span>
+              <span x-text="device.hostname"></span>
+              <span class="device-role" x-text="device.role"></span>
+            </li>
+          </template>
+        </ul>
+      </aside>
+      <p style="padding: 20px;">Chat and pending changes are added in later tasks.</p>
     </div>
   </div>
 
