@@ -6,8 +6,38 @@
   <title>Network Copilot</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
 </head>
-<body>
-  <p>Network Copilot placeholder &mdash; replaced in later tasks.</p>
+<body x-data="app()" x-init="init()">
+
+  <section class="login-screen" x-show="!currentUser" x-cloak>
+    <form class="login-form" @submit.prevent="login()">
+      <h1>Network Copilot</h1>
+      <label>
+        Tên đăng nhập
+        <input type="text" x-model="loginForm.username" required autocomplete="username" />
+      </label>
+      <label>
+        Mật khẩu
+        <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
+      </label>
+      <p class="error-text" x-show="loginError" x-text="loginError"></p>
+      <button type="submit">Đăng nhập</button>
+    </form>
+  </section>
+
+  <div class="app-shell" x-show="currentUser" x-cloak>
+    <header class="top-bar">
+      <span class="app-title">Network Copilot</span>
+      <span class="user-badge">
+        <span x-text="currentUser && currentUser.username"></span>
+        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+      </span>
+      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+    </header>
+    <div class="main-grid">
+      <p style="padding: 20px;">Devices, chat, and pending changes are added in later tasks.</p>
+    </div>
+  </div>
+
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   <script src="{{ url_for('static', filename='vendor/alpine.min.js') }}" defer></script>
 </body>
