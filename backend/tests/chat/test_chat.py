@@ -1,4 +1,5 @@
 from network_copilot.chat.model import ChatMessage
+from network_copilot.chat.service import list_messages, record_message
 from network_copilot.extensions import db
 
 
@@ -22,3 +23,44 @@ def test_allows_a_null_user(app):
     db.session.add(message)
     db.session.commit()
     assert message.to_dict()["user_id"] is None
+
+
+def test_record_message_persists_a_row(app):
+    record_message(1, "g1", "user", "hello")
+    assert db.session.query(ChatMessage).count() == 1
+
+
+def test_record_message_stores_the_payload(app):
+    record_message(1, "g1", "assistant", "done", {"intent": "monitor"})
+    row = db.session.query(ChatMessage).one()
+    assert row.payload == {"intent": "monitor"}
+
+
+def test_record_message_accepts_a_missing_user(app):
+    record_message(None, None, "system", "blocked")
+    row = db.session.query(ChatMessage).one()
+    assert row.user_id is None
+    assert row.username is None
+
+
+def test_record_message_never_raises(app, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("db is down")
+
+    monkeypatch.setattr(db.session, "commit", boom)
+    result = record_message(1, "g1", "user", "hello")
+    assert result is None
+
+
+def test_list_messages_orders_oldest_first(app):
+    record_message(1, "g1", "user", "first")
+    record_message(1, "g1", "assistant", "second")
+    rows = list_messages()
+    assert [row.content for row in rows] == ["first", "second"]
+
+
+def test_list_messages_respects_the_limit(app):
+    for i in range(5):
+        record_message(1, "g1", "user", f"message {i}")
+    rows = list_messages(limit=2)
+    assert len(rows) == 2
