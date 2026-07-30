@@ -55,6 +55,7 @@ def _register_models() -> None:
     from .auth import model as _auth_model  # noqa: F401
     from .backups import model as _backup_model  # noqa: F401
     from .changes import model as _change_model  # noqa: F401
+    from .chat import model as _chat_model  # noqa: F401
     from .commands import model as _command_model  # noqa: F401
     from .credentials import model as _credential_model  # noqa: F401
     from .devices import model as _device_model  # noqa: F401
