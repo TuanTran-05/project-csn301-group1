@@ -17,6 +17,35 @@ TARGET = SSHTarget(
 )
 
 
+# -- legacy Cisco IOSv compatibility ---------------------------------------
+# Confirmed against a real IOSv device in the CSN301 lab: it offers only
+# diffie-hellman-group14-sha1 for key exchange and ssh-rsa for the host key.
+# Paramiko 5.x dropped both from its defaults, so a vanilla connection fails
+# with "Incompatible ssh peer (no acceptable kex algorithm)" before
+# authentication is ever attempted.
+
+
+def test_legacy_kex_algorithm_is_enabled_for_old_cisco_devices():
+    assert "diffie-hellman-group14-sha1" in paramiko.Transport._preferred_kex
+
+
+def test_legacy_host_key_algorithm_is_enabled_for_old_cisco_devices():
+    assert "ssh-rsa" in paramiko.Transport._preferred_keys
+
+
+def test_legacy_algorithms_are_appended_not_preferred():
+    """Modern algorithms must still win the negotiation when a device offers
+    them: the legacy entries are appended, never inserted ahead of anything
+    stronger."""
+    kex = paramiko.Transport._preferred_kex
+    assert kex.index("diffie-hellman-group14-sha1") > kex.index(
+        "curve25519-sha256@libssh.org"
+    )
+
+    host_keys = paramiko.Transport._preferred_keys
+    assert host_keys.index("ssh-rsa") > host_keys.index("ssh-ed25519")
+
+
 class FakeChannelFile:
     def __init__(self, payload: bytes = b""):
         self._payload = payload

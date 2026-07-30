@@ -24,6 +24,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_COMMAND_TIMEOUT = 30
 
+# Cisco IOSv / IOSv-L2 images (the devices in this lab) only speak
+# diffie-hellman-group14-sha1 for key exchange and ssh-rsa for the host key.
+# Paramiko, like modern OpenSSH, dropped both from its defaults as weak, so a
+# vanilla connection fails with "Incompatible ssh peer (no acceptable kex
+# algorithm)" before authentication is ever attempted. Confirmed against a real
+# device in the CSN301 lab. Appending — not replacing — keeps modern algorithms
+# preferred whenever a device actually offers them.
+_LEGACY_KEX = "diffie-hellman-group14-sha1"
+if _LEGACY_KEX not in paramiko.Transport._preferred_kex:
+    paramiko.Transport._preferred_kex = paramiko.Transport._preferred_kex + (
+        _LEGACY_KEX,
+    )
+
+_LEGACY_HOST_KEY = "ssh-rsa"
+if _LEGACY_HOST_KEY not in paramiko.Transport._preferred_keys:
+    paramiko.Transport._preferred_keys = paramiko.Transport._preferred_keys + (
+        _LEGACY_HOST_KEY,
+    )
+
 # How long to keep reading an interactive shell after the last byte arrived.
 _IDLE_SECONDS = 0.2
 _POLL_SECONDS = 0.05
