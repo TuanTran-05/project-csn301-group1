@@ -59,11 +59,13 @@ def test_list_messages_orders_oldest_first(app):
     assert [row.content for row in rows] == ["first", "second"]
 
 
-def test_list_messages_respects_the_limit(app):
+def test_list_messages_returns_the_most_recent_window_oldest_first(app):
     for i in range(5):
         record_message(1, "g1", "user", f"message {i}")
+
     rows = list_messages(limit=2)
-    assert len(rows) == 2
+
+    assert [row.content for row in rows] == ["message 3", "message 4"]
 
 
 def test_messages_endpoint_requires_authentication(client):

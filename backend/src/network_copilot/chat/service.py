@@ -44,9 +44,15 @@ def record_message(
 
 
 def list_messages(limit: int = 200) -> list[ChatMessage]:
+    bounded_ids = (
+        db.session.query(ChatMessage.id.label("id"))
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(min(max(limit, 1), 500))
+        .subquery()
+    )
     return (
         db.session.query(ChatMessage)
+        .join(bounded_ids, ChatMessage.id == bounded_ids.c.id)
         .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-        .limit(min(max(limit, 1), 500))
         .all()
     )

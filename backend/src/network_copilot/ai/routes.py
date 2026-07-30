@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from pydantic import ValidationError as PydanticValidationError
 
 from ..auth.service import current_user
@@ -19,20 +19,27 @@ def record_failed_chat_response(response):
         return response
 
     try:
-        user = current_user()
+        identity = get_jwt_identity()
     except RuntimeError:
         # JWT verification did not complete, so this is an unauthenticated 401.
         return response
-    if user is None:
+    if identity is None:
         return response
 
+    user = current_user()
     payload = response.get_json(silent=True)
     if not isinstance(payload, dict):
         payload = {"error": "request_failed", "message": "Request failed."}
     content = payload.get("message")
     if not isinstance(content, str):
         content = "Request failed."
-    record_chat_message(user.id, user.username, "system", content, payload)
+    record_chat_message(
+        user.id if user else None,
+        user.username if user else None,
+        "system",
+        content,
+        payload,
+    )
     return response
 
 

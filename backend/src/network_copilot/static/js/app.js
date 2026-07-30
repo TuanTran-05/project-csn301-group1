@@ -30,6 +30,7 @@ document.addEventListener("alpine:init", () => {
     draftMessage: "",
     sending: false,
     _messagesRefreshGeneration: 0,
+    _clientMessageSequence: 0,
 
     get pendingChanges() {
       return Object.values(this.changesById).filter(
@@ -48,25 +49,41 @@ document.addEventListener("alpine:init", () => {
             return this.startApp();
           })
           .catch(() => {
-            /* authFetch already logged out on a 401 */
+            if (
+              generation === this._sessionGeneration &&
+              this.token &&
+              this.currentUser
+            ) {
+              return this.startApp();
+            }
           });
       }
     },
 
     async authFetch(path, options = {}) {
+      const token = this.token;
+      const generation = this._sessionGeneration;
       const headers = Object.assign(
         { "Content-Type": "application/json" },
         options.headers || {},
-        this.token ? { Authorization: `Bearer ${this.token}` } : {}
+        token ? { Authorization: `Bearer ${token}` } : {}
       );
       const response = await fetch(path, { ...options, headers });
       const data = await response.json().catch(() => ({}));
-      if (response.status === 401) {
+      if (
+        response.status === 401 &&
+        generation === this._sessionGeneration &&
+        token === this.token
+      ) {
         this.logout();
-        throw new Error(data.message || "session_expired");
       }
       if (!response.ok) {
-        throw new Error(data.message || `Request failed (${response.status})`);
+        const error = new Error(
+          (data && data.message) || `Request failed (${response.status})`
+        );
+        error.data = data;
+        error.status = response.status;
+        throw error;
       }
       return data;
     },
@@ -110,20 +127,33 @@ document.addEventListener("alpine:init", () => {
 
     async startApp() {
       const generation = this._sessionGeneration;
-      await this.hydrateMessages();
-      if (generation !== this._sessionGeneration) return;
-      await this.refreshDevices();
-      if (generation !== this._sessionGeneration) return;
-      await this.refreshChanges();
-      if (generation !== this._sessionGeneration) return;
+      const bootstrap = [
+        () => this.hydrateMessages(),
+        () => this.refreshDevices(),
+        () => this.refreshChanges(),
+      ];
+      for (const load of bootstrap) {
+        try {
+          await load();
+        } catch {
+          if (generation !== this._sessionGeneration) return;
+        }
+        if (generation !== this._sessionGeneration) return;
+      }
       this.startPolling();
     },
 
     startPolling() {
       this.stopPolling();
-      this._deviceTimer = setInterval(() => this.refreshDevices(), 15000);
-      this._changesTimer = setInterval(() => this.refreshChanges(), 15000);
-      this._messagesTimer = setInterval(() => this.pollMessages(), 7000);
+      this._deviceTimer = setInterval(() => {
+        this.refreshDevices().catch(() => {});
+      }, 15000);
+      this._changesTimer = setInterval(() => {
+        this.refreshChanges().catch(() => {});
+      }, 15000);
+      this._messagesTimer = setInterval(() => {
+        this.pollMessages().catch(() => {});
+      }, 7000);
     },
 
     stopPolling() {
@@ -192,8 +222,41 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    _clientMessage(role, content, payload) {
+      this._clientMessageSequence += 1;
+      return {
+        id: `client-${this._clientMessageSequence}`,
+        username: this.currentUser && this.currentUser.username,
+        role,
+        content,
+        payload: payload || null,
+        created_at: new Date().toISOString(),
+        _client: true,
+      };
+    },
+
     _ingestMessage(message) {
-      this.messages.push(message);
+      if (!message._client) {
+        if (this.messages.some((item) => !item._client && item.id === message.id)) {
+          return;
+        }
+        const clientIndex = this.messages.findIndex(
+          (item) =>
+            item._client &&
+            item.role === message.role &&
+            item.content === message.content &&
+            (!item.username ||
+              !message.username ||
+              item.username === message.username)
+        );
+        if (clientIndex >= 0) {
+          this.messages.splice(clientIndex, 1, message);
+        } else {
+          this.messages.push(message);
+        }
+      } else {
+        this.messages.push(message);
+      }
       const change = message.payload && message.payload.change;
       if (change && change.id != null && !(change.id in this.changesById)) {
         this.changesById[change.id] = change;
@@ -252,22 +315,50 @@ document.addEventListener("alpine:init", () => {
       const generation = this._messagesRefreshGeneration;
       this.draftMessage = "";
       this.sending = true;
+      this._ingestMessage(this._clientMessage("user", text, null));
+      this.$nextTick(() => {
+        if (generation === this._messagesRefreshGeneration) {
+          this._scrollToBottom();
+        }
+      });
       try {
-        await this.authFetch("/api/ai/chat", {
+        const payload = await this.authFetch("/api/ai/chat", {
           method: "POST",
           body: JSON.stringify({ message: text }),
         });
+        if (generation !== this._messagesRefreshGeneration) return;
+        this._ingestMessage(
+          this._clientMessage(
+            "assistant",
+            payload.explanation || "Request completed.",
+            payload
+          )
+        );
       } catch (err) {
-        // Chat failures are recorded server-side as system messages. Fetch
-        // immediately instead of waiting for the next scheduled poll.
+        if (generation !== this._messagesRefreshGeneration) return;
+        const payload =
+          err.data && typeof err.data === "object" && !Array.isArray(err.data)
+            ? err.data
+            : { error: "request_failed", message: err.message };
+        this._ingestMessage(
+          this._clientMessage(
+            "system",
+            typeof payload.message === "string"
+              ? payload.message
+              : "Request failed.",
+            payload
+          )
+        );
       } finally {
         if (generation !== this._messagesRefreshGeneration) return;
         try {
           await this.pollMessages();
-        } finally {
-          if (generation === this._messagesRefreshGeneration) {
-            this.sending = false;
-          }
+        } catch {
+          // The POST result is already present as a client message. A later
+          // scheduled poll can reconcile it with persisted transcript rows.
+        }
+        if (generation === this._messagesRefreshGeneration) {
+          this.sending = false;
         }
       }
     },

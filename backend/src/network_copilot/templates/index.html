@@ -40,9 +40,14 @@
         <ul>
           <template x-for="device in devices" :key="device.id">
             <li>
-              <span class="status-dot" :class="'status-' + device.status"></span>
+              <span
+                class="status-dot"
+                :class="'status-' + device.status"
+                aria-hidden="true"
+              ></span>
               <span x-text="device.hostname"></span>
               <span class="device-role" x-text="device.role"></span>
+              <span class="device-status" x-text="device.status"></span>
             </li>
           </template>
         </ul>
@@ -57,6 +62,40 @@
               </div>
               <div class="bubble-content" x-text="message.content"></div>
 
+              <template x-if="message.role === 'assistant' && message.payload && Array.isArray(message.payload.results)">
+                <div class="operational-results">
+                  <div class="operational-heading">
+                    <span class="operational-label">Target</span>
+                    <strong x-text="message.payload.device || 'Unknown device'"></strong>
+                    <span class="intent-pill" x-text="message.payload.intent"></span>
+                  </div>
+                  <p
+                    class="operational-analysis"
+                    x-show="message.payload.analysis"
+                    x-text="message.payload.analysis"
+                  ></p>
+                  <div class="result-list">
+                    <template x-for="(result, resultIndex) in message.payload.results" :key="result.command + '-' + resultIndex">
+                      <div class="result-row">
+                        <div class="result-heading">
+                          <code x-text="result.command"></code>
+                          <span
+                            class="result-status"
+                            :class="'result-' + result.status"
+                            x-text="result.status"
+                          ></span>
+                          <span
+                            class="result-duration"
+                            x-text="result.duration_ms != null ? result.duration_ms + ' ms' : ''"
+                          ></span>
+                        </div>
+                        <pre x-text="result.output || 'No output returned.'"></pre>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
               <template x-if="message.payload && message.payload.change && changesById[message.payload.change.id]">
                 <div class="action-card" x-data="{ get change() { return changesById[message.payload.change.id]; } }">
                   <div class="action-card-header">
@@ -64,7 +103,49 @@
                     <span class="risk-pill" x-text="change.risk_level"></span>
                     <span class="status-pill" x-text="change.status"></span>
                   </div>
-                  <pre x-text="(change.commands || []).join('\n')"></pre>
+                  <div
+                    class="change-target"
+                    x-text="change.device && change.device.hostname ? change.device.hostname : ('Thiết bị #' + (change.device && change.device.id ? change.device.id : ''))"
+                  ></div>
+                  <div class="change-detail">
+                    <span class="operational-label">Commands</span>
+                    <pre x-text="(change.commands || []).join('\n')"></pre>
+                  </div>
+                  <div class="change-detail" x-show="(change.verification_commands || []).length">
+                    <span class="operational-label">Verification plan</span>
+                    <pre x-text="(change.verification_commands || []).join('\n')"></pre>
+                  </div>
+                  <div class="change-detail" x-show="change.apply_output">
+                    <span class="operational-label">Apply output</span>
+                    <pre x-text="change.apply_output"></pre>
+                  </div>
+                  <div
+                    class="change-error"
+                    x-show="change.error_message"
+                    x-text="change.error_message"
+                  ></div>
+                  <template x-if="change.verification_output && Object.keys(change.verification_output).length">
+                    <div class="verification-results">
+                      <span class="operational-label">Final verification</span>
+                      <template x-for="entry in Object.entries(change.verification_output)" :key="entry[0]">
+                        <div class="verification-row">
+                          <div class="result-heading">
+                            <code x-text="entry[0]"></code>
+                            <span
+                              class="result-status"
+                              :class="entry[1].passed ? 'result-success' : 'result-failed'"
+                              x-text="entry[1].passed ? 'passed' : 'failed'"
+                            ></span>
+                          </div>
+                          <div
+                            class="verification-details"
+                            x-text="(entry[1].details || []).join(' ')"
+                          ></div>
+                          <pre x-show="entry[1].output" x-text="entry[1].output"></pre>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
                   <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
                     <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
                     <button x-show="change.status === 'approved'" @click="applyChange(change.id)">Apply</button>
@@ -84,7 +165,9 @@
         </div>
 
         <form class="chat-input" @submit.prevent="sendMessage()">
+          <label class="sr-only" for="chat-message">Tin nhắn cho Network Copilot</label>
           <input
+            id="chat-message"
             type="text"
             x-model="draftMessage"
             :disabled="sending"
@@ -99,6 +182,10 @@
           <template x-for="change in pendingChanges" :key="change.id">
             <li>
               <div x-text="change.device ? change.device.hostname : ('Thiết bị #' + change.device_id)"></div>
+              <div
+                class="change-command-summary"
+                x-text="(change.commands || []).join(' · ')"
+              ></div>
               <span class="risk-pill" x-text="change.risk_level"></span>
               <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
                 <button @click="approveChange(change.id)">Approve</button>
