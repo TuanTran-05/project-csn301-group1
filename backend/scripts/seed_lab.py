@@ -41,6 +41,7 @@ LAB_DEVICES = [
     ("DIST-SW1", "10.10.10.21", "cisco_ios", "distribution"),
     ("DIST-SW2", "10.10.10.22", "cisco_ios", "distribution"),
     ("ACC-SW1", "10.10.10.31", "cisco_ios", "access"),
+    ("ACC-SW2", "10.10.10.32", "cisco_ios", "access"),
     ("ACC-SW3", "10.10.10.33", "cisco_ios", "access"),
     ("DMZ-SW", "10.10.10.34", "cisco_ios", "dmz"),
 ]
