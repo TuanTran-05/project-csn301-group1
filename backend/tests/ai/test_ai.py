@@ -92,6 +92,16 @@ def test_interpret_rejects_malformed_model_output(app, admin_user):
         service.interpret("hello", admin_user.id)
 
 
+def test_prompt_tells_the_model_stale_status_is_not_a_reason_to_refuse(
+    app, dist_switch, admin_user
+):
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+    prompt = provider.prompts[0]["system_prompt"]
+    assert "stale" in prompt
+    assert "never a reason to skip commands" in prompt
+
+
 # -- tolerating real model output ----------------------------------------
 # Even with response_mime_type=application/json, models sometimes emit more
 # than one JSON value or wrap the object in prose. Always take the first
