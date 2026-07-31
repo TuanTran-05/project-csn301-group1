@@ -203,3 +203,26 @@ def test_audit_recent_bucket(app):
 def test_generated_at_is_present(app):
     summary = build_summary()
     assert summary["generated_at"]
+
+
+# -- API -----------------------------------------------------------------
+
+
+def test_summary_endpoint_requires_authentication(client):
+    assert client.get("/api/dashboard/summary").status_code == 401
+
+
+def test_summary_endpoint_is_readable_by_viewer(client, viewer_headers):
+    response = client.get("/api/dashboard/summary", headers=viewer_headers)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert "devices" in body
+    assert "ospf" in body
+    assert "changes" in body
+    assert "audit" in body
+    assert "generated_at" in body
+
+
+def test_dashboard_page_is_served(client):
+    response = client.get("/dashboard")
+    assert response.status_code == 200

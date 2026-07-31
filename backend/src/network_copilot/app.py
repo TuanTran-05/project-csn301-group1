@@ -37,6 +37,10 @@ def create_app(config_object: type | None = None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.get("/dashboard")
+    def dashboard_page():
+        return render_template("dashboard.html")
+
     return app
 
 
@@ -88,6 +92,7 @@ def _register_blueprints(app: Flask) -> None:
     from .changes.routes import bp as changes_bp
     from .chat.routes import bp as chat_bp
     from .commands.routes import bp as commands_bp
+    from .dashboard.routes import bp as dashboard_bp
     from .devices.routes import bp as devices_bp
     from .monitoring.routes import bp as monitoring_bp
 
@@ -99,6 +104,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(audit_bp)
     app.register_blueprint(ai_bp)
     app.register_blueprint(chat_bp)
+    app.register_blueprint(dashboard_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
