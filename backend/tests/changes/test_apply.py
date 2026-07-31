@@ -286,6 +286,133 @@ def test_apply_endpoint_404s_for_unknown_change(client, admin_headers):
     )
 
 
+def test_apply_endpoint_requires_confirm_hostname_for_flagged_changes(
+    client, admin_headers, access_switch, ssh_factory
+):
+    ssh_factory.set_client(access_switch.hostname)
+    change_id = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "write erase", "end"],
+        },
+    ).get_json()["id"]
+    client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
+
+    response = client.post(
+        f"/api/changes/{change_id}/apply", headers=admin_headers
+    )
+    assert response.status_code == 422
+
+
+def test_apply_endpoint_rejects_a_wrong_confirm_hostname(
+    client, admin_headers, access_switch, ssh_factory
+):
+    ssh_factory.set_client(access_switch.hostname)
+    change_id = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "write erase", "end"],
+        },
+    ).get_json()["id"]
+    client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
+
+    response = client.post(
+        f"/api/changes/{change_id}/apply",
+        headers=admin_headers,
+        json={"confirm_hostname": "WRONG-NAME"},
+    )
+    assert response.status_code == 422
+
+
+def test_apply_endpoint_succeeds_with_the_correct_confirm_hostname(
+    client, admin_headers, access_switch, ssh_factory
+):
+    ssh_factory.set_client(access_switch.hostname, config_output="ok", default_output="ok")
+    change_id = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "write erase", "end"],
+        },
+    ).get_json()["id"]
+    client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
+
+    response = client.post(
+        f"/api/changes/{change_id}/apply",
+        headers=admin_headers,
+        json={"confirm_hostname": access_switch.hostname},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "success"
+
+
+def test_apply_never_reaches_ssh_without_confirmation(
+    client, admin_headers, access_switch, ssh_factory
+):
+    fake = ssh_factory.set_client(access_switch.hostname)
+    change_id = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "write erase", "end"],
+        },
+    ).get_json()["id"]
+    client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
+    client.post(f"/api/changes/{change_id}/apply", headers=admin_headers)
+
+    assert fake.calls == []
+
+
+def test_apply_without_confirmation_does_not_change_status(
+    app, admin_user, access_switch, ssh_factory
+):
+    from network_copilot.errors import ValidationError
+
+    ssh_factory.set_client(access_switch.hostname)
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", "write erase", "end"],
+    )
+    change_service.approve(change.id, admin_user.id)
+
+    with pytest.raises(ValidationError):
+        change_service.apply(change.id, admin_user.id)
+
+    assert change.status == "approved"
+
+
+def test_apply_service_accepts_the_correct_confirm_hostname(
+    app, admin_user, access_switch, ssh_factory
+):
+    ssh_factory.set_client(access_switch.hostname, config_output="ok", default_output="ok")
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", "write erase", "end"],
+    )
+    change_service.approve(change.id, admin_user.id)
+
+    result = change_service.apply(
+        change.id, admin_user.id, confirm_hostname=access_switch.hostname
+    )
+    assert result.status == "success"
+
+
+def test_apply_service_does_not_require_confirmation_for_ordinary_changes(
+    app, admin_user, pending_change, applying_client
+):
+    change_service.approve(pending_change.id, admin_user.id)
+    result = change_service.apply(pending_change.id, admin_user.id)
+    assert result.status == "success"
+
+
 def test_backups_endpoint_lists_device_backups(
     client, admin_headers, admin_user, pending_change, applying_client, access_switch
 ):

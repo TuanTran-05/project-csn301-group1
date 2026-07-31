@@ -162,14 +162,31 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     assert verification["passed"] is True
     assert "MARKETING" in verification["output"]
 
-    # 8. A dangerous AI request is blocked and audited.
+    # 8. A dangerous AI request is not blocked - it still only creates a
+    # Preview, flagged for confirmation, and never touches SSH by itself.
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(
         responses=AI_WRITE_ERASE_ACTION
     )
-    blocked = client.post(
+    dangerous = client.post(
         "/api/ai/chat", headers=headers, json={"message": "write erase ACC-SW1"}
     )
-    assert blocked.status_code == 403
+    assert dangerous.status_code == 200
+    dangerous_change = dangerous.get_json()["change"]
+    assert dangerous_change["status"] == "pending_approval"
+    assert dangerous_change["requires_confirmation"] is True
+    assert lab.config_batches == [
+        ["configure terminal", "vlan 25", "name MARKETING", "end"]
+    ]
+
+    # Applying it without the confirmation is rejected, and still never
+    # reaches the device.
+    client.post(
+        f"/api/changes/{dangerous_change['id']}/approve", headers=headers
+    )
+    unconfirmed_apply = client.post(
+        f"/api/changes/{dangerous_change['id']}/apply", headers=headers
+    )
+    assert unconfirmed_apply.status_code == 422
     assert lab.config_batches == [
         ["configure terminal", "vlan 25", "name MARKETING", "end"]
     ]
@@ -183,7 +200,6 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
         "change.preview",
         "change.approve",
         "change.apply",
-        "ai.command_blocked",
     } <= actions
 
 

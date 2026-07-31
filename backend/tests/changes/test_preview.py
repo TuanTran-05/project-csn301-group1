@@ -27,21 +27,23 @@ def test_vlan_preview_requires_approval(app, admin_user, access_switch):
     )
     assert change.status == "pending_approval"
     assert change.risk_level == "low"
+    assert change.requires_confirmation is False
 
 
-# -- supported templates --------------------------------------------------
+# -- ordinary, low-risk commands -------------------------------------------
 
 
-def test_vlan_rename_is_supported(app, admin_user, access_switch):
+def test_vlan_rename_is_allowed(app, admin_user, access_switch):
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
         commands=["configure terminal", "vlan 25", "name SALES-NEW", "end"],
     )
     assert change.status == "pending_approval"
+    assert change.requires_confirmation is False
 
 
-def test_access_port_assignment_is_supported(app, admin_user, access_switch):
+def test_access_port_assignment_is_allowed(app, admin_user, access_switch):
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
@@ -54,9 +56,10 @@ def test_access_port_assignment_is_supported(app, admin_user, access_switch):
         ],
     )
     assert change.status == "pending_approval"
+    assert change.requires_confirmation is False
 
 
-def test_interface_description_is_supported(app, admin_user, access_switch):
+def test_interface_description_is_allowed(app, admin_user, access_switch):
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
@@ -68,56 +71,96 @@ def test_interface_description_is_supported(app, admin_user, access_switch):
         ],
     )
     assert change.status == "pending_approval"
+    assert change.requires_confirmation is False
 
 
-# -- blocked operations ---------------------------------------------------
+def test_ai_has_full_authority_over_commands_not_previously_supported(
+    app, admin_user, access_switch
+):
+    """The MVP used to reject anything outside 3 templates. It no longer
+    does: a Preview is a proposal a human still has to approve and apply,
+    so unusual-but-not-dangerous commands are allowed through."""
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", "hostname RENAMED-SW1", "end"],
+    )
+    assert change.status == "pending_approval"
+    assert change.requires_confirmation is False
 
 
-def test_shutdown_on_core_uplink_is_blocked(app, admin_user, core_switch):
-    with pytest.raises(PolicyViolationError):
-        change_service.create_preview(
-            admin_user.id,
-            device_id=core_switch.id,
-            commands=[
-                "configure terminal",
-                "interface GigabitEthernet0/1",
-                "shutdown",
-                "end",
-            ],
-        )
+# -- dangerous commands require confirmation, they are not blocked --------
 
 
-def test_shutdown_on_distribution_uplink_is_blocked(app, admin_user, dist_switch):
-    with pytest.raises(PolicyViolationError):
-        change_service.create_preview(
-            admin_user.id,
-            device_id=dist_switch.id,
-            commands=[
-                "configure terminal",
-                "interface GigabitEthernet0/0",
-                "shutdown",
-                "end",
-            ],
-        )
+def test_shutdown_on_core_uplink_requires_confirmation(app, admin_user, core_switch):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=core_switch.id,
+        commands=[
+            "configure terminal",
+            "interface GigabitEthernet0/1",
+            "shutdown",
+            "end",
+        ],
+    )
+    assert change.status == "pending_approval"
+    assert change.requires_confirmation is True
 
 
-def test_removing_ospf_is_blocked(app, admin_user, core_switch):
-    with pytest.raises(PolicyViolationError):
-        change_service.create_preview(
-            admin_user.id,
-            device_id=core_switch.id,
-            commands=["configure terminal", "no router ospf 1", "end"],
-        )
+def test_shutdown_on_distribution_uplink_requires_confirmation(
+    app, admin_user, dist_switch
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=dist_switch.id,
+        commands=[
+            "configure terminal",
+            "interface GigabitEthernet0/0",
+            "shutdown",
+            "end",
+        ],
+    )
+    assert change.requires_confirmation is True
+
+
+def test_removing_ospf_requires_confirmation(app, admin_user, core_switch):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=core_switch.id,
+        commands=["configure terminal", "no router ospf 1", "end"],
+    )
+    assert change.status == "pending_approval"
+    assert change.requires_confirmation is True
 
 
 @pytest.mark.parametrize("vlan_id", [1, 1002, 1003, 1004, 1005])
-def test_deleting_a_system_vlan_is_blocked(app, admin_user, access_switch, vlan_id):
-    with pytest.raises(PolicyViolationError):
-        change_service.create_preview(
-            admin_user.id,
-            device_id=access_switch.id,
-            commands=["configure terminal", f"no vlan {vlan_id}", "end"],
-        )
+def test_deleting_a_system_vlan_requires_confirmation(
+    app, admin_user, access_switch, vlan_id
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", f"no vlan {vlan_id}", "end"],
+    )
+    assert change.status == "pending_approval"
+    assert change.requires_confirmation is True
+
+
+@pytest.mark.parametrize("vlan_id", [1, 1002, 1003, 1004, 1005])
+def test_assigning_a_port_to_a_system_vlan_requires_confirmation(
+    app, admin_user, access_switch, vlan_id
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=[
+            "configure terminal",
+            "interface GigabitEthernet0/1",
+            f"switchport access vlan {vlan_id}",
+            "end",
+        ],
+    )
+    assert change.requires_confirmation is True
 
 
 @pytest.mark.parametrize(
@@ -126,14 +169,44 @@ def test_deleting_a_system_vlan_is_blocked(app, admin_user, access_switch, vlan_
         "write erase",
         "reload",
         "erase startup-config",
-        "hostname HACKED",
-        "ip route 0.0.0.0 0.0.0.0 1.2.3.4",
-        "username backdoor privilege 15 secret Pass123",
-        "router ospf 1",
-        "banner motd #owned#",
+        "delete flash:config.text",
+        "format flash:",
+        "debug ip packet",
     ],
 )
-def test_commands_outside_the_supported_templates_are_blocked(
+def test_destructive_commands_require_confirmation(
+    app, admin_user, access_switch, command
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", command, "end"],
+    )
+    assert change.status == "pending_approval"
+    assert change.requires_confirmation is True
+
+
+def test_requires_confirmation_forces_high_risk(app, admin_user, access_switch):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        commands=["configure terminal", "write erase", "end"],
+    )
+    assert change.risk_level == "high"
+
+
+# -- chained commands are still hard blocked -------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "show ip route ; write erase",
+        "vlan 25 | write erase",
+        "vlan 25 && reload",
+    ],
+)
+def test_chained_commands_are_still_hard_blocked(
     app, admin_user, access_switch, command
 ):
     with pytest.raises(PolicyViolationError):
@@ -181,11 +254,11 @@ def test_preview_stores_the_requesting_user_and_device(
     assert db.session.query(ChangeRequest).count() == 1
 
 
-def test_preview_normalises_commands(app, admin_user, access_switch):
+def test_preview_normalises_whitespace(app, admin_user, access_switch):
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
-        commands=["  configure   terminal ", "VLAN 25", "name MARKETING", "end"],
+        commands=["  configure   terminal ", "vlan 25", "name MARKETING", "end"],
     )
     assert change.commands[0] == "configure terminal"
     assert change.commands[1] == "vlan 25"
@@ -240,6 +313,7 @@ def test_preview_endpoint_returns_full_payload(client, admin_headers, access_swi
     body = response.get_json()
     assert body["status"] == "pending_approval"
     assert body["risk_level"] == "low"
+    assert body["requires_confirmation"] is False
     assert body["device"]["hostname"] == "ACC-SW1"
     assert body["commands"] == VLAN_COMMANDS
     assert body["verification_commands"] == ["show vlan brief"]
@@ -247,7 +321,7 @@ def test_preview_endpoint_returns_full_payload(client, admin_headers, access_swi
     assert "rollback_commands" in body
 
 
-def test_preview_endpoint_blocks_dangerous_changes(
+def test_preview_endpoint_flags_dangerous_changes_instead_of_blocking(
     client, admin_headers, access_switch
 ):
     response = client.post(
@@ -256,6 +330,23 @@ def test_preview_endpoint_blocks_dangerous_changes(
         json={
             "device_id": access_switch.id,
             "commands": ["configure terminal", "no router ospf 1", "end"],
+        },
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["status"] == "pending_approval"
+    assert body["requires_confirmation"] is True
+
+
+def test_preview_endpoint_still_blocks_chained_commands(
+    client, admin_headers, access_switch
+):
+    response = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={
+            "device_id": access_switch.id,
+            "commands": ["configure terminal", "vlan 25 ; write erase", "end"],
         },
     )
     assert response.status_code == 403

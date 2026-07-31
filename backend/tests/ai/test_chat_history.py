@@ -55,9 +55,12 @@ def test_chat_endpoint_records_a_user_and_assistant_message(
     assert rows[1].content == "Checking the routing table."
 
 
-def test_chat_endpoint_records_a_blocked_command_as_a_system_message(
+def test_chat_endpoint_records_a_dangerous_proposal_as_an_assistant_message(
     client, admin_headers, app, access_switch, ssh_factory
 ):
+    """The AI has full authority to propose a dangerous command: it still
+    only creates a Preview (never touches SSH), recorded as a normal
+    assistant turn, just flagged for extra confirmation before Apply."""
     fake = ssh_factory.set_client(access_switch.hostname)
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=WRITE_ERASE_ACTION)
 
@@ -65,10 +68,11 @@ def test_chat_endpoint_records_a_blocked_command_as_a_system_message(
         "/api/ai/chat", headers=admin_headers, json={"message": "write erase"}
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.get_json()["change"]["requires_confirmation"] is True
     rows = db.session.query(ChatMessage).order_by(ChatMessage.id).all()
-    assert [row.role for row in rows] == ["user", "system"]
-    assert rows[1].payload["error"] == "policy_violation"
+    assert [row.role for row in rows] == ["user", "assistant"]
+    assert rows[1].payload["change"]["requires_confirmation"] is True
     assert fake.calls == []
 
 

@@ -3,7 +3,6 @@ from fakes.fake_ai_provider import FakeAIProvider
 
 from network_copilot.ai.schemas import AIAction
 from network_copilot.ai.service import AIService
-from network_copilot.audit.model import AuditLog
 from network_copilot.changes.model import ChangeRequest
 from network_copilot.commands.model import CommandExecution
 from network_copilot.credentials.service import store_device_credential
@@ -336,25 +335,22 @@ def test_configure_intent_requires_approval_before_anything_runs(
 # -- dangerous commands ---------------------------------------------------
 
 
-def test_write_erase_from_ai_is_blocked(app, access_switch, admin_user, ssh_factory):
+def test_write_erase_from_ai_requires_confirmation_not_a_block(
+    app, access_switch, admin_user, ssh_factory
+):
+    """The AI has full authority to propose a dangerous command: it still
+    only creates a Preview (never touches SSH), but that Preview is flagged
+    so Apply will demand the device hostname be typed back."""
     fake = ssh_factory.set_client(access_switch.hostname)
     service, _ = service_with(app, DANGEROUS_ACTION)
 
-    with pytest.raises(PolicyViolationError):
-        service.handle("Xoa cau hinh ACC-SW1", admin_user.id)
+    result = service.handle("Xoa cau hinh ACC-SW1", admin_user.id)
 
+    assert result["intent"] == "configure"
+    assert result["change"]["status"] == "pending_approval"
+    assert result["change"]["requires_confirmation"] is True
     assert fake.calls == []
-    assert db.session.query(ChangeRequest).count() == 0
-
-
-def test_blocked_ai_command_is_audited(app, access_switch, admin_user, ssh_factory):
-    ssh_factory.set_client(access_switch.hostname)
-    service, _ = service_with(app, DANGEROUS_ACTION)
-    with pytest.raises(PolicyViolationError):
-        service.handle("Xoa cau hinh ACC-SW1", admin_user.id)
-
-    log = db.session.query(AuditLog).filter_by(action="ai.command_blocked").one()
-    assert log.result == "blocked"
+    assert db.session.query(ChangeRequest).count() == 1
 
 
 def test_monitor_intent_with_a_dangerous_command_is_blocked(
@@ -529,14 +525,15 @@ def test_chat_endpoint_creates_a_preview_for_configure(
     assert response.get_json()["change"]["status"] == "pending_approval"
 
 
-def test_chat_endpoint_blocks_dangerous_requests(
+def test_chat_endpoint_flags_dangerous_requests_for_confirmation(
     client, admin_headers, app, access_switch
 ):
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=DANGEROUS_ACTION)
     response = client.post(
         "/api/ai/chat", headers=admin_headers, json={"message": "write erase ACC-SW1"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.get_json()["change"]["requires_confirmation"] is True
 
 
 def test_chat_endpoint_requires_a_message(client, admin_headers, app):

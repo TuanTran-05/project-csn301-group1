@@ -25,6 +25,11 @@ document.addEventListener("alpine:init", () => {
     // -- changes (shared live state, keyed by id) --
     changesById: {},
     _changesRefreshGeneration: 0,
+    // Draft text for the "type the hostname to confirm" box a dangerous
+    // change shows before Apply. Keyed by change id, kept separate from
+    // changesById so a poll refreshing that map never wipes what the
+    // operator is mid-typing.
+    confirmInputs: {},
 
     // -- chat --
     messages: [],
@@ -138,6 +143,7 @@ document.addEventListener("alpine:init", () => {
       this.stopPolling();
       this.devices = [];
       this.changesById = {};
+      this.confirmInputs = {};
       this.messages = [];
       this.draftMessage = "";
       this.sending = false;
@@ -212,14 +218,33 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    confirmHostnameMatches(id) {
+      const change = this.changesById[id];
+      const expected = change && change.device && change.device.hostname;
+      if (!expected) return false;
+      return (this.confirmInputs[id] || "").trim() === expected;
+    },
+
     async applyChange(id) {
       try {
         const generation = this._changesRefreshGeneration;
-        const change = await this.authFetch(`/api/changes/${id}/apply`, {
+        const change = this.changesById[id];
+        const body = {};
+        if (change && change.requires_confirmation) {
+          if (!this.confirmHostnameMatches(id)) {
+            // The Apply button is disabled until this matches, but guard the
+            // request too in case state changed between render and click.
+            return;
+          }
+          body.confirm_hostname = (this.confirmInputs[id] || "").trim();
+        }
+        const updated = await this.authFetch(`/api/changes/${id}/apply`, {
           method: "POST",
+          body: JSON.stringify(body),
         });
         if (generation === this._changesRefreshGeneration) {
-          this.changesById[id] = change;
+          this.changesById[id] = updated;
+          delete this.confirmInputs[id];
         }
       } catch (err) {
         alert(err.message);

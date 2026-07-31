@@ -146,9 +146,29 @@
                       </template>
                     </div>
                   </template>
+                  <div
+                    class="confirm-hostname"
+                    x-show="change.status === 'approved' && change.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                  >
+                    <p class="confirm-hostname-warning">
+                      Thay đổi này chứa lệnh nguy hiểm. Gõ lại chính xác tên thiết bị
+                      (<code x-text="change.device && change.device.hostname"></code>)
+                      để xác nhận Apply.
+                    </p>
+                    <input
+                      type="text"
+                      :placeholder="change.device && change.device.hostname"
+                      x-model="confirmInputs[change.id]"
+                      autocomplete="off"
+                    />
+                  </div>
                   <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
                     <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
-                    <button x-show="change.status === 'approved'" @click="applyChange(change.id)">Apply</button>
+                    <button
+                      x-show="change.status === 'approved'"
+                      :disabled="change.requires_confirmation && !confirmHostnameMatches(change.id)"
+                      @click="applyChange(change.id)"
+                    >Apply</button>
                     <button
                       x-show="change.status === 'pending_approval' || change.status === 'approved'"
                       @click="cancelChange(change.id)"

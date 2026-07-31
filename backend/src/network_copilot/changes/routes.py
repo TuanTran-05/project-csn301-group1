@@ -68,7 +68,10 @@ def approve(change_id: int):
 @limiter.limit("10 per minute")
 def apply(change_id: int):
     user = current_user()
-    change = service.apply(change_id, user.id if user else None)
+    payload = request.get_json(silent=True) or {}
+    change = service.apply(
+        change_id, user.id if user else None, confirm_hostname=payload.get("confirm_hostname")
+    )
     return jsonify(change.to_dict()), 200
 
 

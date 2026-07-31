@@ -205,7 +205,11 @@ class AIService:
         raise PolicyViolationError(reason, {"commands": action.commands})
 
     def _guard(self, action: AIAction, device: Device, user_id: int | None) -> None:
-        """Refuse anything the policy engine or the templates do not allow."""
+        """Refuse only what the underlying policy engines refuse: chained
+        commands for monitor/troubleshoot, or an empty/injected command list
+        for configure. Dangerous-but-legitimate configure commands are not
+        blocked here - they still go through Preview -> Approve -> Apply,
+        just flagged for extra confirmation at Apply time."""
         if action.intent in {"monitor", "troubleshoot"}:
             for command in action.commands:
                 decision = default_policy.evaluate(command, device.role)

@@ -442,6 +442,35 @@ body {
   margin-top: 8px;
 }
 
+.action-card-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirm-hostname {
+  background: #fdecea;
+  border-left: 2px solid #c8302a;
+  border-radius: 4px;
+  margin-top: 8px;
+  padding: 8px;
+}
+
+.confirm-hostname-warning {
+  color: #8a1c14;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0 0 6px;
+}
+
+.confirm-hostname input {
+  border: 1px solid #c7d0d9;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 13px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
 .risk-pill, .status-pill {
   padding: 2px 8px;
   border-radius: 10px;

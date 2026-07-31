@@ -41,6 +41,16 @@ class ChangeRequest(db.Model):
     status = db.Column(db.String(32), nullable=False, default="pending_approval")
     source = db.Column(db.String(16), nullable=False, default="api")
 
+    # Set when any command matches an inherently dangerous pattern (write
+    # erase, reload, shutdown, no router ospf, ...) or touches a reserved
+    # VLAN. The change still gets a Preview - it is not blocked - but Apply
+    # additionally requires the caller to type the device hostname back,
+    # a stronger confirmation than the single Approve/Apply click every
+    # other change already goes through.
+    requires_confirmation = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
+
     apply_output = db.Column(db.Text)
     verification_output = db.Column(db.JSON)
     error_message = db.Column(db.String(512))
@@ -65,6 +75,7 @@ class ChangeRequest(db.Model):
             "id": self.id,
             "status": self.status,
             "risk_level": self.risk_level,
+            "requires_confirmation": self.requires_confirmation,
             "description": self.description,
             "device": (
                 {
