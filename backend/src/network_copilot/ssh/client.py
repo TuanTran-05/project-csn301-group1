@@ -105,16 +105,35 @@ class SSHClient:
             self._safe_close(client)
 
     # -- read-only commands ------------------------------------------------
+
+    # Device types whose SSH server does not honour a non-interactive "exec"
+    # channel request (client.exec_command() then just hangs until timeout).
+    # Confirmed against a real Cisco ASA in the CSN301 lab: an interactive
+    # `ssh` session works fine, but exec_command() never returns. These
+    # devices get the same interactive-shell approach run_config() already
+    # uses instead.
+    _SHELL_ONLY_DEVICE_TYPES = {"cisco_asa"}
+
     def run_show(self, command: str) -> SSHResult:
-        """Run a single read-only command over exec_command."""
+        """Run a single read-only command."""
         started = time.monotonic()
         client = self._connect()
+        shell = None
         try:
-            _stdin, stdout, stderr = client.exec_command(
-                command, timeout=self.command_timeout
-            )
-            output = stdout.read().decode(errors="replace")
-            errors = stderr.read().decode(errors="replace")
+            if self.target.device_type in self._SHELL_ONLY_DEVICE_TYPES:
+                shell = client.invoke_shell()
+                shell.settimeout(self.command_timeout)
+                self._drain(shell)  # discard the login banner
+                shell.send(f"{command}\n")
+                output = self._drain(shell)
+            else:
+                _stdin, stdout, stderr = client.exec_command(
+                    command, timeout=self.command_timeout
+                )
+                output = stdout.read().decode(errors="replace")
+                errors = stderr.read().decode(errors="replace")
+                if errors:
+                    output = f"{output}{errors}" if output else errors
         except (socket.timeout, TimeoutError) as exc:
             raise SSHTimeoutError(
                 f"Command timed out on {self.target.host} after "
@@ -125,10 +144,9 @@ class SSHClient:
                 f"Command failed on {self.target.host}."
             ) from exc
         finally:
+            if shell is not None:
+                self._safe_close(shell)
             self._safe_close(client)
-
-        if errors:
-            output = f"{output}{errors}" if output else errors
 
         return SSHResult(
             command=command,
@@ -228,6 +246,7 @@ def build_client_for_device(device):
         username=credential.username,
         password=credential.password,
         enable_secret=credential.enable_secret,
+        device_type=device.device_type,
     )
     return SSHClient(
         target,

@@ -17,6 +17,7 @@ class SSHTarget:
     username: str
     password: str = field(repr=False)
     enable_secret: str | None = field(default=None, repr=False)
+    device_type: str | None = None
 
     def __str__(self) -> str:
         return f"{self.username}@{self.host}:{self.port}"

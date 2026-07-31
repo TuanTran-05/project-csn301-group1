@@ -198,6 +198,43 @@ def test_run_show_wraps_socket_timeout():
         client.run_show("show ip interface brief")
 
 
+# -- run_show on devices that only support an interactive shell -----------
+# Confirmed against a real Cisco ASA in the CSN301 lab: its SSH server does
+# not honour a non-interactive "exec" channel request the way IOS does, so
+# client.exec_command() never returns and every read-only command times out
+# after command_timeout even though an interactive `ssh` session works fine.
+
+
+ASA_TARGET = SSHTarget(
+    host="10.10.10.3",
+    port=22,
+    username="g1lab",
+    password="Secret123!",
+    device_type="cisco_asa",
+)
+
+
+def test_run_show_uses_an_interactive_shell_for_asa_devices():
+    shell = FakeShell(banner="FW-01# ")
+    fake = FakeParamikoClient(shell=shell)
+    client = SSHClient(ASA_TARGET, client_factory=lambda: fake)
+
+    result = client.run_show("show version")
+
+    assert any("show version" in sent for sent in shell.sent)
+    assert isinstance(result, SSHResult)
+    assert result.command == "show version"
+
+
+def test_run_show_still_uses_exec_command_for_non_asa_devices():
+    """The default (no device_type, or anything other than cisco_asa) path
+    is unchanged: a single non-interactive exec_command call, not a shell."""
+    client, fake = make_client(exec_output=b"GigabitEthernet0/0 is up\n")
+    result = client.run_show("show ip interface brief")
+    assert fake.shell.sent == []
+    assert "GigabitEthernet0/0 is up" in result.output
+
+
 # -- run_config -----------------------------------------------------------
 
 
