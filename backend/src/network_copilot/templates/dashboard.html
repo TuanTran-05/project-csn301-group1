@@ -2,7 +2,133 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Network Copilot — Dashboard</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
 </head>
-<body></body>
+<body x-data="dashboardApp()">
+
+  <section class="login-screen" x-show="!currentUser" x-cloak>
+    <form class="login-form" @submit.prevent="login()">
+      <h1>Network Copilot</h1>
+      <label>
+        Tên đăng nhập
+        <input type="text" x-model="loginForm.username" required autocomplete="username" />
+      </label>
+      <label>
+        Mật khẩu
+        <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
+      </label>
+      <p class="error-text" x-show="loginError" x-text="loginError"></p>
+      <button type="submit">Đăng nhập</button>
+    </form>
+  </section>
+
+  <div class="app-shell" x-show="currentUser" x-cloak>
+    <header class="top-bar">
+      <span class="app-title">Network Copilot — Dashboard</span>
+      <a class="nav-link" href="/">Chat</a>
+      <span class="user-badge">
+        <span x-text="currentUser && currentUser.username"></span>
+        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+      </span>
+      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+    </header>
+
+    <p class="dashboard-error" x-show="lastError" x-cloak>
+      Không tải được dữ liệu mới nhất lúc <span x-text="lastError"></span>
+    </p>
+
+    <div class="dashboard-grid" x-show="summary" x-cloak>
+      <section class="dashboard-panel">
+        <h2>Trạng thái thiết bị</h2>
+        <table class="dashboard-table">
+          <thead>
+            <tr><th>Vai trò</th><th>Online</th><th>Offline</th><th>Unknown</th><th>Tổng</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="[role, counts] in Object.entries(summary.devices.by_role)" :key="role">
+              <tr>
+                <td x-text="role"></td>
+                <td><span class="status-dot status-online"></span><span x-text="counts.online"></span></td>
+                <td><span class="status-dot status-offline"></span><span x-text="counts.offline"></span></td>
+                <td><span class="status-dot status-unknown"></span><span x-text="counts.unknown"></span></td>
+                <td x-text="counts.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="dashboard-panel">
+        <h2>Tình trạng OSPF</h2>
+        <p class="dashboard-hint" x-show="allOspfNoData()">
+          Chưa có dữ liệu OSPF — kiểm tra MONITORING_ENABLED trên máy chủ.
+        </p>
+        <template x-for="entry in summary.ospf" :key="entry.device_id">
+          <div class="ospf-entry">
+            <div class="ospf-entry-header">
+              <strong x-text="entry.hostname"></strong>
+              <span class="health-pill" :class="'health-' + entry.health" x-text="entry.health"></span>
+              <span class="ospf-count" x-text="entry.neighbor_count + ' neighbor(s)'"></span>
+            </div>
+            <ul class="ospf-neighbor-list" x-show="entry.neighbors.length">
+              <template x-for="neighbor in entry.neighbors" :key="neighbor.neighbor_id + neighbor.interface">
+                <li>
+                  <code x-text="neighbor.neighbor_id"></code>
+                  <span x-text="neighbor.state"></span>
+                  <span x-text="neighbor.interface"></span>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </template>
+      </section>
+
+      <section class="dashboard-panel">
+        <h2>Thay đổi</h2>
+        <h3>Đang chờ duyệt</h3>
+        <ul class="dashboard-list">
+          <template x-for="change in summary.changes.pending_approval" :key="'pending-' + change.id">
+            <li>
+              <a href="/">
+                <span x-text="change.device.hostname"></span>
+                <span class="risk-pill" x-text="change.risk_level"></span>
+              </a>
+            </li>
+          </template>
+        </ul>
+        <h3>Gần đây</h3>
+        <ul class="dashboard-list">
+          <template x-for="change in summary.changes.recent" :key="'recent-' + change.id">
+            <li>
+              <a href="/">
+                <span x-text="change.device.hostname"></span>
+                <span class="status-pill" x-text="change.status"></span>
+              </a>
+            </li>
+          </template>
+        </ul>
+      </section>
+
+      <section class="dashboard-panel">
+        <h2>Nhật ký hoạt động</h2>
+        <ul class="dashboard-list">
+          <template x-for="event in summary.audit.recent" :key="event.id">
+            <li>
+              <span class="audit-time" x-text="new Date(event.created_at).toLocaleTimeString('vi-VN')"></span>
+              <span x-text="event.username || 'system'"></span>
+              <span x-text="event.action"></span>
+              <span class="result-status" :class="'result-' + event.result" x-text="event.result"></span>
+            </li>
+          </template>
+        </ul>
+      </section>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='vendor/alpine.min.js') }}" defer></script>
+</body>
 </html>

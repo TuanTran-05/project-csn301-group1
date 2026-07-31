@@ -507,3 +507,151 @@ body {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* -- Dashboard -- */
+
+.nav-link {
+  color: #cfe0f3;
+  text-decoration: none;
+  font-size: 13px;
+  border: 1px solid #4b6b8c;
+  padding: 6px 12px;
+  border-radius: 4px;
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dashboard-error {
+  background: #fdecea;
+  color: #8a1c14;
+  font-size: 13px;
+  margin: 0;
+  padding: 8px 20px;
+}
+
+.dashboard-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px;
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dashboard-panel {
+  background: #fff;
+  border: 1px solid #d9e0e6;
+  border-radius: 6px;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.dashboard-panel h2 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.dashboard-panel h3 {
+  font-size: 12px;
+  color: #6b7a89;
+  text-transform: uppercase;
+  margin: 12px 0 6px;
+}
+
+.dashboard-hint {
+  color: #6b7a89;
+  font-size: 12px;
+}
+
+.dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dashboard-table th,
+.dashboard-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.dashboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.dashboard-list a {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+.dashboard-list a:hover {
+  text-decoration: underline;
+}
+
+.ospf-entry {
+  border-top: 1px solid #eef1f4;
+  padding: 8px 0;
+}
+
+.ospf-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ospf-count {
+  color: #6b7a89;
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.health-pill {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.health-ok { background: #dcefe3; color: #176b35; }
+.health-degraded { background: #fdf1d6; color: #8a5a1c; }
+.health-down, .health-no_data { background: #f8dfdc; color: #8a1c14; }
+
+.ospf-neighbor-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #4b5c6b;
+}
+
+.ospf-neighbor-list li {
+  display: flex;
+  gap: 8px;
+}
+
+.audit-time {
+  color: #6b7a89;
+  font-size: 11px;
+  min-width: 70px;
+}
