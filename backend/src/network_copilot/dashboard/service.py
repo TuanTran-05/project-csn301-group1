@@ -1,5 +1,9 @@
 """Aggregate existing device/monitoring/changes/audit data for the dashboard."""
 
+from datetime import datetime, timezone
+
+from ..audit import service as audit_service
+from ..changes import service as changes_service
 from ..devices import service as device_service
 from ..monitoring.service import ROUTING_ROLES, latest_snapshot
 
@@ -53,4 +57,22 @@ def build_summary() -> dict:
     return {
         "devices": {"by_role": _device_role_rollup(devices)},
         "ospf": [_ospf_entry(device) for device in ospf_devices],
+        "changes": {
+            "pending_approval": [
+                change.to_dict()
+                for change in changes_service.list_changes(
+                    status="pending_approval", limit=20
+                )
+            ],
+            "recent": [
+                change.to_dict()
+                for change in changes_service.list_changes(limit=10)
+            ],
+        },
+        "audit": {
+            "recent": [
+                event.to_dict() for event in audit_service.list_events(limit=20)
+            ]
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }

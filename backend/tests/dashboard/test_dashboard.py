@@ -1,3 +1,5 @@
+from network_copilot.audit import service as audit_service
+from network_copilot.changes import service as change_service
 from network_copilot.dashboard.service import build_summary
 from network_copilot.extensions import db
 from network_copilot.monitoring.model import DeviceSnapshot
@@ -152,3 +154,52 @@ def test_ospf_uses_the_most_recent_snapshot(app, make_device):
     summary = build_summary()
 
     assert summary["ospf"][0]["health"] == "ok"
+
+
+# -- changes passthrough ------------------------------------------------------
+
+
+def test_changes_pending_approval_bucket(app, admin_user, access_switch):
+    change_service.create_preview(
+        admin_user.id, device_id=access_switch.id, commands=["show version"]
+    )
+
+    summary = build_summary()
+
+    assert len(summary["changes"]["pending_approval"]) == 1
+    assert (
+        summary["changes"]["pending_approval"][0]["device"]["hostname"]
+        == "ACC-SW1"
+    )
+
+
+def test_changes_recent_bucket_includes_every_status(app, admin_user, access_switch):
+    change = change_service.create_preview(
+        admin_user.id, device_id=access_switch.id, commands=["show version"]
+    )
+    change_service.cancel(change.id, admin_user.id)
+
+    summary = build_summary()
+
+    assert len(summary["changes"]["recent"]) == 1
+    assert summary["changes"]["recent"][0]["status"] == "cancelled"
+
+
+# -- audit passthrough --------------------------------------------------------
+
+
+def test_audit_recent_bucket(app):
+    audit_service.record_event("device.refresh", "success", message="ok")
+
+    summary = build_summary()
+
+    assert len(summary["audit"]["recent"]) == 1
+    assert summary["audit"]["recent"][0]["action"] == "device.refresh"
+
+
+# -- generated_at --------------------------------------------------------------
+
+
+def test_generated_at_is_present(app):
+    summary = build_summary()
+    assert summary["generated_at"]
