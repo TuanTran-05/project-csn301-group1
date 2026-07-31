@@ -655,3 +655,31 @@ body {
   font-size: 11px;
   min-width: 70px;
 }
+
+/* -- Chat result tables -- */
+
+.result-table-wrap {
+  overflow-x: auto;
+}
+
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.result-table th,
+.result-table td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid #d9e0e6;
+  white-space: nowrap;
+}
+
+.result-table th {
+  color: #6b7a89;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+}

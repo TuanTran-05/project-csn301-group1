@@ -90,7 +90,31 @@
                             x-text="result.duration_ms != null ? result.duration_ms + ' ms' : ''"
                           ></span>
                         </div>
-                        <pre x-text="result.output || 'No output returned.'"></pre>
+                        <template x-if="resultColumns(result).length === 0">
+                          <pre x-text="result.output || 'No output returned.'"></pre>
+                        </template>
+                        <template x-if="resultColumns(result).length > 0">
+                          <div class="result-table-wrap">
+                            <table class="result-table">
+                              <thead>
+                                <tr>
+                                  <template x-for="column in resultColumns(result)" :key="column">
+                                    <th x-text="resultCellLabel(column)"></th>
+                                  </template>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <template x-for="(row, rowIndex) in result.parsed" :key="rowIndex">
+                                  <tr>
+                                    <template x-for="column in resultColumns(result)" :key="column">
+                                      <td x-text="resultCellValue(row, column)"></td>
+                                    </template>
+                                  </tr>
+                                </template>
+                              </tbody>
+                            </table>
+                          </div>
+                        </template>
                       </div>
                     </template>
                   </div>

@@ -225,6 +225,25 @@ document.addEventListener("alpine:init", () => {
       return (this.confirmInputs[id] || "").trim() === expected;
     },
 
+    resultColumns(result) {
+      if (!Array.isArray(result.parsed) || result.parsed.length === 0) return [];
+      return Object.keys(result.parsed[0]);
+    },
+
+    resultCellLabel(column) {
+      return column
+        .split("_")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+    },
+
+    resultCellValue(row, column) {
+      const value = row[column];
+      if (Array.isArray(value)) return value.join(", ");
+      if (value === null || value === undefined || value === "") return "—";
+      return value;
+    },
+
     async applyChange(id) {
       try {
         const generation = this._changesRefreshGeneration;
