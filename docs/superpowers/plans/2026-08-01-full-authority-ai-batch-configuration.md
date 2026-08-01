@@ -308,7 +308,7 @@ def validate_execution_mode(commands: list[str], execution_mode: str) -> None:
     if execution_mode == "config" and any(
         pattern.search(command) for command in commands for pattern in EXEC_COMMAND_PATTERNS
     ):
-        raise ValidationError("A privileged EXEC command cannot run in config mode.")
+        raise ValidationError("This command requires EXEC mode; it cannot run in config mode.")
 
 
 def prepare_change(
@@ -900,6 +900,7 @@ git commit -m "feat: add configuration batch API"
 - Modify: `backend/src/network_copilot/ai/service.py`
 - Modify: `backend/tests/ai/test_ai.py`
 - Modify: `backend/tests/ai/test_chat_history.py`
+- Modify: `backend/tests/ai/test_provider.py`
 - Modify: `backend/tests/fakes/fake_ai_provider.py` only if its schema recording needs extension
 
 **Interfaces:**
@@ -1021,6 +1022,13 @@ Update `AIService.handle()`:
 Update all existing fake AI payload constants to the operation shape. Preserve
 their original intent and assertions rather than deleting coverage.
 
+`tests/ai/test_provider.py` hard-codes the retired single-device shape in two
+places and will fail once the schema changes: update
+`test_the_action_schema_matches_the_ai_action_model` to assert the nested
+`operations` field (and its `required` set) instead of `device_hostname`, and
+update `test_interpret_asks_the_provider_to_enforce_the_schema`'s fake payload
+to the `operations`-based `AIAction` shape.
+
 - [ ] **Step 4: Run all AI/chat tests GREEN**
 
 ```powershell
@@ -1130,6 +1138,13 @@ git commit -m "feat: add multi-device batch controls to chat"
 - Produces: one automated motivating flow and deploy/demo instructions.
 
 - [ ] **Step 1: Add the end-to-end regression test**
+
+This file already defines `AI_VLAN_ACTION` and `AI_WRITE_ERASE_ACTION` in the
+retired single-device `device_hostname` shape, consumed by the pre-existing
+`test_complete_demo_flow` and `test_flow_never_leaks_credentials`. Task 7
+changed `AIAction` to the `operations`-based shape, so update both constants
+to the new `operations` shape (matching `WRITE_ALL_ACTION` below) before
+adding the new test, otherwise those two existing tests fail in Step 4.
 
 ```python
 WRITE_ALL_ACTION = {
