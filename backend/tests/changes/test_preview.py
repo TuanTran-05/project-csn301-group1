@@ -177,10 +177,13 @@ def test_assigning_a_port_to_a_system_vlan_requires_confirmation(
 def test_destructive_commands_require_confirmation(
     app, admin_user, access_switch, command
 ):
+    # These are all privileged-EXEC command families (write, reload, erase,
+    # delete, format, debug); they must run as EXEC, not wrapped in config.
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
-        commands=["configure terminal", command, "end"],
+        execution_mode="exec",
+        commands=[command],
     )
     assert change.status == "pending_approval"
     assert change.requires_confirmation is True
@@ -190,7 +193,8 @@ def test_requires_confirmation_forces_high_risk(app, admin_user, access_switch):
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
-        commands=["configure terminal", "write erase", "end"],
+        execution_mode="exec",
+        commands=["write erase"],
     )
     assert change.risk_level == "high"
 
@@ -408,3 +412,51 @@ def test_change_states_are_the_documented_set():
         "failed",
         "cancelled",
     }
+
+
+# -- EXEC vs configuration mode --------------------------------------------
+
+
+def test_exec_preview_keeps_write_memory_outside_config_mode(app, admin_user, access_switch):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        execution_mode="exec",
+        commands=["write memory"],
+    )
+    assert change.commands == ["write memory"]
+    assert change.requires_confirmation is True
+    assert change.risk_level == "high"
+    assert change.verification_commands == ["show startup-config"]
+
+
+def test_known_exec_command_rejects_config_mode(app, admin_user, access_switch):
+    with pytest.raises(ValidationError, match="EXEC mode"):
+        change_service.create_preview(
+            admin_user.id,
+            device_id=access_switch.id,
+            execution_mode="config",
+            commands=["write memory"],
+        )
+
+
+def test_dangerous_detection_is_case_insensitive(app, admin_user, access_switch):
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        execution_mode="exec",
+        commands=["WRITE MEMORY"],
+    )
+    assert change.requires_confirmation is True
+
+
+def test_newline_injection_is_checked_before_whitespace_normalization(
+    app, admin_user, access_switch
+):
+    with pytest.raises(PolicyViolationError, match="forbidden"):
+        change_service.create_preview(
+            admin_user.id,
+            device_id=access_switch.id,
+            execution_mode="config",
+            commands=["vlan 25\nwrite erase"],
+        )

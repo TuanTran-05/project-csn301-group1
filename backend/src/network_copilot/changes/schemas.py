@@ -10,3 +10,4 @@ class ChangePreviewSchema(BaseModel):
     commands: list[str] = Field(min_length=1)
     verification_commands: list[str] = Field(default_factory=list)
     description: str | None = Field(default=None, max_length=255)
+    execution_mode: str = "config"

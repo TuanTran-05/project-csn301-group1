@@ -33,6 +33,7 @@ def preview():
         commands=data.commands,
         verification_commands=data.verification_commands,
         description=data.description,
+        execution_mode=data.execution_mode,
     )
     return jsonify(change.to_dict()), 201
 

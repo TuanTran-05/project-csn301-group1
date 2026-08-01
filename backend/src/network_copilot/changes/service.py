@@ -41,12 +41,30 @@ CONFIG_ENTER = "configure terminal"
 CONFIG_EXIT = "end"
 WRAPPERS = {CONFIG_ENTER, CONFIG_EXIT, "exit"}
 
+# Commands that only make sense as privileged EXEC operations - they must be
+# run outside a "configure terminal" block. Config mode refuses them so an
+# operator (or the AI) is forced to say "exec" explicitly for anything that
+# writes, reloads, or otherwise acts immediately instead of staging config.
+EXEC_COMMAND_PATTERNS = tuple(
+    re.compile(pattern, re.I)
+    for pattern in (
+        r"^write\b", r"^copy\b", r"^reload\b", r"^erase\b",
+        r"^delete\b", r"^format\b", r"^clear\b", r"^debug\b",
+        r"^undebug\b", r"^show\b", r"^ping\b", r"^traceroute\b",
+    )
+)
+
 CRITICAL_ROLES = {"core", "distribution"}
 
 _SYSTEM_VLAN_PATTERNS = (
     re.compile(r"^(no\s+)?vlan\s+(?P<vlan_id>\d{1,4})$", re.I),
     re.compile(r"^switchport\s+access\s+vlan\s+(?P<vlan_id>\d{1,4})$", re.I),
 )
+
+
+def _is_wrapper(command: str) -> bool:
+    """True if ``command`` is a config-mode wrapper, compared case-insensitively."""
+    return command.strip().lower() in WRAPPERS
 
 
 def _normalise(command: str) -> str:
@@ -58,12 +76,15 @@ def _dangerous_reason(command: str) -> str | None:
 
     Reuses the same allowlist-of-danger the read-only policy engine already
     uses, so "dangerous" means one thing across the whole backend rather than
-    two subtly different lists that could drift apart.
+    two subtly different lists that could drift apart. Matching is
+    case-insensitive ("WRITE MEMORY" is just as dangerous as "write memory"),
+    but the stored command keeps its original casing - only the match is
+    case-insensitive.
     """
     from ..commands.policy import DANGEROUS_PATTERNS
 
     for pattern, explanation in DANGEROUS_PATTERNS:
-        if re.search(pattern, command):
+        if re.search(pattern, command, re.I):
             return explanation
     return None
 
@@ -95,19 +116,24 @@ def validate_commands(commands: list[str], device: Device) -> tuple[list[str], b
     requires_confirmation = False
 
     for raw in commands:
+        raw_text = str(raw)
+
+        # Check the metacharacters on the original string: normalising
+        # collapses a newline into a space, which would let a
+        # newline-smuggled second command slip past this check.
+        for token in SHELL_METACHARACTERS:
+            if token in raw_text:
+                raise PolicyViolationError(
+                    f"Command contains the forbidden character sequence {token!r}; "
+                    "chained commands are not permitted.",
+                    {"command": _normalise(raw)},
+                )
+
         command = _normalise(raw)
         if not command:
             continue
 
-        for token in SHELL_METACHARACTERS:
-            if token in command:
-                raise PolicyViolationError(
-                    f"Command contains the forbidden character sequence {token!r}; "
-                    "chained commands are not permitted.",
-                    {"command": command},
-                )
-
-        if command not in WRAPPERS:
+        if not _is_wrapper(command):
             if _dangerous_reason(command) is not None:
                 requires_confirmation = True
             if _touches_system_vlan(command) is not None:
@@ -120,9 +146,18 @@ def validate_commands(commands: list[str], device: Device) -> tuple[list[str], b
     return canonical, requires_confirmation
 
 
+def validate_execution_mode(commands: list[str], execution_mode: str) -> None:
+    if execution_mode not in {"config", "exec"}:
+        raise ValidationError("execution_mode must be 'config' or 'exec'.")
+    if execution_mode == "config" and any(
+        pattern.search(command) for command in commands for pattern in EXEC_COMMAND_PATTERNS
+    ):
+        raise ValidationError("This command requires EXEC mode; it cannot run in config mode.")
+
+
 def _wrap(commands: list[str]) -> list[str]:
     """Strip any caller-supplied wrappers and apply exactly one config block."""
-    body = [command for command in commands if command not in WRAPPERS]
+    body = [command for command in commands if not _is_wrapper(command)]
     if not body:
         raise ValidationError(
             "The change contains no configuration commands, only mode wrappers."
@@ -132,10 +167,25 @@ def _wrap(commands: list[str]) -> list[str]:
 
 # -- derived preview content ---------------------------------------------
 
+# EXEC-mode commands whose entire effect is "persist the running config to
+# startup". A backend-only verifier is derived for exactly these - it is
+# never added to commands/policy.py's READ_ONLY_RULES, so it is never
+# advertised to the AI provider as a supported command.
+_EXEC_WRITE_COMMANDS = (
+    ["write"],
+    ["write memory"],
+    ["copy running-config startup-config"],
+)
 
-def derive_verification_commands(commands: list[str], device: Device) -> list[str]:
+
+def derive_verification_commands(
+    commands: list[str], device: Device, execution_mode: str = "config"
+) -> list[str]:
     """Read-only commands that prove the change landed."""
     from ..commands.policy import default_policy
+
+    if execution_mode == "exec" and commands in _EXEC_WRITE_COMMANDS:
+        return ["show startup-config"]
 
     derived: list[str] = []
 
@@ -230,30 +280,38 @@ def build_warnings(
 # -- public API -----------------------------------------------------------
 
 
-def create_preview(
+def prepare_change(
     user_id: int | None,
-    device_id: int,
+    device: Device,
     commands: list[str],
     verification_commands: list[str] | None = None,
     description: str | None = None,
     source: str = "api",
+    execution_mode: str = "config",
 ) -> ChangeRequest:
-    """Validate a change and store it as pending_approval. Never touches SSH."""
-    device = device_service.get_device(device_id)
-
+    """Validate and build a ChangeRequest. Does not add/commit it or audit."""
     body, requires_confirmation = validate_commands(commands, device)
-    canonical = _wrap(body)
+    validate_execution_mode(body, execution_mode)
 
-    if verification_commands:
-        verification = _validate_verification(verification_commands, device)
-    else:
-        verification = derive_verification_commands(canonical, device)
+    if execution_mode == "exec" and any(_is_wrapper(command) for command in body):
+        raise ValidationError(
+            "EXEC mode commands run standalone; configuration wrappers such as "
+            "'configure terminal' are not permitted."
+        )
 
-    change = ChangeRequest(
+    canonical = _wrap(body) if execution_mode == "config" else body
+    verification = (
+        _validate_verification(verification_commands, device)
+        if verification_commands
+        else derive_verification_commands(canonical, device, execution_mode)
+    )
+
+    return ChangeRequest(
         device_id=device.id,
         requested_by_id=user_id,
         description=description,
         commands=canonical,
+        execution_mode=execution_mode,
         verification_commands=verification,
         rollback_commands=derive_rollback_commands(canonical),
         warnings=build_warnings(canonical, device, requires_confirmation),
@@ -261,6 +319,29 @@ def create_preview(
         requires_confirmation=requires_confirmation,
         status="pending_approval",
         source=source,
+    )
+
+
+def create_preview(
+    user_id: int | None,
+    device_id: int,
+    commands: list[str],
+    verification_commands: list[str] | None = None,
+    description: str | None = None,
+    source: str = "api",
+    execution_mode: str = "config",
+) -> ChangeRequest:
+    """Validate a change and store it as pending_approval. Never touches SSH."""
+    device = device_service.get_device(device_id)
+
+    change = prepare_change(
+        user_id,
+        device,
+        commands,
+        verification_commands=verification_commands,
+        description=description,
+        source=source,
+        execution_mode=execution_mode,
     )
     db.session.add(change)
     db.session.commit()
@@ -273,7 +354,7 @@ def create_preview(
         message=description,
         details={
             "change_id": change.id,
-            "commands": canonical,
+            "commands": change.commands,
             "risk_level": change.risk_level,
             "source": source,
         },
@@ -518,9 +599,14 @@ def apply(
     except SSHError as exc:
         return _fail(change, f"Pre-change backup failed: {exc.message}", user_id)
 
-    # 2. Push the configuration.
+    # 2. Push the configuration (or run the EXEC commands directly).
     try:
-        result = client.run_config(list(change.commands or []))
+        if change.execution_mode == "exec":
+            result = client.run_exec(
+                list(change.commands or []), allow_confirm=change.requires_confirmation
+            )
+        else:
+            result = client.run_config(list(change.commands or []))
         change.apply_output = result.output
         db.session.commit()
     except SSHError as exc:

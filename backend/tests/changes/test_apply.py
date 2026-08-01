@@ -295,7 +295,8 @@ def test_apply_endpoint_requires_confirm_hostname_for_flagged_changes(
         headers=admin_headers,
         json={
             "device_id": access_switch.id,
-            "commands": ["configure terminal", "write erase", "end"],
+            "execution_mode": "exec",
+            "commands": ["write erase"],
         },
     ).get_json()["id"]
     client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
@@ -315,7 +316,8 @@ def test_apply_endpoint_rejects_a_wrong_confirm_hostname(
         headers=admin_headers,
         json={
             "device_id": access_switch.id,
-            "commands": ["configure terminal", "write erase", "end"],
+            "execution_mode": "exec",
+            "commands": ["write erase"],
         },
     ).get_json()["id"]
     client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
@@ -337,7 +339,8 @@ def test_apply_endpoint_succeeds_with_the_correct_confirm_hostname(
         headers=admin_headers,
         json={
             "device_id": access_switch.id,
-            "commands": ["configure terminal", "write erase", "end"],
+            "execution_mode": "exec",
+            "commands": ["write erase"],
         },
     ).get_json()["id"]
     client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
@@ -360,7 +363,8 @@ def test_apply_never_reaches_ssh_without_confirmation(
         headers=admin_headers,
         json={
             "device_id": access_switch.id,
-            "commands": ["configure terminal", "write erase", "end"],
+            "execution_mode": "exec",
+            "commands": ["write erase"],
         },
     ).get_json()["id"]
     client.post(f"/api/changes/{change_id}/approve", headers=admin_headers)
@@ -378,7 +382,8 @@ def test_apply_without_confirmation_does_not_change_status(
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
-        commands=["configure terminal", "write erase", "end"],
+        execution_mode="exec",
+        commands=["write erase"],
     )
     change_service.approve(change.id, admin_user.id)
 
@@ -395,7 +400,8 @@ def test_apply_service_accepts_the_correct_confirm_hostname(
     change = change_service.create_preview(
         admin_user.id,
         device_id=access_switch.id,
-        commands=["configure terminal", "write erase", "end"],
+        execution_mode="exec",
+        commands=["write erase"],
     )
     change_service.approve(change.id, admin_user.id)
 
@@ -423,3 +429,25 @@ def test_backups_endpoint_lists_device_backups(
     )
     assert response.status_code == 200
     assert len(response.get_json()["items"]) == 1
+
+
+# -- EXEC mode apply --------------------------------------------------------
+
+
+def test_apply_exec_change_calls_run_exec_without_wrappers(
+    app, admin_user, access_switch, ssh_factory
+):
+    fake = ssh_factory.set_client(
+        access_switch.hostname,
+        responses={
+            "show running-config": "hostname ACC-SW1",
+            "show startup-config": "hostname ACC-SW1",
+        },
+    )
+    change = change_service.create_preview(
+        admin_user.id, access_switch.id, ["write memory"], execution_mode="exec"
+    )
+    change_service.approve(change.id, admin_user.id)
+    change_service.apply(change.id, admin_user.id, confirm_hostname="ACC-SW1")
+    assert ("run_exec", ["write memory"]) in fake.calls
+    assert fake.config_batches == []
