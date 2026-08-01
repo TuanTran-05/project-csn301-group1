@@ -11,6 +11,8 @@ device in the batch gets a ChangeRequest, or none of them do.
 
 from dataclasses import dataclass
 
+from sqlalchemy import update as sa_update
+
 from ..audit.service import record_event
 from ..devices.model import Device
 from ..errors import InvalidStateError, NotFoundError, ValidationError
@@ -218,9 +220,7 @@ def apply_batch(
         )
 
     if batch.requires_confirmation:
-        provided = confirmation or ""
-        if len(batch.changes) > 1:
-            provided = provided.strip()
+        provided = (confirmation or "").strip()
         if provided != batch.confirmation_text:
             raise ValidationError(
                 "This batch contains a dangerous command. Confirm by sending "
@@ -228,11 +228,25 @@ def apply_batch(
                 {"confirmation_required": batch.confirmation_text},
             )
 
+    # Claim the batch atomically: only one concurrent apply request may move
+    # it from 'approved' to 'running'. A lost race (rowcount 0) means another
+    # request already claimed it, so this one must abort before touching SSH.
+    claim = db.session.execute(
+        sa_update(ChangeBatch)
+        .where(ChangeBatch.id == batch.id, ChangeBatch.status == "approved")
+        .values(status="running")
+    )
+    if claim.rowcount == 0:
+        db.session.rollback()
+        raise InvalidStateError(
+            f"Batch {batch_id} could not be claimed for apply; it may already "
+            "have been claimed by another request."
+        )
     batch.status = "running"
     db.session.commit()
 
     outcomes: list[str] = []
-    changes = sorted(batch.changes, key=lambda item: item.device.hostname)
+    changes = sorted(batch.changes, key=lambda item: item.target_hostname)
     for index, change in enumerate(changes):
         if index:
             db.session.expire(change)
@@ -255,7 +269,7 @@ def apply_batch(
         details={
             "batch_id": batch.id,
             "child_count": len(batch.changes),
-            "hostnames": [change.device.hostname for change in batch.changes],
+            "hostnames": [change.target_hostname for change in batch.changes],
             "outcomes": outcomes,
         },
     )

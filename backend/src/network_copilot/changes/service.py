@@ -29,7 +29,7 @@ from ..errors import (
     ValidationError,
 )
 from ..extensions import db
-from .model import ChangeRequest
+from .model import ChangeBatch, ChangeRequest
 
 logger = logging.getLogger(__name__)
 
@@ -300,11 +300,19 @@ def prepare_change(
         )
 
     canonical = _wrap(body) if execution_mode == "config" else body
-    verification = (
-        _validate_verification(verification_commands, device)
-        if verification_commands
-        else derive_verification_commands(canonical, device, execution_mode)
-    )
+
+    # The backend-only "show startup-config" verifier is derived internally
+    # and never appears on the AI-advertised read-only allowlist, so a
+    # caller-supplied verification_commands can never pass policy for it.
+    # For this exact shape it is always the correct (and only trustworthy)
+    # verifier, so it wins over anything the caller asked for instead of
+    # being rejected by _validate_verification.
+    if execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS:
+        verification = ["show startup-config"]
+    elif verification_commands:
+        verification = _validate_verification(verification_commands, device)
+    else:
+        verification = derive_verification_commands(canonical, device, execution_mode)
 
     return ChangeRequest(
         device_id=device.id,
@@ -312,6 +320,10 @@ def prepare_change(
         description=description,
         commands=canonical,
         execution_mode=execution_mode,
+        target_hostname=device.hostname,
+        target_management_ip=device.management_ip,
+        target_ssh_port=device.ssh_port,
+        target_device_type=device.device_type,
         verification_commands=verification,
         rollback_commands=derive_rollback_commands(canonical),
         warnings=build_warnings(canonical, device, requires_confirmation),
@@ -412,8 +424,19 @@ def _now() -> datetime:
 # -- approve / cancel -----------------------------------------------------
 
 
+def _reject_batch_child(change: ChangeRequest) -> None:
+    """Standalone lifecycle calls must never touch a batch's children -
+    the batch endpoints own approve/apply/cancel for every child at once."""
+    if change.batch_id is not None:
+        raise InvalidStateError(
+            f"Change {change.id} belongs to batch {change.batch_id}; use the "
+            "batch endpoints to approve, apply, or cancel it."
+        )
+
+
 def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     change = get_change(change_id)
+    _reject_batch_child(change)
     if change.status != "pending_approval":
         raise InvalidStateError(
             f"Only a change in 'pending_approval' can be approved; "
@@ -435,6 +458,7 @@ def approve(change_id: int, user_id: int | None) -> ChangeRequest:
 
 def cancel(change_id: int, user_id: int | None) -> ChangeRequest:
     change = get_change(change_id)
+    _reject_batch_child(change)
     if change.status not in {"pending_approval", "approved"}:
         raise InvalidStateError(
             f"A change in state '{change.status}' can no longer be cancelled."
@@ -567,6 +591,7 @@ def apply(
 ) -> ChangeRequest:
     """Backup, configure, then verify. Order is fixed and never skipped."""
     change = get_change(change_id)
+    _reject_batch_child(change)
     if change.status != "approved":
         raise InvalidStateError(
             f"Only an approved change can be applied; change {change_id} is "
@@ -576,7 +601,8 @@ def apply(
     device = device_service.get_device(change.device_id)
 
     if change.requires_confirmation:
-        if not confirm_hostname or confirm_hostname != device.hostname:
+        provided = (confirm_hostname or "").strip()
+        if not provided or provided != device.hostname:
             raise ValidationError(
                 "This change contains a dangerous command. Confirm by sending "
                 f"confirm_hostname equal to the exact device hostname "
@@ -600,7 +626,35 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
     from ..ssh.client import build_client_for_device
     from ..ssh.exceptions import SSHError
 
+    if change.status != "approved":
+        raise InvalidStateError(
+            f"Only an approved change can be applied; change {change.id} is "
+            f"'{change.status}'."
+        )
+    if change.batch_id is not None:
+        parent = db.session.get(ChangeBatch, change.batch_id)
+        if parent is None or parent.status != "running":
+            raise InvalidStateError(
+                "A batch child can only be applied while its batch is "
+                f"'running'; batch {change.batch_id} is "
+                f"'{parent.status if parent else 'missing'}'."
+            )
+
     device = device_service.get_device(change.device_id)
+
+    if (
+        device.hostname != change.target_hostname
+        or device.management_ip != change.target_management_ip
+        or device.ssh_port != change.target_ssh_port
+        or device.device_type != change.target_device_type
+    ):
+        return _fail(
+            change,
+            "Device connection identity changed since this change was "
+            "previewed; re-run Preview before applying.",
+            user_id,
+        )
+
     change.status = "running"
     db.session.commit()
 

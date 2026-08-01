@@ -90,8 +90,31 @@ def update_device(device_id: int, payload: dict) -> Device:
     return device
 
 
+_ACTIVE_BATCH_STATUSES = ("pending_approval", "approved", "running")
+
+
+def _assert_no_active_batch(device_id: int) -> None:
+    from ..changes.model import ChangeBatch, ChangeRequest
+
+    active = (
+        db.session.query(ChangeBatch)
+        .join(ChangeRequest, ChangeRequest.batch_id == ChangeBatch.id)
+        .filter(
+            ChangeRequest.device_id == device_id,
+            ChangeBatch.status.in_(_ACTIVE_BATCH_STATUSES),
+        )
+        .first()
+    )
+    if active is not None:
+        raise ConflictError(
+            f"Device {device_id} is a target in an active change batch and "
+            "cannot be deleted."
+        )
+
+
 def delete_device(device_id: int) -> None:
     device = get_device(device_id)
+    _assert_no_active_batch(device_id)
     db.session.delete(device)
     db.session.commit()
 
