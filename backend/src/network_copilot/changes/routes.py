@@ -11,6 +11,20 @@ from .schemas import ChangePreviewSchema
 bp = Blueprint("changes", __name__, url_prefix="/api/changes")
 
 
+def _strict_bool_arg(name: str, default: bool = False) -> bool:
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    raise ValidationError(
+        f"Query parameter '{name}' must be 'true' or 'false'.",
+        {name: ["Expected 'true' or 'false'."]},
+    )
+
+
 def _parse(schema, payload: dict):
     try:
         return schema.model_validate(payload)
@@ -46,6 +60,7 @@ def list_changes():
         device_id=device_id,
         status=request.args.get("status"),
         limit=request.args.get("limit", default=100, type=int),
+        standalone_only=_strict_bool_arg("standalone_only"),
     )
     return jsonify({"items": [change.to_dict() for change in changes]}), 200
 
