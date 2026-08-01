@@ -386,13 +386,18 @@ def get_change(change_id: int) -> ChangeRequest:
 
 
 def list_changes(
-    device_id: int | None = None, status: str | None = None, limit: int = 100
+    device_id: int | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    standalone_only: bool = False,
 ) -> list[ChangeRequest]:
     query = db.session.query(ChangeRequest)
     if device_id:
         query = query.filter(ChangeRequest.device_id == device_id)
     if status:
         query = query.filter(ChangeRequest.status == status)
+    if standalone_only:
+        query = query.filter(ChangeRequest.batch_id.is_(None))
     return (
         query.order_by(ChangeRequest.created_at.desc(), ChangeRequest.id.desc())
         .limit(min(max(limit, 1), 500))
