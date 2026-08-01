@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -32,69 +33,72 @@ class AIAction(BaseModel):
     explanation: str
 
 
-# Sent to providers that can constrain decoding server-side. Asking only for
-# "some JSON" was not enough: gemini-3.5-flash still produced a repeated
-# fragment mid-string. A schema makes the shape a guarantee, not a request.
-AI_ACTION_SCHEMA = {
-    "type": "OBJECT",
-    "required": ["intent", "operations", "explanation"],
-    "properties": {
-        "intent": {
-            "type": "STRING",
-            "enum": ["monitor", "configure", "troubleshoot"],
-        },
-        "operations": {
-            "type": "ARRAY",
-            # Provider decoding must be able to emit the deliberate refusal
-            # handled by AIService.interpret(). AIAction itself intentionally
-            # remains stricter (min_length=1) after that branch is handled.
-            "minItems": 0,
-            "items": {
-                "type": "OBJECT",
-                "additionalProperties": False,
-                "required": ["device_hostnames", "execution_mode", "commands"],
-                "properties": {
-                    "device_hostnames": {
-                        # These are keywords preserved by google-genai's
-                        # response_json_schema path. The second branch accepts
-                        # every string except the single wildcard token, so
-                        # "*" can only appear alone via the first branch.
-                        "anyOf": [
-                            {
-                                "type": "ARRAY",
-                                "minItems": 1,
-                                "maxItems": 1,
-                                "items": {"type": "STRING", "enum": ["*"]},
-                            },
-                            {
-                                "type": "ARRAY",
-                                "minItems": 1,
-                                "items": {
-                                    "type": "STRING",
-                                    "pattern": r"^($|[^*]|.{2,})$",
-                                },
-                            },
-                        ],
-                    },
-                    "execution_mode": {
-                        "type": "STRING",
-                        "enum": ["config", "exec"],
-                    },
-                    "commands": {
-                        "type": "ARRAY",
-                        "minItems": 1,
-                        "items": {"type": "STRING"},
-                    },
-                    "verification_commands": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
+def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
+    """Build the provider schema from the inventory visible to the model."""
+    target_branches = [
+        {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {"type": "string", "enum": ["*"]},
+        }
+    ]
+    known_hostnames = sorted(set(device_hostnames))
+    if known_hostnames:
+        target_branches.append(
+            {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "enum": known_hostnames},
+            }
+        )
+
+    # google-genai's response_json_schema accepts standard JSON Schema names
+    # and only a documented subset of keywords. Inventory enums encode the
+    # explicit-target branch without relying on unsupported pattern/not rules.
+    return {
+        "type": "object",
+        "required": ["intent", "operations", "explanation"],
+        "properties": {
+            "intent": {
+                "type": "string",
+                "enum": ["monitor", "configure", "troubleshoot"],
+            },
+            "operations": {
+                "type": "array",
+                # Provider decoding must be able to emit the deliberate refusal
+                # handled by AIService.interpret(). AIAction itself intentionally
+                # remains stricter (min_length=1) after that branch is handled.
+                "minItems": 0,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "device_hostnames",
+                        "execution_mode",
+                        "commands",
+                    ],
+                    "properties": {
+                        "device_hostnames": {"anyOf": target_branches},
+                        "execution_mode": {
+                            "type": "string",
+                            "enum": ["config", "exec"],
+                        },
+                        "commands": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string"},
+                        },
+                        "verification_commands": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
                     },
                 },
             },
+            "explanation": {"type": "string"},
         },
-        "explanation": {"type": "STRING"},
-    },
-}
+    }
 
 
 class ChatRequest(BaseModel):

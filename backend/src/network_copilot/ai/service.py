@@ -29,7 +29,7 @@ from ..errors import ForbiddenError, PolicyViolationError, ValidationError
 from ..extensions import db
 from ..parsers import parse_command_output
 from .provider import build_provider
-from .schemas import AI_ACTION_SCHEMA, AIAction, AIOperation
+from .schemas import AIAction, AIOperation, build_ai_action_schema
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,9 @@ class AIService:
     def interpret(self, message: str, user_id: int | None) -> AIAction:
         """Ask the model for a structured action. No side effects."""
         context = self.build_context()
+        schema = build_ai_action_schema(
+            device["hostname"] for device in context["devices"]
+        )
 
         # Models occasionally emit malformed JSON (a repeated fragment, a
         # truncated string). That is transient, so retry once. A well-formed
@@ -164,7 +167,7 @@ class AIService:
         payload = None
         for attempt in range(2):
             raw = self.provider.complete(
-                SYSTEM_PROMPT, message, context, schema=AI_ACTION_SCHEMA
+                SYSTEM_PROMPT, message, context, schema=schema
             )
             try:
                 payload = self._extract_json(raw)

@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fakes.fake_ai_provider import FakeAIProvider
 
@@ -35,6 +37,36 @@ class FakeGenaiClient:
 
 def gemini_with(client: FakeGenaiClient, model="gemini-2.5-flash") -> GeminiProvider:
     return GeminiProvider("test-key", model, client_factory=lambda: client)
+
+
+def recorded_action_schema(user_id: int) -> dict:
+    from network_copilot.ai.service import AIService
+
+    provider = FakeAIProvider(
+        responses={
+            "intent": "monitor",
+            "operations": [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show ip route"],
+                "verification_commands": [],
+            }],
+            "explanation": "Reading the routing table.",
+        }
+    )
+    AIService(provider=provider).interpret("show routes", user_id)
+    return provider.prompts[0]["schema"]
+
+
+def schema_nodes(schema: dict):
+    yield schema
+    for child in schema.get("properties", {}).values():
+        yield from schema_nodes(child)
+    items = schema.get("items")
+    if isinstance(items, dict):
+        yield from schema_nodes(items)
+    for child in schema.get("anyOf", []):
+        yield from schema_nodes(child)
 
 
 # -- provider selection ---------------------------------------------------
@@ -169,7 +201,7 @@ def test_gemini_complete_includes_the_context_and_message():
 
 def test_gemini_passes_the_json_schema_through():
     fake = FakeGenaiClient()
-    schema = {"type": "OBJECT", "properties": {"intent": {"type": "STRING"}}}
+    schema = {"type": "object", "properties": {"intent": {"type": "string"}}}
     gemini_with(fake).complete("sys", "hi", {}, schema=schema)
     assert fake.models.calls[0]["config"]["response_json_schema"] == schema
 
@@ -180,20 +212,23 @@ def test_gemini_omits_the_schema_when_none_is_given():
     assert "response_json_schema" not in fake.models.calls[0]["config"]
 
 
-def test_the_action_schema_matches_the_ai_action_model():
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction, AIOperation
+def test_the_action_schema_matches_the_ai_action_model(
+    app, dist_switch, admin_user
+):
+    from network_copilot.ai.schemas import AIAction, AIOperation
 
-    properties = AI_ACTION_SCHEMA["properties"]
+    schema = recorded_action_schema(admin_user.id)
+    properties = schema["properties"]
     assert set(properties) == set(AIAction.model_fields)
     assert properties["intent"]["enum"] == ["monitor", "configure", "troubleshoot"]
-    assert properties["operations"]["type"] == "ARRAY"
+    assert properties["operations"]["type"] == "array"
     operation_schema = properties["operations"]["items"]
     assert set(operation_schema["properties"]) == set(AIOperation.model_fields)
     assert operation_schema["properties"]["execution_mode"]["enum"] == [
         "config",
         "exec",
     ]
-    assert set(AI_ACTION_SCHEMA["required"]) == {
+    assert set(schema["required"]) == {
         "intent",
         "operations",
         "explanation",
@@ -205,12 +240,15 @@ def test_the_action_schema_matches_the_ai_action_model():
     }
 
 
-def test_provider_schema_intentionally_allows_pre_validation_empty_refusal():
+def test_provider_schema_intentionally_allows_pre_validation_empty_refusal(
+    app, admin_user
+):
     from pydantic import ValidationError as PydanticValidationError
 
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction
+    from network_copilot.ai.schemas import AIAction
 
-    assert AI_ACTION_SCHEMA["properties"]["operations"]["minItems"] == 0
+    schema = recorded_action_schema(admin_user.id)
+    assert schema["properties"]["operations"]["minItems"] == 0
     with pytest.raises(PydanticValidationError):
         AIAction(
             intent="configure",
@@ -219,40 +257,75 @@ def test_provider_schema_intentionally_allows_pre_validation_empty_refusal():
         )
 
 
-def test_provider_operation_schema_forbids_extra_fields():
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
-
-    operation_schema = AI_ACTION_SCHEMA["properties"]["operations"]["items"]
+def test_provider_operation_schema_forbids_extra_fields(app, admin_user):
+    operation_schema = recorded_action_schema(admin_user.id)["properties"][
+        "operations"
+    ]["items"]
     assert operation_schema["additionalProperties"] is False
 
 
-def test_provider_operation_schema_enforces_wildcard_exclusivity():
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
+def test_provider_schema_uses_lowercase_standard_json_schema_types(app, admin_user):
+    schema = recorded_action_schema(admin_user.id)
+    assert {node["type"] for node in schema_nodes(schema) if "type" in node} == {
+        "array",
+        "object",
+        "string",
+    }
 
-    target_schema = AI_ACTION_SCHEMA["properties"]["operations"]["items"][
+
+def test_provider_schema_uses_only_documented_google_json_schema_keywords(
+    app, admin_user
+):
+    from google.genai import types
+
+    description = types.GenerateContentConfig.model_fields[
+        "response_json_schema"
+    ].description
+    supported_clause = description.split(
+        "following properties are supported:", 1
+    )[1].split("The non-standard", 1)[0]
+    documented_keywords = set(re.findall(r"`([^`]+)`", supported_clause))
+    schema = recorded_action_schema(admin_user.id)
+    used_keywords = {
+        keyword
+        for node in schema_nodes(schema)
+        for keyword in node
+    }
+
+    assert "pattern" not in documented_keywords
+    assert used_keywords <= documented_keywords
+
+
+def test_provider_operation_schema_enforces_wildcard_exclusivity(
+    app, access_switch, dist_switch, admin_user
+):
+    target_schema = recorded_action_schema(admin_user.id)["properties"]["operations"][
+        "items"
+    ][
         "properties"
     ]["device_hostnames"]
     wildcard_schema, explicit_schema = target_schema["anyOf"]
     assert wildcard_schema == {
-        "type": "ARRAY",
+        "type": "array",
         "minItems": 1,
         "maxItems": 1,
-        "items": {"type": "STRING", "enum": ["*"]},
+        "items": {"type": "string", "enum": ["*"]},
     }
     assert explicit_schema == {
-        "type": "ARRAY",
+        "type": "array",
         "minItems": 1,
-        "items": {"type": "STRING", "pattern": r"^($|[^*]|.{2,})$"},
+        "items": {"type": "string", "enum": ["ACC-SW1", "DIST-SW1"]},
     }
 
 
-def test_provider_schema_survives_the_google_genai_request_path(monkeypatch):
+def test_provider_schema_survives_the_google_genai_request_path(
+    monkeypatch, app, access_switch, dist_switch, admin_user
+):
     from google import genai
     from google.genai import types
 
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
-
     captured = {}
+    schema = recorded_action_schema(admin_user.id)
 
     def record_request(http_method, path, request_dict, http_options=None):
         captured.update(
@@ -272,7 +345,7 @@ def test_provider_schema_survives_the_google_genai_request_path(monkeypatch):
             "test-key",
             "gemini-2.5-flash",
             client_factory=lambda: client,
-        ).complete("sys", "hi", {}, schema=AI_ACTION_SCHEMA)
+        ).complete("sys", "hi", {}, schema=schema)
     finally:
         client.close()
 
@@ -283,32 +356,21 @@ def test_provider_schema_survives_the_google_genai_request_path(monkeypatch):
     target_schema = operation_schema["properties"]["device_hostnames"]
     wildcard_schema, explicit_schema = target_schema["anyOf"]
 
+    assert wire_schema["type"] == "object"
     assert wire_schema["properties"]["operations"]["minItems"] == 0
     assert operation_schema["additionalProperties"] is False
     assert wildcard_schema["minItems"] == 1
     assert wildcard_schema["maxItems"] == 1
     assert explicit_schema["minItems"] == 1
-    assert explicit_schema["items"]["pattern"] == r"^($|[^*]|.{2,})$"
+    assert explicit_schema["items"]["enum"] == ["ACC-SW1", "DIST-SW1"]
 
 
 def test_interpret_asks_the_provider_to_enforce_the_schema(app, dist_switch, admin_user):
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
-    from network_copilot.ai.service import AIService
-
-    provider = FakeAIProvider(
-        responses={
-            "intent": "monitor",
-            "operations": [{
-                "device_hostnames": ["DIST-SW1"],
-                "execution_mode": "exec",
-                "commands": ["show ip route"],
-                "verification_commands": [],
-            }],
-            "explanation": "x",
-        }
-    )
-    AIService(provider=provider).interpret("hello", admin_user.id)
-    assert provider.prompts[0]["schema"] == AI_ACTION_SCHEMA
+    target_schema = recorded_action_schema(admin_user.id)["properties"]["operations"][
+        "items"
+    ]["properties"]["device_hostnames"]
+    _wildcard_schema, explicit_schema = target_schema["anyOf"]
+    assert explicit_schema["items"]["enum"] == ["DIST-SW1"]
 
 
 def test_gemini_explain_does_not_force_json():
