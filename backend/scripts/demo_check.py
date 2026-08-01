@@ -11,7 +11,7 @@ Exercises, in order, against real devices over SSH:
   5. ask the AI copilot about OSPF on DIST-SW1          (skipped if no AI key)
   6. ask the AI copilot to write memory on every device
   7. inspect the frozen targets, execution mode, commands, risk, and confirmation
-  8. approve the batch and apply it with the exact text CONFIRM ALL
+  8. type CONFIRM ALL at an interactive terminal, then approve and apply it
   9. review every child result; partial success is reported for manual follow-up
 
 Prints PASS/FAIL per step and exits 1 if anything failed. Uses only the
@@ -58,6 +58,37 @@ def call(base_url, path, method="GET", body=None, token=None):
         return exc.code, exc.read().decode()
     except urllib.error.URLError as exc:
         return None, str(exc.reason)
+
+
+def child_identities(children):
+    """Return stable child/change identities, or None for malformed API data."""
+    identities = []
+    for child in children:
+        device = child.get("device") if isinstance(child, dict) else None
+        if not isinstance(device, dict):
+            return None
+        child_id = child.get("id")
+        device_id = device.get("id")
+        hostname = device.get("hostname")
+        if child_id is None or device_id is None or not isinstance(hostname, str) or not hostname:
+            return None
+        identities.append((child_id, device_id, hostname))
+    return identities
+
+
+def prompt_for_confirmation() -> bool:
+    """Accept destructive batch confirmation only from the present operator."""
+    if not sys.stdin or not sys.stdin.isatty():
+        print("\nERROR: an interactive terminal is required to confirm this batch.")
+        return False
+    try:
+        confirmation = input("\nType CONFIRM ALL exactly to approve and apply this batch: ")
+    except EOFError:
+        confirmation = ""
+    if confirmation.strip() != "CONFIRM ALL":
+        print("ERROR: confirmation was not accepted; batch was not approved or applied.")
+        return False
+    return True
 
 
 def main() -> int:
@@ -138,7 +169,8 @@ def main() -> int:
     )
     payload = json.loads(body) if status == 200 else {}
     batch = payload.get("batch") or {}
-    children = batch.get("changes") or []
+    raw_children = batch.get("changes")
+    children = raw_children if isinstance(raw_children, list) else []
     batch_id = batch.get("id")
     preview_ok = step.check(
         "AI write-all request creates a batch preview",
@@ -147,24 +179,44 @@ def main() -> int:
     )
 
     # 7. Inspect exactly what was frozen before allowing the script to approve.
-    frozen_hostnames = {
-        child.get("device", {}).get("hostname") for child in children
+    frozen_identities = child_identities(children)
+    expected_inventory = {
+        (device.get("id"), hostname) for hostname, device in devices.items()
     }
+    frozen_hostnames = {identity[2] for identity in frozen_identities or []}
+    preview_identities_are_unique = (
+        frozen_identities is not None
+        and len({identity[0] for identity in frozen_identities}) == len(frozen_identities)
+        and len({identity[1] for identity in frozen_identities}) == len(frozen_identities)
+        and len(frozen_hostnames) == len(frozen_identities)
+    )
+    preview_matches_inventory = (
+        frozen_identities is not None
+        and len(frozen_identities) == len(devices)
+        and {(device_id, hostname) for _, device_id, hostname in frozen_identities}
+        == expected_inventory
+    )
     inspections = [
         step.check(
-            "preview freezes every current device",
-            frozen_hostnames == set(devices),
+            "preview has one unique child for every current device",
+            preview_identities_are_unique and preview_matches_inventory,
             f"({len(frozen_hostnames)}/{len(devices)} devices)",
         ),
         step.check(
             "every child uses EXEC mode",
             bool(children)
-            and all(child.get("execution_mode") == "exec" for child in children),
+            and all(
+                isinstance(child, dict) and child.get("execution_mode") == "exec"
+                for child in children
+            ),
         ),
         step.check(
             "every child freezes 'write memory'",
             bool(children)
-            and all(child.get("commands") == ["write memory"] for child in children),
+            and all(
+                isinstance(child, dict) and child.get("commands") == ["write memory"]
+                for child in children
+            ),
         ),
         step.check(
             "batch is high risk and requires CONFIRM ALL",
@@ -175,15 +227,21 @@ def main() -> int:
     ]
 
     for child in children:
+        if not isinstance(child, dict):
+            print("    frozen: <malformed child>")
+            continue
         device = child.get("device", {}).get("hostname", "<unknown>")
         print(
             f"    frozen: {device} mode={child.get('execution_mode')} "
             f"commands={child.get('commands')} risk={child.get('risk_level')}"
         )
 
-    # 8 & 9. Approve, type the exact confirmation, apply, and inspect every
-    # child. Never continue when the preview differs from the requested scope.
+    # 8 & 9. The interactive operator must confirm before the script causes
+    # either approval or apply side effects. Never continue when the preview
+    # differs from the requested scope.
     if preview_ok and all(inspections) and batch_id is not None:
+        if not prompt_for_confirmation():
+            return 1
         status, body = call(
             args.base_url,
             f"/api/change-batches/{batch_id}/approve",
@@ -205,6 +263,18 @@ def main() -> int:
                 token=token,
             )
             result = json.loads(body) if status == 200 else {}
+            raw_result_children = result.get("changes")
+            result_children = (
+                raw_result_children if isinstance(raw_result_children, list) else []
+            )
+            result_identities = child_identities(result_children)
+            result_matches_preview = (
+                frozen_identities is not None
+                and result_identities is not None
+                and len(result_identities) == len(frozen_identities)
+                and len(set(result_identities)) == len(result_identities)
+                and set(result_identities) == set(frozen_identities)
+            )
             terminal = result.get("status") in {
                 "success",
                 "partial_success",
@@ -212,16 +282,23 @@ def main() -> int:
             }
             step.check(
                 "apply batch with exact CONFIRM ALL",
-                status == 200 and terminal,
+                status == 200 and terminal and result_matches_preview,
                 f"(status={status}, batch={result.get('status')})",
             )
-            for child in result.get("changes") or []:
-                hostname = child.get("device", {}).get("hostname", "<unknown>")
+            if not result_matches_preview:
                 step.check(
-                    f"review child result for {hostname}",
-                    child.get("status") == "success",
-                    child.get("error_message") or f"({child.get('status')})",
+                    "apply returns every frozen child exactly once",
+                    False,
+                    f"({len(result_identities or [])}/{len(frozen_identities or [])} children)",
                 )
+            if result_matches_preview:
+                for child in result_children:
+                    hostname = child.get("device", {}).get("hostname", "<unknown>")
+                    step.check(
+                        f"review child result for {hostname}",
+                        child.get("status") == "success",
+                        child.get("error_message") or f"({child.get('status')})",
+                    )
             if result.get("status") == "partial_success":
                 print(
                     "\nMANUAL FOLLOW-UP REQUIRED: at least one device failed; "

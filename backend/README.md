@@ -123,7 +123,10 @@ python scripts/demo_check.py --username admin --password '<chosen-password>'
 
 Use the username selected through `SEED_ADMIN_USERNAME` if it is not `admin`.
 The password is the operator-chosen `SEED_ADMIN_PASSWORD`; no demo credential is
-hard-coded in this repository.
+hard-coded in this repository. After displaying the frozen preview, the CLI
+requires an interactive-terminal entry of `CONFIRM ALL` before it submits either
+the batch approval or apply request; piped input and a wrong or missing entry
+abort the run.
 
 ## Deploying to the AI Server node
 
@@ -369,9 +372,10 @@ distribution devices, and VLANs on access and distribution ones.
    no SSH write occurs during the AI request.
 4. The script inspects every target, execution mode, command, and risk before it
    approves anything.
-5. It approves, submits the exact `CONFIRM ALL` text, and reviews every child
-   result. A `partial_success` or `failed` result prints a manual-follow-up
-   warning and exits non-zero through the failed child checks.
+5. It requires an interactive operator to type `CONFIRM ALL` before it submits
+   approval or apply, then reviews every child result against the frozen preview.
+   A `partial_success` or `failed` result prints a manual-follow-up warning and
+   exits non-zero through the failed child checks.
 
 The workflow and credential-redaction surfaces are covered end to end by
 `tests/e2e/test_complete_flow.py`.
