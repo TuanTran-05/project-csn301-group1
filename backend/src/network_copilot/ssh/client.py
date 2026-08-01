@@ -69,6 +69,14 @@ _COPY_RUNNING_TO_STARTUP = "copy running-config startup-config"
 # response means the device is still waiting on interactive input.
 _READY_PROMPT = re.compile(r"[#>]\s*$")
 
+# Cisco CLI reports command parsing failures as a percent-prefixed line before
+# returning to the normal prompt. Match only that line form: prose that merely
+# mentions one of these phrases is valid command output and must not fail a
+# command batch.
+_CISCO_COMMAND_FAILURE = re.compile(
+    r"(?m)^% (?:Invalid input|Incomplete command|Ambiguous command)\b"
+)
+
 
 class SSHClient:
     """Opens a short-lived SSH session per operation."""
@@ -216,9 +224,11 @@ class SSHClient:
 
             for command in commands:
                 shell.send(f"{command}\n")
-                transcript += self._respond_to_prompts(
+                segment = self._respond_to_prompts(
                     shell, command, allow_confirm=allow_confirm
                 )
+                self._raise_for_cisco_command_failure(segment)
+                transcript += segment
         except (socket.timeout, TimeoutError) as exc:
             raise SSHTimeoutError(
                 f"Command timed out on {self.target.host} after "
@@ -277,6 +287,17 @@ class SSHClient:
                 )
 
         return segment
+
+    def _raise_for_cisco_command_failure(self, segment: str) -> None:
+        """Raise for an anchored Cisco parser failure in one command response.
+
+        Error messages deliberately exclude the command and raw device output:
+        both can contain sensitive configuration values.
+        """
+        if _CISCO_COMMAND_FAILURE.search(segment):
+            raise SSHCommandError(
+                f"Cisco CLI rejected a command on {self.target.host}."
+            )
 
     # -- helpers -----------------------------------------------------------
     def _drain(self, shell) -> str:

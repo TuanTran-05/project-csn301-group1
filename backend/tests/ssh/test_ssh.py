@@ -92,6 +92,21 @@ class FakeShell:
         pass
 
 
+class RespondingFakeShell(FakeShell):
+    """Interactive shell that returns a complete response for each command."""
+
+    def __init__(self, responses: dict[str, str]):
+        super().__init__()
+        self.responses = responses
+
+    def send(self, data: str) -> int:
+        self.sent.append(data)
+        command = data.strip()
+        response = self.responses.get(command, "CORE-SW1#")
+        self._buffer += f"{command}\n{response}".encode()
+        return len(data)
+
+
 class FakeParamikoClient:
     """Stand-in for paramiko.SSHClient used to drive SSHClient in tests."""
 
@@ -255,6 +270,20 @@ def test_run_config_rejects_an_empty_batch():
         client.run_config([])
 
 
+def test_run_config_rejects_cisco_invalid_input_without_leaking_command():
+    command = "username admin secret Secret123!"
+    shell = RespondingFakeShell(
+        {command: "% Invalid input detected at '^' marker.\nCORE-SW1(config)#"}
+    )
+    client, _ = make_client(shell=shell)
+
+    with pytest.raises(SSHCommandError) as error:
+        client.run_config([command])
+
+    assert str(error.value) == "Cisco CLI rejected a command on 10.10.10.11."
+    assert "Secret123!" not in str(error.value)
+
+
 # -- run_exec ---------------------------------------------------------------
 
 
@@ -276,6 +305,49 @@ def test_run_exec_sends_commands_without_config_wrappers():
     result = client.run_exec(["write memory"])
     assert [line.strip() for line in shell.sent] == ["write memory"]
     assert result.command == "write memory"
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "% Incomplete command.",
+        '% Ambiguous command: "show"',
+    ],
+)
+def test_run_exec_rejects_cisco_parser_failures_in_their_own_response_segment(
+    marker: str,
+):
+    rejected_command = "show Secret123!"
+    shell = RespondingFakeShell(
+        {
+            "show version": "Cisco IOS Software\nCORE-SW1#",
+            rejected_command: f"{marker}\nCORE-SW1#",
+            "write memory": "Building configuration...\nCORE-SW1#",
+        }
+    )
+    client, _ = make_client(shell=shell)
+
+    with pytest.raises(SSHCommandError) as error:
+        client.run_exec(["show version", rejected_command, "write memory"])
+
+    assert str(error.value) == "Cisco CLI rejected a command on 10.10.10.11."
+    assert shell.sent == ["show version\n", f"{rejected_command}\n"]
+
+
+def test_run_exec_allows_benign_output_that_mentions_a_cisco_failure_marker():
+    shell = RespondingFakeShell(
+        {
+            "show banner": (
+                "The configured banner documents % Invalid input usage.\n"
+                "CORE-SW1#"
+            )
+        }
+    )
+    client, _ = make_client(shell=shell)
+
+    result = client.run_exec(["show banner"])
+
+    assert "documents % Invalid input usage" in result.output
 
 
 def test_run_exec_only_answers_confirm_prompt_when_authorized():
