@@ -180,17 +180,27 @@ def test_gemini_omits_the_schema_when_none_is_given():
 
 
 def test_the_action_schema_matches_the_ai_action_model():
-    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction, AIOperation
 
     properties = AI_ACTION_SCHEMA["properties"]
     assert set(properties) == set(AIAction.model_fields)
     assert properties["intent"]["enum"] == ["monitor", "configure", "troubleshoot"]
-    assert properties["commands"]["type"] == "ARRAY"
+    assert properties["operations"]["type"] == "ARRAY"
+    operation_schema = properties["operations"]["items"]
+    assert set(operation_schema["properties"]) == set(AIOperation.model_fields)
+    assert operation_schema["properties"]["execution_mode"]["enum"] == [
+        "config",
+        "exec",
+    ]
     assert set(AI_ACTION_SCHEMA["required"]) == {
         "intent",
-        "device_hostname",
-        "commands",
+        "operations",
         "explanation",
+    }
+    assert set(operation_schema["required"]) == {
+        "device_hostnames",
+        "execution_mode",
+        "commands",
     }
 
 
@@ -201,9 +211,12 @@ def test_interpret_asks_the_provider_to_enforce_the_schema(app, dist_switch, adm
     provider = FakeAIProvider(
         responses={
             "intent": "monitor",
-            "device_hostname": "DIST-SW1",
-            "commands": ["show ip route"],
-            "verification_commands": [],
+            "operations": [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show ip route"],
+                "verification_commands": [],
+            }],
             "explanation": "x",
         }
     )

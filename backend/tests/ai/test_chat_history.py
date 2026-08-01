@@ -12,17 +12,23 @@ from network_copilot.extensions import db
 
 MONITOR_ACTION = {
     "intent": "monitor",
-    "device_hostname": "DIST-SW1",
-    "commands": ["show ip route"],
-    "verification_commands": [],
+    "operations": [{
+        "device_hostnames": ["DIST-SW1"],
+        "execution_mode": "exec",
+        "commands": ["show ip route"],
+        "verification_commands": [],
+    }],
     "explanation": "Checking the routing table.",
 }
 
 WRITE_ERASE_ACTION = {
     "intent": "configure",
-    "device_hostname": "ACC-SW1",
-    "commands": ["write erase"],
-    "verification_commands": [],
+    "operations": [{
+        "device_hostnames": ["ACC-SW1"],
+        "execution_mode": "exec",
+        "commands": ["write erase"],
+        "verification_commands": [],
+    }],
     "explanation": "Wiping the configuration.",
 }
 
@@ -69,10 +75,10 @@ def test_chat_endpoint_records_a_dangerous_proposal_as_an_assistant_message(
     )
 
     assert response.status_code == 200
-    assert response.get_json()["change"]["requires_confirmation"] is True
+    assert response.get_json()["batch"]["requires_confirmation"] is True
     rows = db.session.query(ChatMessage).order_by(ChatMessage.id).all()
     assert [row.role for row in rows] == ["user", "assistant"]
-    assert rows[1].payload["change"]["requires_confirmation"] is True
+    assert rows[1].payload["batch"]["requires_confirmation"] is True
     assert fake.calls == []
 
 

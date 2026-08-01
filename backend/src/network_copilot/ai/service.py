@@ -4,7 +4,7 @@ Design rules, enforced by tests:
 
 * The model never receives credentials, management IPs or a full running-config.
 * The model never executes anything. It returns a structured AIAction which the
-  Command Policy Engine and the change workflow then accept or refuse.
+  backend validates and freezes into the change workflow.
 * A `configure` intent can only ever produce a Preview. Applying stays a manual,
   admin-only step.
 * Troubleshooting runs in two phases: propose read-only diagnostics, then explain
@@ -19,7 +19,8 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..audit.service import record_event, redact_sensitive
 from ..auth.model import User
-from ..changes import service as change_service
+from ..changes import batch_service
+from ..changes.batch_service import BatchOperation
 from ..commands import service as command_service
 from ..commands.policy import default_policy
 from ..devices import service as device_service
@@ -28,7 +29,7 @@ from ..errors import ForbiddenError, PolicyViolationError, ValidationError
 from ..extensions import db
 from ..parsers import parse_command_output
 from .provider import build_provider
-from .schemas import AI_ACTION_SCHEMA, AIAction
+from .schemas import AI_ACTION_SCHEMA, AIAction, AIOperation
 
 logger = logging.getLogger(__name__)
 
@@ -36,43 +37,47 @@ logger = logging.getLogger(__name__)
 # sensitive payload that must not leave the backend.
 CONTEXT_EXCLUDED_COMMANDS = {"show running-config"}
 
-SUPPORTED_ACTIONS = (
-    "Create or rename a VLAN (vlan <id> / name <NAME>)",
-    "Assign an access port to a VLAN (switchport mode access / "
-    "switchport access vlan <id>)",
-    "Set an interface description (description <text>)",
-)
-
 SYSTEM_PROMPT = """You are a network operations assistant for a Cisco lab.
 
 Reply with a single JSON object and nothing else. The schema is:
 {
   "intent": "monitor" | "configure" | "troubleshoot",
-  "device_hostname": "<one of the hostnames in the context>",
-  "commands": ["<command>", ...],
-  "verification_commands": ["<read-only command>", ...],
+  "operations": [{
+    "device_hostnames": ["<hostname>", ...] | ["*"],
+    "execution_mode": "config" | "exec",
+    "commands": ["<command>", ...],
+    "verification_commands": ["<read-only command>", ...]
+  }],
   "explanation": "<one or two sentences>"
 }
 
 Rules:
-- "commands" is what will actually be run. It must never be empty.
-- "verification_commands" is only meaningful for "configure": read-only commands
-  that prove the change landed. Leave it empty for other intents.
+- Every operation needs at least one target and one command.
+- Use "configure" for any Cisco CLI configuration or privileged-EXEC command.
+  A configure response only creates a frozen backend preview; it never executes
+  commands or bypasses approval.
+- Use ["*"] only when the user explicitly requests every device. Never mix "*"
+  with explicit hostnames. Split heterogeneous targets into separate operations.
+- Select "exec" for privileged-EXEC commands and "config" for configuration
+  commands. Configuration commands do not need mode wrappers; the backend adds
+  them. Never claim that a proposal was already executed.
+- Never emit or decide risk, confirmation, approval, or authorization fields.
+  The backend derives and enforces all of them independently.
+- For "monitor" and "troubleshoot", return exactly one operation for one explicit
+  hostname in "exec" mode. Use only read-only entries from supported_commands.
 - Use "monitor" when the user wants to read state. Put the read-only commands in
-  "commands", using only entries from supported_commands.
-- Use "configure" only for the changes listed in supported_actions. Put them in
-  "commands", wrapped in "configure terminal" ... "end".
-- Use "troubleshoot" when the user reports a problem. Put the read-only
-  diagnostic commands in "commands" too, not in "verification_commands".
-- Never propose commands that erase, reload, format, debug or otherwise disrupt
-  a device. They will be rejected.
+  "commands" and leave "verification_commands" empty.
+- Use "troubleshoot" when the user reports a problem. Put read-only diagnostic
+  commands in "commands", not in "verification_commands".
+- For "configure", "verification_commands" contains only read-only commands that
+  prove the change landed. It may be empty so the backend can derive verification.
 - A device's "status" in context is only the last background health check and
   can be stale or wrong. It is never a reason to skip commands: always propose
   the commands for "monitor"/"troubleshoot" requests regardless of the listed
   status. A device that is actually unreachable will fail naturally when the
   command runs, and that failure is reported back to the user.
-- If you cannot answer with a supported command, return an empty "commands" list
-  and explain why in "explanation".
+- If you cannot form a valid proposal, return an empty "operations" list and
+  explain why in "explanation".
 - The user may write in Vietnamese or English. Reply with JSON either way, and
   keep "explanation" to a single short sentence.
 """
@@ -117,7 +122,6 @@ class AIService:
                 for device in devices
             ],
             "supported_commands": commands,
-            "supported_actions": list(SUPPORTED_ACTIONS),
         }
 
     # -- interpret --------------------------------------------------------
@@ -170,13 +174,13 @@ class AIService:
                     raise
                 logger.warning("AI returned unparseable output; retrying once.")
 
-        # A capable model refuses a dangerous or unsupported request itself and
-        # answers with no commands. Surface its reason instead of a schema
-        # complaint, which reads like a backend fault.
-        if isinstance(payload.get("commands"), list) and not payload["commands"]:
+        # A well-formed empty operation list is a deliberate refusal, not a
+        # transient schema fault. Surface the model's explanation and do not
+        # retry a real answer.
+        if isinstance(payload.get("operations"), list) and not payload["operations"]:
             raise ValidationError(
                 payload.get("explanation")
-                or "The AI could not map that request to a supported action."
+                or "The AI could not form a valid proposal for that request."
             )
 
         try:
@@ -193,7 +197,12 @@ class AIService:
 
     # -- guards -----------------------------------------------------------
     def _block(
-        self, reason: str, action: AIAction, device: Device, user_id: int | None
+        self,
+        reason: str,
+        action: AIAction,
+        operation: AIOperation,
+        device: Device,
+        user_id: int | None,
     ) -> None:
         record_event(
             action="ai.command_blocked",
@@ -203,29 +212,43 @@ class AIService:
             message=reason,
             details={
                 "intent": action.intent,
-                "commands": action.commands,
+                "commands": operation.commands,
                 "hostname": device.hostname,
             },
         )
-        raise PolicyViolationError(reason, {"commands": action.commands})
+        raise PolicyViolationError(reason, {"commands": operation.commands})
 
-    def _guard(self, action: AIAction, device: Device, user_id: int | None) -> None:
-        """Refuse only what the underlying policy engines refuse: chained
-        commands for monitor/troubleshoot, or an empty/injected command list
-        for configure. Dangerous-but-legitimate configure commands are not
-        blocked here - they still go through Preview -> Approve -> Apply,
-        just flagged for extra confirmation at Apply time."""
-        if action.intent in {"monitor", "troubleshoot"}:
-            for command in action.commands:
-                decision = default_policy.evaluate(command, device.role)
-                if not decision.allowed:
-                    self._block(decision.reason, action, device, user_id)
-            return
+    def _guard_readonly(
+        self,
+        action: AIAction,
+        operation: AIOperation,
+        device: Device,
+        user_id: int | None,
+    ) -> None:
+        for command in operation.commands:
+            decision = default_policy.evaluate(command, device.role)
+            if not decision.allowed:
+                self._block(decision.reason, action, operation, device, user_id)
 
-        try:
-            change_service.validate_commands(action.commands, device)
-        except (PolicyViolationError, ValidationError) as exc:
-            self._block(exc.message, action, device, user_id)
+    @staticmethod
+    def _readonly_operation(action: AIAction) -> AIOperation:
+        if len(action.operations) != 1:
+            raise ValidationError(
+                "Monitor and troubleshoot require exactly one operation."
+            )
+        operation = action.operations[0]
+        if (
+            len(operation.device_hostnames) != 1
+            or operation.device_hostnames == ["*"]
+        ):
+            raise ValidationError(
+                "Monitor and troubleshoot require one explicit hostname."
+            )
+        if operation.execution_mode != "exec":
+            raise ValidationError(
+                "Monitor and troubleshoot operations must use EXEC mode."
+            )
+        return operation
 
     @staticmethod
     def _require_admin(user_id: int | None) -> None:
@@ -238,10 +261,10 @@ class AIService:
 
     # -- intent handlers --------------------------------------------------
     def _run_readonly(
-        self, action: AIAction, device: Device, user_id: int | None
+        self, operation: AIOperation, device: Device, user_id: int | None
     ) -> list[dict]:
         results = []
-        for command in action.commands:
+        for command in operation.commands:
             execution = command_service.execute_readonly(
                 device_id=device.id,
                 command=command,
@@ -261,20 +284,28 @@ class AIService:
         return results
 
     def _handle_monitor(
-        self, action: AIAction, device: Device, user_id: int | None
+        self,
+        action: AIAction,
+        operation: AIOperation,
+        device: Device,
+        user_id: int | None,
     ) -> dict:
         return {
             "intent": "monitor",
             "device": device.hostname,
             "explanation": action.explanation,
-            "results": self._run_readonly(action, device, user_id),
+            "results": self._run_readonly(operation, device, user_id),
             "requires_approval": False,
         }
 
     def _handle_troubleshoot(
-        self, action: AIAction, device: Device, user_id: int | None
+        self,
+        action: AIAction,
+        operation: AIOperation,
+        device: Device,
+        user_id: int | None,
     ) -> dict:
-        results = self._run_readonly(action, device, user_id)
+        results = self._run_readonly(operation, device, user_id)
 
         # Phase 2: hand the collected output back to the model for analysis.
         # Outputs are redacted first in case a device echoed a secret.
@@ -312,34 +343,51 @@ class AIService:
             "requires_approval": False,
         }
 
-    def _handle_configure(
-        self, action: AIAction, device: Device, user_id: int | None
-    ) -> dict:
-        change = change_service.create_preview(
+    def _handle_configure(self, action: AIAction, user_id: int | None) -> dict:
+        operations = [
+            BatchOperation(
+                device_hostnames=list(operation.device_hostnames),
+                execution_mode=operation.execution_mode,
+                commands=list(operation.commands),
+                verification_commands=list(operation.verification_commands),
+            )
+            for operation in action.operations
+        ]
+        batch = batch_service.create_batch_preview(
             user_id=user_id,
-            device_id=device.id,
-            commands=action.commands,
-            verification_commands=action.verification_commands,
+            operations=operations,
             description=action.explanation[:255] if action.explanation else None,
             source="ai",
         )
+        record_event(
+            action="ai.action",
+            result="success",
+            user_id=user_id,
+            message=action.explanation,
+            details={
+                "intent": action.intent,
+                "batch_id": batch.id,
+                "operation_count": len(operations),
+            },
+        )
         return {
             "intent": "configure",
-            "device": device.hostname,
             "explanation": action.explanation,
-            "change": change.to_dict(),
+            "batch": batch.to_dict(),
             "requires_approval": True,
         }
 
     # -- entry point ------------------------------------------------------
     def handle(self, message: str, user_id: int | None) -> dict:
         action = self.interpret(message, user_id)
-        device = device_service.get_device_by_hostname(action.device_hostname)
 
         if action.intent == "configure":
             self._require_admin(user_id)
+            return self._handle_configure(action, user_id)
 
-        self._guard(action, device, user_id)
+        operation = self._readonly_operation(action)
+        device = device_service.get_device_by_hostname(operation.device_hostnames[0])
+        self._guard_readonly(action, operation, device, user_id)
 
         record_event(
             action="ai.action",
@@ -347,11 +395,9 @@ class AIService:
             user_id=user_id,
             device_id=device.id,
             message=action.explanation,
-            details={"intent": action.intent, "commands": action.commands},
+            details={"intent": action.intent, "commands": operation.commands},
         )
 
         if action.intent == "monitor":
-            return self._handle_monitor(action, device, user_id)
-        if action.intent == "troubleshoot":
-            return self._handle_troubleshoot(action, device, user_id)
-        return self._handle_configure(action, device, user_id)
+            return self._handle_monitor(action, operation, device, user_id)
+        return self._handle_troubleshoot(action, operation, device, user_id)

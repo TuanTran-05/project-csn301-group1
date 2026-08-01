@@ -1,4 +1,7 @@
+from copy import deepcopy
+
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 from fakes.fake_ai_provider import FakeAIProvider
 
 from network_copilot.ai.schemas import AIAction
@@ -11,26 +14,46 @@ from network_copilot.extensions import db
 
 MONITOR_ACTION = {
     "intent": "monitor",
-    "device_hostname": "DIST-SW1",
-    "commands": ["show ip ospf neighbor"],
-    "verification_commands": [],
+    "operations": [{
+        "device_hostnames": ["DIST-SW1"],
+        "execution_mode": "exec",
+        "commands": ["show ip ospf neighbor"],
+        "verification_commands": [],
+    }],
     "explanation": "Checking OSPF adjacencies on DIST-SW1.",
 }
 
 CONFIGURE_ACTION = {
     "intent": "configure",
-    "device_hostname": "ACC-SW1",
-    "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
-    "verification_commands": ["show vlan brief"],
+    "operations": [{
+        "device_hostnames": ["ACC-SW1"],
+        "execution_mode": "config",
+        "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
+        "verification_commands": ["show vlan brief"],
+    }],
     "explanation": "Creating VLAN 25 named MARKETING on ACC-SW1.",
 }
 
 DANGEROUS_ACTION = {
     "intent": "configure",
-    "device_hostname": "ACC-SW1",
-    "commands": ["write erase"],
-    "verification_commands": [],
+    "operations": [{
+        "device_hostnames": ["ACC-SW1"],
+        "execution_mode": "exec",
+        "commands": ["write erase"],
+        "verification_commands": [],
+    }],
     "explanation": "Wiping the configuration.",
+}
+
+WRITE_ALL_ACTION = {
+    "intent": "configure",
+    "operations": [{
+        "device_hostnames": ["*"],
+        "execution_mode": "exec",
+        "commands": ["write memory"],
+        "verification_commands": [],
+    }],
+    "explanation": "Luu cau hinh tren tat ca thiet bi.",
 }
 
 OSPF_OUTPUT = """Neighbor ID     Pri   State           Dead Time   Address         Interface
@@ -46,21 +69,37 @@ def service_with(app, payload) -> tuple[AIService, FakeAIProvider]:
 # -- schema ---------------------------------------------------------------
 
 
+def test_action_schema_accepts_multi_target_operations():
+    action = AIAction(**WRITE_ALL_ACTION)
+    assert action.operations[0].device_hostnames == ["*"]
+    assert action.operations[0].execution_mode == "exec"
+
+
+def test_wildcard_cannot_be_mixed_with_explicit_hostname():
+    payload = deepcopy(WRITE_ALL_ACTION)
+    payload["operations"][0]["device_hostnames"] = ["*", "ACC-SW1"]
+    with pytest.raises(PydanticValidationError):
+        AIAction(**payload)
+
+
 def test_ai_action_schema_accepts_a_valid_payload():
     action = AIAction(**MONITOR_ACTION)
     assert action.intent == "monitor"
-    assert action.device_hostname == "DIST-SW1"
-    assert action.commands == ["show ip ospf neighbor"]
+    assert action.operations[0].device_hostnames == ["DIST-SW1"]
+    assert action.operations[0].commands == ["show ip ospf neighbor"]
 
 
 def test_ai_action_defaults_verification_commands_to_empty():
     action = AIAction(
         intent="monitor",
-        device_hostname="CORE-SW1",
-        commands=["show ip route"],
+        operations=[{
+            "device_hostnames": ["CORE-SW1"],
+            "execution_mode": "exec",
+            "commands": ["show ip route"],
+        }],
         explanation="Reading the routing table.",
     )
-    assert action.verification_commands == []
+    assert action.operations[0].verification_commands == []
 
 
 @pytest.mark.parametrize("intent", ["reboot", "delete", "", "MONITOR"])
@@ -70,8 +109,11 @@ def test_ai_action_rejects_unknown_intents(intent):
     with pytest.raises(PydanticValidationError):
         AIAction(
             intent=intent,
-            device_hostname="CORE-SW1",
-            commands=["show ip route"],
+            operations=[{
+                "device_hostnames": ["CORE-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show ip route"],
+            }],
             explanation="x",
         )
 
@@ -102,6 +144,17 @@ def test_prompt_tells_the_model_stale_status_is_not_a_reason_to_refuse(
     assert "never a reason to skip commands" in prompt
 
 
+def test_prompt_allows_arbitrary_configuration_and_never_delegates_risk(
+    app, admin_user
+):
+    service, provider = service_with(app, WRITE_ALL_ACTION)
+    service.interpret("thuc hien lenh write tren toan bo thiet bi", admin_user.id)
+    prompt = provider.prompts[0]["system_prompt"]
+    assert "any Cisco CLI" in prompt
+    assert "risk" in prompt and "backend" in prompt
+    assert "only for the changes listed in supported_actions" not in prompt
+
+
 # -- tolerating real model output ----------------------------------------
 # Even with response_mime_type=application/json, models sometimes emit more
 # than one JSON value or wrap the object in prose. Always take the first
@@ -115,7 +168,7 @@ def test_interpret_takes_the_first_of_two_concatenated_objects(app, admin_user):
     service, _ = service_with(app, payload)
     action = service.interpret("hello", admin_user.id)
     assert action.intent == "monitor"
-    assert action.device_hostname == "DIST-SW1"
+    assert action.operations[0].device_hostnames == ["DIST-SW1"]
 
 
 def test_interpret_ignores_trailing_prose(app, admin_user):
@@ -172,11 +225,22 @@ def test_interpret_rejects_an_empty_response(app, admin_user):
 
 DECLINED_ACTION = {
     "intent": "monitor",
-    "device_hostname": "ACC-SW1",
-    "commands": [],
-    "verification_commands": [],
+    "operations": [],
     "explanation": "Lenh 'write erase' khong duoc ho tro vi no xoa cau hinh.",
 }
+
+
+def test_declined_operation_list_surfaces_model_explanation(app, admin_user):
+    service, _ = service_with(
+        app,
+        {
+            "intent": "configure",
+            "operations": [],
+            "explanation": "Khong the tao de xuat.",
+        },
+    )
+    with pytest.raises(ValidationError, match="Khong the tao de xuat"):
+        service.interpret("configure", admin_user.id)
 
 
 def test_interpret_retries_once_when_the_model_returns_broken_json(
@@ -210,9 +274,7 @@ def test_a_declined_request_is_not_retried(app, access_switch, admin_user):
     provider = FakeAIProvider(
         responses={
             "intent": "monitor",
-            "device_hostname": "ACC-SW1",
-            "commands": [],
-            "verification_commands": [],
+            "operations": [],
             "explanation": "Khong ho tro lenh nay.",
         }
     )
@@ -306,7 +368,77 @@ def test_monitor_intent_never_opens_a_config_session(
     assert fake.config_batches == []
 
 
+@pytest.mark.parametrize(
+    ("operations", "error"),
+    [
+        (
+            [
+                {
+                    "device_hostnames": ["DIST-SW1"],
+                    "execution_mode": "exec",
+                    "commands": ["show ip route"],
+                    "verification_commands": [],
+                },
+                {
+                    "device_hostnames": ["ACC-SW1"],
+                    "execution_mode": "exec",
+                    "commands": ["show ip route"],
+                    "verification_commands": [],
+                },
+            ],
+            "exactly one operation",
+        ),
+        (
+            [{
+                "device_hostnames": ["*"],
+                "execution_mode": "exec",
+                "commands": ["show ip route"],
+                "verification_commands": [],
+            }],
+            "one explicit hostname",
+        ),
+        (
+            [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "config",
+                "commands": ["show ip route"],
+                "verification_commands": [],
+            }],
+            "EXEC mode",
+        ),
+    ],
+    ids=["multiple-operations", "wildcard-target", "config-mode"],
+)
+def test_readonly_intent_rejects_an_unsupported_operation_shape(
+    app, admin_user, dist_switch, access_switch, ssh_factory, operations, error
+):
+    service, _ = service_with(
+        app,
+        {
+            "intent": "monitor",
+            "operations": operations,
+            "explanation": "Checking routes.",
+        },
+    )
+    with pytest.raises(ValidationError, match=error):
+        service.handle("check routes", admin_user.id)
+    assert ssh_factory.clients == {}
+
+
 # -- configure intent -----------------------------------------------------
+
+
+def test_vietnamese_write_all_request_creates_batch_without_ssh(
+    app, admin_user, access_switch, dist_switch, ssh_factory
+):
+    service, _ = service_with(app, WRITE_ALL_ACTION)
+    result = service.handle(
+        "thuc hien lenh write tren toan bo thiet bi", admin_user.id
+    )
+    assert result["intent"] == "configure"
+    assert result["batch"]["confirmation_text"] == "CONFIRM ALL"
+    assert len(result["batch"]["changes"]) == 2
+    assert ssh_factory.clients == {}
 
 
 def test_configure_intent_only_creates_a_preview(
@@ -317,7 +449,7 @@ def test_configure_intent_only_creates_a_preview(
     result = service.handle("Tao VLAN 25 MARKETING tren ACC-SW1", admin_user.id)
 
     assert result["intent"] == "configure"
-    assert result["change"]["status"] == "pending_approval"
+    assert result["batch"]["status"] == "pending_approval"
     # No SSH at all: preview is a pure planning step.
     assert fake.calls == []
     assert fake.config_batches == []
@@ -331,7 +463,7 @@ def test_configure_intent_persists_the_change_request(
     change = db.session.query(ChangeRequest).one()
     assert change.status == "pending_approval"
     assert change.source == "ai"
-    assert change.commands == CONFIGURE_ACTION["commands"]
+    assert change.commands == CONFIGURE_ACTION["operations"][0]["commands"]
 
 
 def test_configure_intent_requires_approval_before_anything_runs(
@@ -357,8 +489,8 @@ def test_write_erase_from_ai_requires_confirmation_not_a_block(
     result = service.handle("Xoa cau hinh ACC-SW1", admin_user.id)
 
     assert result["intent"] == "configure"
-    assert result["change"]["status"] == "pending_approval"
-    assert result["change"]["requires_confirmation"] is True
+    assert result["batch"]["status"] == "pending_approval"
+    assert result["batch"]["requires_confirmation"] is True
     assert fake.calls == []
     assert db.session.query(ChangeRequest).count() == 1
 
@@ -371,9 +503,12 @@ def test_monitor_intent_with_a_dangerous_command_is_blocked(
         app,
         {
             "intent": "monitor",
-            "device_hostname": "ACC-SW1",
-            "commands": ["reload"],
-            "verification_commands": [],
+            "operations": [{
+                "device_hostnames": ["ACC-SW1"],
+                "execution_mode": "exec",
+                "commands": ["reload"],
+                "verification_commands": [],
+            }],
             "explanation": "Restarting.",
         },
     )
@@ -389,9 +524,12 @@ def test_unknown_device_from_ai_is_rejected(app, admin_user):
         app,
         {
             "intent": "monitor",
-            "device_hostname": "GHOST-SW",
-            "commands": ["show ip route"],
-            "verification_commands": [],
+            "operations": [{
+                "device_hostnames": ["GHOST-SW"],
+                "execution_mode": "exec",
+                "commands": ["show ip route"],
+                "verification_commands": [],
+            }],
             "explanation": "x",
         },
     )
@@ -416,7 +554,7 @@ def test_context_contains_only_safe_device_metadata(
     )
     assert set(device_entry) == {"hostname", "role", "device_type", "status"}
     assert "supported_commands" in context
-    assert "supported_actions" in context
+    assert "supported_actions" not in context
 
 
 def test_no_credentials_are_ever_sent_to_the_model(
@@ -463,9 +601,12 @@ def test_troubleshoot_runs_diagnostics_then_explains(
     provider = FakeAIProvider(
         responses={
             "intent": "troubleshoot",
-            "device_hostname": "DIST-SW1",
-            "commands": ["show ip ospf neighbor"],
-            "verification_commands": [],
+            "operations": [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show ip ospf neighbor"],
+                "verification_commands": [],
+            }],
             "explanation": "Collecting OSPF diagnostics.",
         }
     )
@@ -487,9 +628,12 @@ def test_troubleshoot_never_applies_a_fix(app, dist_switch, admin_user, ssh_fact
     provider = FakeAIProvider(
         responses={
             "intent": "troubleshoot",
-            "device_hostname": "DIST-SW1",
-            "commands": ["show ip ospf neighbor"],
-            "verification_commands": [],
+            "operations": [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show ip ospf neighbor"],
+                "verification_commands": [],
+            }],
             "explanation": "Collecting diagnostics.",
         }
     )
@@ -532,7 +676,7 @@ def test_chat_endpoint_creates_a_preview_for_configure(
         json={"message": "Tao VLAN 25 MARKETING tren ACC-SW1"},
     )
     assert response.status_code == 200
-    assert response.get_json()["change"]["status"] == "pending_approval"
+    assert response.get_json()["batch"]["status"] == "pending_approval"
 
 
 def test_chat_endpoint_flags_dangerous_requests_for_confirmation(
@@ -543,7 +687,7 @@ def test_chat_endpoint_flags_dangerous_requests_for_confirmation(
         "/api/ai/chat", headers=admin_headers, json={"message": "write erase ACC-SW1"}
     )
     assert response.status_code == 200
-    assert response.get_json()["change"]["requires_confirmation"] is True
+    assert response.get_json()["batch"]["requires_confirmation"] is True
 
 
 def test_chat_endpoint_requires_a_message(client, admin_headers, app):
