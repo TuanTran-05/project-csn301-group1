@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from ..devices.model import Device
 from ..errors import NotFoundError, ValidationError
 from ..extensions import db
-from .model import ChangeBatch, ChangeRequest
+from .model import ChangeBatch
 from .service import prepare_change
 
 
@@ -27,6 +27,8 @@ class BatchOperation:
 
 
 def _resolve_targets(hostnames: list[str]) -> list[Device]:
+    if not hostnames:
+        raise ValidationError("At least one device hostname (or '*') is required.")
     if hostnames == ["*"]:
         return db.session.query(Device).order_by(Device.hostname).all()
     if "*" in hostnames:
@@ -67,6 +69,14 @@ def create_batch_preview(
                 )
             resolved[device.hostname] = (device, operation)
 
+    if not resolved:
+        # Reachable when every operation is a wildcard ("*") and the device
+        # table is empty - _resolve_targets lets an empty wildcard result
+        # through since it isn't a malformed request, it just has nothing to
+        # target. Catch it here instead of letting max() below raise a raw
+        # ValueError.
+        raise ValidationError("The batch did not resolve to any device.")
+
     batch = ChangeBatch(
         requested_by_id=user_id,
         description=(description or "")[:255] or None,
@@ -91,10 +101,10 @@ def create_batch_preview(
         batch.risk_level = max((c.risk_level for c in batch.changes), key=_risk_rank)
         db.session.add(batch)
         db.session.flush()
+        db.session.commit()
     except Exception:
         db.session.rollback()
         raise
-    db.session.commit()
     return batch
 
 

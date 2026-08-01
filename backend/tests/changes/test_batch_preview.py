@@ -77,6 +77,28 @@ def test_no_operations_is_rejected(app, admin_user):
         batch_service.create_batch_preview(admin_user.id, [], "Empty")
 
 
+def test_operation_with_no_target_hostnames_is_rejected(
+    app, admin_user, access_switch, db
+):
+    """An empty device_hostnames list is meaningless and must not silently
+    resolve to zero devices - it should be rejected as a ValidationError, not
+    let a later max() over an empty batch.changes raise a raw ValueError."""
+    operation = BatchOperation([], "exec", ["write memory"], [])
+    with pytest.raises(ValidationError):
+        batch_service.create_batch_preview(admin_user.id, [operation], "Bad")
+    assert db.session.query(ChangeBatch).count() == 0
+    assert db.session.query(ChangeRequest).count() == 0
+
+
+def test_wildcard_batch_against_empty_device_table_is_rejected(app, admin_user, db):
+    """A wildcard batch run when no devices exist resolves to zero devices;
+    this must raise ValidationError, not a raw ValueError from max()."""
+    with pytest.raises(ValidationError, match="did not resolve"):
+        batch_service.create_batch_preview(admin_user.id, [write_all()], "Save")
+    assert db.session.query(ChangeBatch).count() == 0
+    assert db.session.query(ChangeRequest).count() == 0
+
+
 def test_same_device_targeted_twice_by_identical_operations_is_not_a_conflict(
     app, admin_user, access_switch
 ):
