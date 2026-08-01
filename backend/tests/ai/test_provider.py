@@ -163,20 +163,21 @@ def test_gemini_complete_includes_the_context_and_message():
 
 # -- server-side schema enforcement ---------------------------------------
 # response_mime_type alone still let gemini-3.5-flash emit a repeated fragment
-# mid-string. A response_schema constrains decoding, so the shape is guaranteed.
+# mid-string. A response_json_schema constrains decoding without losing JSON
+# Schema keywords in the google-genai request builder.
 
 
-def test_gemini_passes_the_response_schema_through():
+def test_gemini_passes_the_json_schema_through():
     fake = FakeGenaiClient()
     schema = {"type": "OBJECT", "properties": {"intent": {"type": "STRING"}}}
     gemini_with(fake).complete("sys", "hi", {}, schema=schema)
-    assert fake.models.calls[0]["config"]["response_schema"] == schema
+    assert fake.models.calls[0]["config"]["response_json_schema"] == schema
 
 
 def test_gemini_omits_the_schema_when_none_is_given():
     fake = FakeGenaiClient()
     gemini_with(fake).complete("sys", "hi", {})
-    assert "response_schema" not in fake.models.calls[0]["config"]
+    assert "response_json_schema" not in fake.models.calls[0]["config"]
 
 
 def test_the_action_schema_matches_the_ai_action_model():
@@ -202,6 +203,92 @@ def test_the_action_schema_matches_the_ai_action_model():
         "execution_mode",
         "commands",
     }
+
+
+def test_provider_schema_intentionally_allows_pre_validation_empty_refusal():
+    from pydantic import ValidationError as PydanticValidationError
+
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA, AIAction
+
+    assert AI_ACTION_SCHEMA["properties"]["operations"]["minItems"] == 0
+    with pytest.raises(PydanticValidationError):
+        AIAction(
+            intent="configure",
+            operations=[],
+            explanation="Cannot propose a plan.",
+        )
+
+
+def test_provider_operation_schema_forbids_extra_fields():
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
+
+    operation_schema = AI_ACTION_SCHEMA["properties"]["operations"]["items"]
+    assert operation_schema["additionalProperties"] is False
+
+
+def test_provider_operation_schema_enforces_wildcard_exclusivity():
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
+
+    target_schema = AI_ACTION_SCHEMA["properties"]["operations"]["items"][
+        "properties"
+    ]["device_hostnames"]
+    wildcard_schema, explicit_schema = target_schema["anyOf"]
+    assert wildcard_schema == {
+        "type": "ARRAY",
+        "minItems": 1,
+        "maxItems": 1,
+        "items": {"type": "STRING", "enum": ["*"]},
+    }
+    assert explicit_schema == {
+        "type": "ARRAY",
+        "minItems": 1,
+        "items": {"type": "STRING", "pattern": r"^($|[^*]|.{2,})$"},
+    }
+
+
+def test_provider_schema_survives_the_google_genai_request_path(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from network_copilot.ai.schemas import AI_ACTION_SCHEMA
+
+    captured = {}
+
+    def record_request(http_method, path, request_dict, http_options=None):
+        captured.update(
+            http_method=http_method,
+            path=path,
+            request_dict=request_dict,
+        )
+        return types.HttpResponse(
+            headers={},
+            body='{"candidates":[{"content":{"role":"model","parts":[{"text":"{}"}]}}]}',
+        )
+
+    client = genai.Client(api_key="test-key")
+    monkeypatch.setattr(client._api_client, "request", record_request)
+    try:
+        GeminiProvider(
+            "test-key",
+            "gemini-2.5-flash",
+            client_factory=lambda: client,
+        ).complete("sys", "hi", {}, schema=AI_ACTION_SCHEMA)
+    finally:
+        client.close()
+
+    generation_config = captured["request_dict"]["generationConfig"]
+    assert "responseSchema" not in generation_config
+    wire_schema = generation_config["responseJsonSchema"]
+    operation_schema = wire_schema["properties"]["operations"]["items"]
+    target_schema = operation_schema["properties"]["device_hostnames"]
+    wildcard_schema, explicit_schema = target_schema["anyOf"]
+
+    assert wire_schema["properties"]["operations"]["minItems"] == 0
+    assert operation_schema["additionalProperties"] is False
+    assert wildcard_schema["minItems"] == 1
+    assert wildcard_schema["maxItems"] == 1
+    assert explicit_schema["minItems"] == 1
+    assert explicit_schema["items"]["pattern"] == r"^($|[^*]|.{2,})$"
 
 
 def test_interpret_asks_the_provider_to_enforce_the_schema(app, dist_switch, admin_user):

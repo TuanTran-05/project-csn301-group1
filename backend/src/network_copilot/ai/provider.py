@@ -100,7 +100,7 @@ class GeminiProvider:
             config["response_mime_type"] = "application/json"
             config["thinking_config"] = dict(NO_THINKING)
             if schema is not None:
-                config["response_schema"] = schema
+                config["response_json_schema"] = schema
 
         contents = _build_prompt(user_message, context)
         try:

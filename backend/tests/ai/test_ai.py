@@ -28,7 +28,7 @@ CONFIGURE_ACTION = {
     "operations": [{
         "device_hostnames": ["ACC-SW1"],
         "execution_mode": "config",
-        "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
+        "commands": ["vlan 25", "name MARKETING"],
         "verification_commands": ["show vlan brief"],
     }],
     "explanation": "Creating VLAN 25 named MARKETING on ACC-SW1.",
@@ -463,7 +463,12 @@ def test_configure_intent_persists_the_change_request(
     change = db.session.query(ChangeRequest).one()
     assert change.status == "pending_approval"
     assert change.source == "ai"
-    assert change.commands == CONFIGURE_ACTION["operations"][0]["commands"]
+    assert change.commands == [
+        "configure terminal",
+        "vlan 25",
+        "name MARKETING",
+        "end",
+    ]
 
 
 def test_configure_intent_requires_approval_before_anything_runs(

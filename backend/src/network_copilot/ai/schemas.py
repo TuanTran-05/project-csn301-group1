@@ -45,15 +45,36 @@ AI_ACTION_SCHEMA = {
         },
         "operations": {
             "type": "ARRAY",
-            "minItems": 1,
+            # Provider decoding must be able to emit the deliberate refusal
+            # handled by AIService.interpret(). AIAction itself intentionally
+            # remains stricter (min_length=1) after that branch is handled.
+            "minItems": 0,
             "items": {
                 "type": "OBJECT",
+                "additionalProperties": False,
                 "required": ["device_hostnames", "execution_mode", "commands"],
                 "properties": {
                     "device_hostnames": {
-                        "type": "ARRAY",
-                        "minItems": 1,
-                        "items": {"type": "STRING"},
+                        # These are keywords preserved by google-genai's
+                        # response_json_schema path. The second branch accepts
+                        # every string except the single wildcard token, so
+                        # "*" can only appear alone via the first branch.
+                        "anyOf": [
+                            {
+                                "type": "ARRAY",
+                                "minItems": 1,
+                                "maxItems": 1,
+                                "items": {"type": "STRING", "enum": ["*"]},
+                            },
+                            {
+                                "type": "ARRAY",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "STRING",
+                                    "pattern": r"^($|[^*]|.{2,})$",
+                                },
+                            },
+                        ],
                     },
                     "execution_mode": {
                         "type": "STRING",
