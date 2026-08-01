@@ -98,6 +98,20 @@ def test_batch_apply_accepts_confirmation_field(client, admin_headers, approved_
     assert response.get_json()["status"] in {"success", "partial_success", "failed"}
 
 
+@pytest.mark.parametrize("payload", ["CONFIRM ALL", 1, ["CONFIRM ALL"]])
+def test_batch_apply_rejects_non_object_json(
+    client, admin_headers, approved_write_batch, payload
+):
+    response = client.post(
+        f"/api/change-batches/{approved_write_batch.id}/apply",
+        headers=admin_headers,
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"] == "validation_error"
+
+
 def test_standalone_filter_excludes_batch_children(client, admin_headers, batch):
     body = client.get(
         "/api/changes?standalone_only=true&limit=500", headers=admin_headers

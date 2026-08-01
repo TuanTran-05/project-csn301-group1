@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..auth.service import current_user, roles_required
+from ..errors import ValidationError
 from ..extensions import limiter
 from . import batch_service
 
@@ -36,7 +37,11 @@ def approve(batch_id: int):
 @limiter.limit("10 per minute")
 def apply(batch_id: int):
     user = current_user()
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValidationError("Batch apply payload must be a JSON object.")
     batch = batch_service.apply_batch(
         batch_id,
         user.id if user else None,
