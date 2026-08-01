@@ -4,7 +4,7 @@
   --surface-raised: #0b1420;
   --border: #223349;
   --text: #dbe4ee;
-  --text-muted: #6f8299;
+  --text-muted: #75899f;
   --accent: #06b6d4;
   --accent-contrast: #04222b;
   --online: #22c55e;
@@ -229,6 +229,7 @@ body {
 .sidebar-actions {
   margin-top: 6px;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -241,6 +242,28 @@ body {
   cursor: pointer;
   background: var(--accent);
   color: var(--accent-contrast);
+}
+
+button {
+  transition: transform 80ms ease, filter 120ms ease, opacity 120ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+  filter: brightness(0.92);
+}
+
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sidebar-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* -- Chat -- */
@@ -461,8 +484,14 @@ body {
 
 .action-card-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+.sidebar-actions button,
+.action-card-buttons button {
+  white-space: nowrap;
 }
 
 .action-card-buttons button:disabled {
@@ -494,6 +523,191 @@ body {
   width: 100%;
   background: var(--surface);
   color: var(--text);
+}
+
+.batch-description {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+
+.batch-aggregate {
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 8px 0;
+}
+
+.batch-aggregate span {
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.batch-aggregate span + span {
+  border-left: 1px solid var(--border);
+}
+
+.batch-aggregate strong {
+  color: var(--text);
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+}
+
+.batch-confirmation {
+  background: var(--danger-bg);
+  border-left: 2px solid var(--offline);
+  border-radius: 4px;
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.batch-confirmation-warning {
+  color: var(--danger-text);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 7px;
+}
+
+.batch-confirmation-warning code {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.batch-confirmation input,
+.batch-sidebar-confirmation input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.batch-children {
+  border-bottom: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.batch-child {
+  border-top: 1px solid var(--border);
+}
+
+.batch-child summary {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  font-size: 12px;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  list-style-position: inside;
+  min-width: 0;
+  padding: 7px 2px;
+}
+
+.batch-child summary:hover,
+.batch-child[open] summary {
+  color: var(--accent);
+}
+
+.batch-child summary code {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.batch-child .change-detail,
+.batch-child .change-error {
+  margin: 0 0 8px 18px;
+}
+
+.batch-child pre {
+  max-height: 220px;
+  white-space: pre-wrap;
+}
+
+.risk-low,
+.batch-status-success {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.risk-medium,
+.batch-status-pending_approval,
+.batch-status-approved,
+.batch-status-partial_success {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.risk-high,
+.batch-status-failed,
+.batch-status-cancelled {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.batch-status-running {
+  background: var(--border);
+  color: var(--text);
+}
+
+.sidebar-state {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0 0 9px;
+}
+
+.sidebar-state-error {
+  color: var(--danger-text);
+}
+
+.batch-sidebar-item {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+
+.batch-sidebar-heading,
+.batch-sidebar-meta {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.batch-sidebar-heading .status-pill,
+.batch-sidebar-meta .risk-pill {
+  margin-left: auto;
+}
+
+.batch-sidebar-description {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
+.batch-sidebar-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.batch-sidebar-confirmation {
+  margin-top: 8px;
+}
+
+.batch-sidebar-confirmation label {
+  color: var(--danger-text);
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 5px;
 }
 
 .risk-pill, .status-pill {
@@ -534,6 +748,21 @@ body {
 .chat-input input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .bubble {
+    max-width: 100%;
+  }
+
+  .batch-child summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .batch-child summary .status-pill {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 /* -- Dashboard -- */

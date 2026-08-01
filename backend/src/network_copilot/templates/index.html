@@ -201,6 +201,104 @@
                   </div>
                 </div>
               </template>
+
+              <template x-if="message.payload && message.payload.batch && batchesById[message.payload.batch.id]">
+                <div
+                  class="action-card batch-action-card"
+                  x-data="{ get batch() { return batchesById[message.payload.batch.id]; } }"
+                >
+                  <div class="action-card-header">
+                    <strong x-text="'Batch #' + batch.id"></strong>
+                    <span
+                      class="risk-pill"
+                      :class="'risk-' + batch.risk_level"
+                      x-text="batch.risk_level"
+                    ></span>
+                    <span
+                      class="status-pill"
+                      :class="'batch-status-' + batch.status"
+                      x-text="batch.status"
+                    ></span>
+                  </div>
+                  <p class="batch-description" x-text="batch.description || 'Multi-device configuration batch'"></p>
+                  <div class="batch-aggregate" aria-label="Batch outcomes">
+                    <span><strong x-text="batchOutcomeCount(batch, 'success')"></strong> successful</span>
+                    <span><strong x-text="batchOutcomeCount(batch, 'failed')"></strong> failed</span>
+                    <span><strong x-text="(batch.changes || []).length"></strong> total</span>
+                  </div>
+
+                  <div
+                    class="batch-confirmation"
+                    x-show="batch.status === 'approved' && batch.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                  >
+                    <p class="batch-confirmation-warning">
+                      This batch contains dangerous commands. Type the exact confirmation phrase before applying:
+                      <code x-text="batch.confirmation_text"></code>
+                    </p>
+                    <label class="operational-label" :for="'batch-confirm-' + batch.id">Exact confirmation phrase</label>
+                    <input
+                      type="text"
+                      :id="'batch-confirm-' + batch.id"
+                      :placeholder="batch.confirmation_text"
+                      x-model="batchConfirmInputs[batch.id]"
+                      autocomplete="off"
+                    />
+                  </div>
+
+                  <div class="batch-children">
+                    <template x-for="child in batch.changes || []" :key="child.id">
+                      <details class="batch-child">
+                        <summary>
+                          <span x-text="child.device && child.device.hostname ? child.device.hostname : ('Device #' + child.device_id)"></span>
+                          <code x-text="child.execution_mode || 'config'"></code>
+                          <span
+                            class="status-pill"
+                            :class="'batch-status-' + child.status"
+                            x-text="child.status"
+                          ></span>
+                        </summary>
+                        <div class="change-detail">
+                          <span class="operational-label">Commands</span>
+                          <pre x-text="(child.commands || []).join('\n')"></pre>
+                        </div>
+                        <div class="change-detail" x-show="child.apply_output">
+                          <span class="operational-label">Apply output</span>
+                          <pre x-text="child.apply_output"></pre>
+                        </div>
+                        <div
+                          class="change-error"
+                          x-show="child.error_message"
+                          x-text="child.error_message"
+                        ></div>
+                      </details>
+                    </template>
+                  </div>
+
+                  <div
+                    class="change-error"
+                    role="alert"
+                    x-show="batchActionErrors[batch.id]"
+                    x-text="batchActionErrors[batch.id]"
+                  ></div>
+                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
+                    <button
+                      x-show="batch.status === 'pending_approval'"
+                      :disabled="Boolean(batchActionIds[batch.id])"
+                      @click="approveBatch(batch.id)"
+                    >Approve batch</button>
+                    <button
+                      x-show="batch.status === 'approved'"
+                      :disabled="Boolean(batchActionIds[batch.id]) || !batchConfirmationMatches(batch.id)"
+                      @click="applyBatch(batch.id)"
+                    >Apply batch</button>
+                    <button
+                      x-show="batch.status === 'pending_approval' || batch.status === 'approved'"
+                      :disabled="Boolean(batchActionIds[batch.id])"
+                      @click="cancelBatch(batch.id)"
+                    >Cancel batch</button>
+                  </div>
+                </div>
+              </template>
             </div>
           </template>
 
@@ -223,8 +321,22 @@
       </main>
       <aside class="sidebar changes-panel">
         <h2>Thay đổi đang chờ</h2>
+        <p
+          class="sidebar-state"
+          x-show="changesLoading || batchesLoading"
+        >Loading pending work...</p>
+        <p
+          class="sidebar-state sidebar-state-error"
+          role="alert"
+          x-show="changesError || batchesError"
+          x-text="[changesError, batchesError].filter(Boolean).join(' ')"
+        ></p>
+        <p
+          class="sidebar-state"
+          x-show="!changesLoading && !batchesLoading && !changesError && !batchesError && pendingChanges.length === 0 && pendingBatches.length === 0"
+        >No pending changes or batches.</p>
         <ul>
-          <template x-for="change in pendingChanges" :key="change.id">
+          <template x-for="change in pendingChanges" :key="'change-' + change.id">
             <li>
               <div x-text="change.device ? change.device.hostname : ('Thiết bị #' + change.device_id)"></div>
               <div
@@ -235,6 +347,64 @@
               <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
                 <button @click="approveChange(change.id)">Approve</button>
                 <button @click="cancelChange(change.id)">Cancel</button>
+              </div>
+            </li>
+          </template>
+          <template x-for="batch in pendingBatches" :key="'batch-' + batch.id">
+            <li class="batch-sidebar-item">
+              <div class="batch-sidebar-heading">
+                <strong x-text="'Batch #' + batch.id"></strong>
+                <span
+                  class="status-pill"
+                  :class="'batch-status-' + batch.status"
+                  x-text="batch.status"
+                ></span>
+              </div>
+              <div class="batch-sidebar-description" x-text="batch.description || 'Multi-device configuration batch'"></div>
+              <div class="batch-sidebar-meta">
+                <span x-text="(batch.changes || []).length + ' devices'"></span>
+                <span
+                  class="risk-pill"
+                  :class="'risk-' + batch.risk_level"
+                  x-text="batch.risk_level"
+                ></span>
+              </div>
+              <div
+                class="batch-sidebar-confirmation"
+                x-show="batch.status === 'approved' && batch.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+              >
+                <label :for="'sidebar-batch-confirm-' + batch.id">
+                  Type <code x-text="batch.confirmation_text"></code>
+                </label>
+                <input
+                  type="text"
+                  :id="'sidebar-batch-confirm-' + batch.id"
+                  :placeholder="batch.confirmation_text"
+                  x-model="batchConfirmInputs[batch.id]"
+                  autocomplete="off"
+                />
+              </div>
+              <div
+                class="change-error"
+                role="alert"
+                x-show="batchActionErrors[batch.id]"
+                x-text="batchActionErrors[batch.id]"
+              ></div>
+              <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
+                <button
+                  x-show="batch.status === 'pending_approval'"
+                  :disabled="Boolean(batchActionIds[batch.id])"
+                  @click="approveBatch(batch.id)"
+                >Approve</button>
+                <button
+                  x-show="batch.status === 'approved'"
+                  :disabled="Boolean(batchActionIds[batch.id]) || !batchConfirmationMatches(batch.id)"
+                  @click="applyBatch(batch.id)"
+                >Apply</button>
+                <button
+                  :disabled="Boolean(batchActionIds[batch.id])"
+                  @click="cancelBatch(batch.id)"
+                >Cancel</button>
               </div>
             </li>
           </template>

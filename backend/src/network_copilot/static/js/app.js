@@ -25,11 +25,22 @@ document.addEventListener("alpine:init", () => {
     // -- changes (shared live state, keyed by id) --
     changesById: {},
     _changesRefreshGeneration: 0,
+    changesLoading: false,
+    changesError: "",
     // Draft text for the "type the hostname to confirm" box a dangerous
     // change shows before Apply. Keyed by change id, kept separate from
     // changesById so a poll refreshing that map never wipes what the
     // operator is mid-typing.
     confirmInputs: {},
+
+    // -- change batches (parents own their child changes) --
+    batchesById: {},
+    batchConfirmInputs: {},
+    batchActionIds: {},
+    batchActionErrors: {},
+    _batchesRefreshGeneration: 0,
+    batchesLoading: false,
+    batchesError: "",
 
     // -- chat --
     messages: [],
@@ -41,6 +52,13 @@ document.addEventListener("alpine:init", () => {
     get pendingChanges() {
       return Object.values(this.changesById).filter(
         (change) => change.status === "pending_approval"
+      );
+    },
+
+    get pendingBatches() {
+      return Object.values(this.batchesById).filter(
+        (batch) =>
+          batch.status === "pending_approval" || batch.status === "approved"
       );
     },
 
@@ -133,6 +151,7 @@ document.addEventListener("alpine:init", () => {
       this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
       this._changesRefreshGeneration += 1;
+      this._batchesRefreshGeneration += 1;
       this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
@@ -144,6 +163,14 @@ document.addEventListener("alpine:init", () => {
       this.devices = [];
       this.changesById = {};
       this.confirmInputs = {};
+      this.changesLoading = false;
+      this.changesError = "";
+      this.batchesById = {};
+      this.batchConfirmInputs = {};
+      this.batchActionIds = {};
+      this.batchActionErrors = {};
+      this.batchesLoading = false;
+      this.batchesError = "";
       this.messages = [];
       this.draftMessage = "";
       this.sending = false;
@@ -151,10 +178,13 @@ document.addEventListener("alpine:init", () => {
 
     async startApp() {
       const generation = this._sessionGeneration;
+      this.changesLoading = true;
+      this.batchesLoading = true;
       const bootstrap = [
         () => this.hydrateMessages(),
         () => this.refreshDevices(),
         () => this.refreshChanges(),
+        () => this.refreshBatches(),
       ];
       for (const load of bootstrap) {
         try {
@@ -175,6 +205,9 @@ document.addEventListener("alpine:init", () => {
       this._changesTimer = setInterval(() => {
         this.refreshChanges().catch(() => {});
       }, 15000);
+      this._batchesTimer = setInterval(() => {
+        this.refreshBatches().catch(() => {});
+      }, 15000);
       this._messagesTimer = setInterval(() => {
         this.pollMessages().catch(() => {});
       }, 7000);
@@ -183,7 +216,12 @@ document.addEventListener("alpine:init", () => {
     stopPolling() {
       clearInterval(this._deviceTimer);
       clearInterval(this._changesTimer);
+      clearInterval(this._batchesTimer);
       clearInterval(this._messagesTimer);
+      this._deviceTimer = null;
+      this._changesTimer = null;
+      this._batchesTimer = null;
+      this._messagesTimer = null;
     },
 
     async refreshDevices() {
@@ -196,11 +234,143 @@ document.addEventListener("alpine:init", () => {
 
     async refreshChanges() {
       const generation = this._changesRefreshGeneration;
-      const data = await this.authFetch("/api/changes?limit=500");
-      if (generation === this._changesRefreshGeneration) {
-        this.changesById = Object.fromEntries(
-          data.items.map((change) => [change.id, change])
+      this.changesLoading = true;
+      this.changesError = "";
+      try {
+        const data = await this.authFetch(
+          "/api/changes?standalone_only=true&limit=500"
         );
+        if (generation === this._changesRefreshGeneration) {
+          this.changesById = Object.fromEntries(
+            data.items.map((change) => [change.id, change])
+          );
+        }
+      } catch (err) {
+        if (generation === this._changesRefreshGeneration) {
+          this.changesError = err.message || "Could not load changes.";
+        }
+        throw err;
+      } finally {
+        if (generation === this._changesRefreshGeneration) {
+          this.changesLoading = false;
+        }
+      }
+    },
+
+    async refreshBatches() {
+      const generation = this._batchesRefreshGeneration;
+      this.batchesLoading = true;
+      this.batchesError = "";
+      try {
+        const data = await this.authFetch("/api/change-batches?limit=500");
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesById = Object.fromEntries(
+            data.items.map((batch) => [batch.id, batch])
+          );
+        }
+      } catch (err) {
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesError = err.message || "Could not load batches.";
+        }
+        throw err;
+      } finally {
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesLoading = false;
+        }
+      }
+    },
+
+    async approveBatch(id) {
+      const generation = this._batchesRefreshGeneration;
+      this.batchActionIds[id] = "approve";
+      delete this.batchActionErrors[id];
+      try {
+        const batch = await this.authFetch(
+          `/api/change-batches/${id}/approve`,
+          { method: "POST" }
+        );
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesById[id] = batch;
+        }
+      } catch (err) {
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchActionErrors[id] = err.message || "Approval failed.";
+        }
+      } finally {
+        if (generation === this._batchesRefreshGeneration) {
+          delete this.batchActionIds[id];
+        }
+      }
+    },
+
+    batchConfirmationMatches(id) {
+      const batch = this.batchesById[id];
+      if (!batch) return false;
+      if (!batch.requires_confirmation) return true;
+      if (typeof batch.confirmation_text !== "string") return false;
+      return (this.batchConfirmInputs[id] || "") === batch.confirmation_text;
+    },
+
+    batchOutcomeCount(batch, status) {
+      return (batch && Array.isArray(batch.changes) ? batch.changes : []).filter(
+        (change) => change.status === status
+      ).length;
+    },
+
+    async applyBatch(id) {
+      const batch = this.batchesById[id];
+      if (!batch || !this.batchConfirmationMatches(id)) return;
+      const generation = this._batchesRefreshGeneration;
+      this.batchActionIds[id] = "apply";
+      delete this.batchActionErrors[id];
+      try {
+        const body = {};
+        if (batch.requires_confirmation) {
+          body.confirmation = this.batchConfirmInputs[id] || "";
+        }
+        const updated = await this.authFetch(
+          `/api/change-batches/${id}/apply`,
+          {
+            method: "POST",
+            body: JSON.stringify(body),
+          }
+        );
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesById[id] = updated;
+          delete this.batchConfirmInputs[id];
+        }
+      } catch (err) {
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchActionErrors[id] = err.message || "Apply failed.";
+        }
+      } finally {
+        if (generation === this._batchesRefreshGeneration) {
+          delete this.batchActionIds[id];
+        }
+      }
+    },
+
+    async cancelBatch(id) {
+      const generation = this._batchesRefreshGeneration;
+      this.batchActionIds[id] = "cancel";
+      delete this.batchActionErrors[id];
+      try {
+        const batch = await this.authFetch(
+          `/api/change-batches/${id}/cancel`,
+          { method: "POST" }
+        );
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchesById[id] = batch;
+          delete this.batchConfirmInputs[id];
+        }
+      } catch (err) {
+        if (generation === this._batchesRefreshGeneration) {
+          this.batchActionErrors[id] = err.message || "Cancellation failed.";
+        }
+      } finally {
+        if (generation === this._batchesRefreshGeneration) {
+          delete this.batchActionIds[id];
+        }
       }
     },
 
@@ -362,6 +532,10 @@ document.addEventListener("alpine:init", () => {
       const change = message.payload && message.payload.change;
       if (change && change.id != null && !(change.id in this.changesById)) {
         this.changesById[change.id] = change;
+      }
+      const batch = message.payload && message.payload.batch;
+      if (batch && batch.id != null) {
+        this.batchesById[batch.id] = batch;
       }
     },
 
