@@ -161,7 +161,7 @@ def test_ospf_uses_the_most_recent_snapshot(app, make_device):
 
 def test_changes_pending_approval_bucket(app, admin_user, access_switch):
     change_service.create_preview(
-        admin_user.id, device_id=access_switch.id, commands=["show version"]
+        admin_user.id, device_id=access_switch.id, commands=["vlan 900"]
     )
 
     summary = build_summary()
@@ -175,7 +175,7 @@ def test_changes_pending_approval_bucket(app, admin_user, access_switch):
 
 def test_changes_recent_bucket_includes_every_status(app, admin_user, access_switch):
     change = change_service.create_preview(
-        admin_user.id, device_id=access_switch.id, commands=["show version"]
+        admin_user.id, device_id=access_switch.id, commands=["vlan 900"]
     )
     change_service.cancel(change.id, admin_user.id)
 
