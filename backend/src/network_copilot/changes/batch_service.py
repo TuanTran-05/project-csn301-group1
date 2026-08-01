@@ -189,6 +189,8 @@ def cancel_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
 
 def aggregate_status(outcomes: list[str]) -> str:
     """Roll many child outcomes up into one batch status."""
+    if not outcomes:
+        return "failed"
     if all(outcome == "success" for outcome in outcomes):
         return "success"
     if all(outcome == "failed" for outcome in outcomes):
@@ -216,7 +218,10 @@ def apply_batch(
         )
 
     if batch.requires_confirmation:
-        if (confirmation or "").strip() != batch.confirmation_text:
+        provided = confirmation or ""
+        if len(batch.changes) > 1:
+            provided = provided.strip()
+        if provided != batch.confirmation_text:
             raise ValidationError(
                 "This batch contains a dangerous command. Confirm by sending "
                 f"confirmation equal to {batch.confirmation_text!r}.",
@@ -227,10 +232,15 @@ def apply_batch(
     db.session.commit()
 
     outcomes: list[str] = []
-    for change in batch.changes:
+    changes = sorted(batch.changes, key=lambda item: item.device.hostname)
+    for index, change in enumerate(changes):
+        if index:
+            db.session.expire(change)
+            db.session.refresh(change)
         try:
             _apply_approved_change(change, user_id)
         except Exception as exc:  # pragma: no cover - defensive: one child must never abort the batch
+            db.session.rollback()
             _fail(change, f"Unexpected error while applying: {exc}", user_id)
         outcomes.append(change.status)
 

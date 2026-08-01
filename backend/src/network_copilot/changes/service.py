@@ -603,25 +603,48 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
     device = device_service.get_device(change.device_id)
     change.status = "running"
     db.session.commit()
+
     try:
         client = build_client_for_device(device)
+    except Exception as exc:  # pragma: no cover - missing credentials etc.
+        return _fail(change, f"Could not open an SSH session: {exc}", user_id)
+
+    # 1. Backup first. Without it, nothing is configured.
+    try:
         backup = capture_backup(device, change_request_id=change.id, client=client)
         change.backup_id = backup.id
-        result = (
-            client.run_exec(
+        db.session.commit()
+    except SSHError as exc:
+        return _fail(change, f"Pre-change backup failed: {exc.message}", user_id)
+
+    # 2. Push the configuration (or run the EXEC commands directly).
+    try:
+        if change.execution_mode == "exec":
+            result = client.run_exec(
                 list(change.commands or []), allow_confirm=change.requires_confirmation
             )
-            if change.execution_mode == "exec"
-            else client.run_config(list(change.commands or []))
-        )
+        else:
+            result = client.run_config(list(change.commands or []))
         change.apply_output = result.output
+        db.session.commit()
+    except SSHError as exc:
+        return _fail(change, f"Applying configuration failed: {exc.message}", user_id)
+
+    # 3. Verify on the device itself.
+    try:
         passed, results = run_verification(change, client)
     except SSHError as exc:
-        return _fail(change, exc.message, user_id)
+        change.verification_output = None
+        return _fail(change, f"Verification could not run: {exc.message}", user_id)
 
     change.verification_output = results
     if not passed:
-        return _fail(change, "Verification failed.", user_id)
+        return _fail(
+            change,
+            "Verification failed; the device does not reflect the requested change. "
+            "Review rollback_commands and apply them manually if required.",
+            user_id,
+        )
 
     change.status = "success"
     change.error_message = None

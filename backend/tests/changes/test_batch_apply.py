@@ -1,8 +1,13 @@
 import pytest
+from sqlalchemy import update
 
+from network_copilot.audit.model import AuditLog
+from network_copilot.auth.model import User
 from network_copilot.changes import batch_service
 from network_copilot.changes.batch_service import BatchOperation
+from network_copilot.changes.model import ChangeRequest
 from network_copilot.errors import InvalidStateError, ValidationError
+from network_copilot.extensions import db
 from network_copilot.ssh.exceptions import SSHConnectionError
 
 
@@ -45,6 +50,22 @@ def test_only_pending_batches_can_be_approved(app, admin_user, access_switch):
         batch_service.approve_batch(batch.id, admin_user.id)
 
 
+def test_approve_batch_records_a_batch_level_audit_event(
+    app, admin_user, access_switch
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+
+    event = db.session.query(AuditLog).filter_by(action="batch.approve").one()
+    assert event.result == "success"
+    assert event.user_id == admin_user.id
+    assert event.details == {
+        "batch_id": batch.id,
+        "child_count": 1,
+        "risk_level": "high",
+    }
+
+
 # -- cancel_batch -------------------------------------------------------------
 
 
@@ -67,6 +88,18 @@ def test_cancel_batch_also_cancels_approved_children(
 
     assert result.status == "cancelled"
     assert all(change.status == "cancelled" for change in result.changes)
+
+
+def test_cancel_batch_records_a_batch_level_audit_event(
+    app, admin_user, access_switch
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.cancel_batch(batch.id, admin_user.id)
+
+    event = db.session.query(AuditLog).filter_by(action="batch.cancel").one()
+    assert event.result == "success"
+    assert event.user_id == admin_user.id
+    assert event.details == {"batch_id": batch.id, "child_count": 1}
 
 
 def test_cancelled_batch_cannot_be_applied(app, admin_user, access_switch, ssh_factory):
@@ -96,6 +129,20 @@ def test_dangerous_single_device_batch_requires_exact_hostname(
     batch_service.approve_batch(batch.id, admin_user.id)
     with pytest.raises(ValidationError):
         batch_service.apply_batch(batch.id, admin_user.id, confirmation="CONFIRM ALL")
+    assert ssh_factory.clients == {}
+
+
+def test_dangerous_single_device_batch_rejects_whitespace_around_hostname(
+    app, admin_user, access_switch, ssh_factory
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+
+    with pytest.raises(ValidationError):
+        batch_service.apply_batch(
+            batch.id, admin_user.id, confirmation="  ACC-SW1  "
+        )
+
     assert ssh_factory.clients == {}
 
 
@@ -169,6 +216,78 @@ def test_confirm_all_continues_after_one_device_fails(
     assert ssh_factory.get(dist_switch.hostname).exec_batches == [["write memory"]]
 
 
+def test_apply_batch_refreshes_child_state_between_committed_children(
+    app, admin_user, access_switch, dist_switch, monkeypatch
+):
+    batch = make_write_batch(admin_user.id, [access_switch, dist_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    children = sorted(batch.changes, key=lambda change: change.device.hostname)
+    first_id, second_id = (change.id for change in children)
+    observed_commands: dict[int, list[str]] = {}
+
+    session = db.session()
+    previous_expire_on_commit = session.expire_on_commit
+    session.expire_on_commit = False
+
+    def apply_child(change, user_id):
+        if change.id == first_id:
+            statement = (
+                update(ChangeRequest)
+                .where(ChangeRequest.id == second_id)
+                .values(commands=["fresh command from database"])
+                .execution_options(synchronize_session=False)
+            )
+            db.session.execute(statement)
+        observed_commands[change.id] = list(change.commands or [])
+        change.status = "success"
+        db.session.commit()
+        return change
+
+    monkeypatch.setattr(batch_service, "_apply_approved_change", apply_child)
+    try:
+        result = batch_service.apply_batch(
+            batch.id, admin_user.id, confirmation="CONFIRM ALL"
+        )
+    finally:
+        session.expire_on_commit = previous_expire_on_commit
+
+    assert result.status == "success"
+    assert observed_commands[second_id] == ["fresh command from database"]
+
+
+def test_apply_batch_rolls_back_a_failed_transaction_before_continuing(
+    app, admin_user, access_switch, dist_switch, monkeypatch
+):
+    batch = make_write_batch(admin_user.id, [access_switch, dist_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    children = sorted(batch.changes, key=lambda change: change.device.hostname)
+    first_id = children[0].id
+    attempted: list[int] = []
+
+    def apply_child(change, user_id):
+        attempted.append(change.id)
+        if change.id == first_id:
+            duplicate = User(
+                username=admin_user.username,
+                password_hash=admin_user.password_hash,
+                role=admin_user.role,
+            )
+            db.session.add(duplicate)
+            db.session.flush()
+        change.status = "success"
+        db.session.commit()
+        return change
+
+    monkeypatch.setattr(batch_service, "_apply_approved_change", apply_child)
+    result = batch_service.apply_batch(
+        batch.id, admin_user.id, confirmation="CONFIRM ALL"
+    )
+
+    assert attempted == [change.id for change in children]
+    assert result.status == "partial_success"
+    assert statuses(result) == {"ACC-SW1": "failed", "DIST-SW1": "success"}
+
+
 def test_all_children_failing_marks_the_batch_failed(
     app, admin_user, access_switch, dist_switch, ssh_factory
 ):
@@ -207,6 +326,34 @@ def test_all_children_succeeding_marks_the_batch_success(
     )
     assert result.status == "success"
     assert result.applied_at is not None
+
+
+def test_apply_batch_audits_result_without_persisting_confirmation_text(
+    app, admin_user, access_switch, dist_switch, ssh_factory
+):
+    for device in (access_switch, dist_switch):
+        ssh_factory.set_client(
+            device.hostname,
+            responses={
+                "show running-config": f"hostname {device.hostname}",
+                "show startup-config": f"hostname {device.hostname}",
+            },
+        )
+    batch = make_write_batch(admin_user.id, [access_switch, dist_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    result = batch_service.apply_batch(
+        batch.id, admin_user.id, confirmation="  CONFIRM ALL  "
+    )
+
+    event = db.session.query(AuditLog).filter_by(action="batch.apply").one()
+    assert event.result == "success"
+    assert event.user_id == admin_user.id
+    assert event.details["batch_id"] == result.id
+    assert event.details["outcomes"] == ["success", "success"]
+    persisted_audit_text = str(
+        [(item.message, item.details) for item in db.session.query(AuditLog).all()]
+    )
+    assert "CONFIRM ALL" not in persisted_audit_text
 
 
 def test_apply_batch_sets_applied_at(
@@ -275,7 +422,12 @@ def test_only_approved_batches_can_be_applied(app, admin_user, access_switch, ss
 
 @pytest.mark.parametrize(
     ("outcomes", "expected"),
-    [(["success", "success"], "success"), (["success", "failed"], "partial_success"), (["failed", "failed"], "failed")],
+    [
+        ([], "failed"),
+        (["success", "success"], "success"),
+        (["success", "failed"], "partial_success"),
+        (["failed", "failed"], "failed"),
+    ],
 )
 def test_aggregate_status(outcomes, expected):
     assert batch_service.aggregate_status(outcomes) == expected

@@ -188,7 +188,10 @@ def test_failed_verification_marks_the_change_failed(
     change = change_service.apply(pending_change.id, admin_user.id)
 
     assert change.status == "failed"
-    assert change.error_message
+    assert change.error_message == (
+        "Verification failed; the device does not reflect the requested change. "
+        "Review rollback_commands and apply them manually if required."
+    )
     assert change.verification_output["show vlan brief"]["passed"] is False
 
 
@@ -207,7 +210,7 @@ def test_verification_failure_still_records_the_backup(
     assert db.session.get(ConfigBackup, change.backup_id) is not None
 
 
-def test_ssh_failure_during_apply_marks_the_change_failed(
+def test_backup_ssh_failure_keeps_the_stage_specific_error_message(
     app, admin_user, pending_change, ssh_factory, access_switch
 ):
     ssh_factory.set_failing(access_switch.hostname, SSHConnectionError("link down"))
@@ -215,7 +218,63 @@ def test_ssh_failure_during_apply_marks_the_change_failed(
     change = change_service.apply(pending_change.id, admin_user.id)
 
     assert change.status == "failed"
-    assert "link down" in change.error_message
+    assert change.error_message == "Pre-change backup failed: link down"
+
+
+def test_configuration_ssh_failure_keeps_the_stage_specific_error_message(
+    app, admin_user, pending_change, applying_client, monkeypatch
+):
+    def fail_configuration(commands):
+        raise SSHConnectionError("write channel closed")
+
+    monkeypatch.setattr(applying_client, "run_config", fail_configuration)
+    change_service.approve(pending_change.id, admin_user.id)
+    change = change_service.apply(pending_change.id, admin_user.id)
+
+    assert change.status == "failed"
+    assert change.error_message == (
+        "Applying configuration failed: write channel closed"
+    )
+
+
+def test_verification_ssh_failure_keeps_the_stage_specific_error_message(
+    app, admin_user, pending_change, applying_client, monkeypatch
+):
+    original_run_show = applying_client.run_show
+
+    def fail_verification(command):
+        if command == "show vlan brief":
+            raise SSHConnectionError("verification channel closed")
+        return original_run_show(command)
+
+    monkeypatch.setattr(applying_client, "run_show", fail_verification)
+    change_service.approve(pending_change.id, admin_user.id)
+    change = change_service.apply(pending_change.id, admin_user.id)
+
+    assert change.status == "failed"
+    assert change.error_message == (
+        "Verification could not run: verification channel closed"
+    )
+
+
+def test_client_construction_failure_marks_standalone_change_failed(
+    app, admin_user, pending_change, monkeypatch
+):
+    from network_copilot.ssh import client as ssh_client
+
+    def fail_client_construction(device):
+        raise RuntimeError("credentials unavailable")
+
+    monkeypatch.setattr(
+        ssh_client, "build_client_for_device", fail_client_construction
+    )
+    change_service.approve(pending_change.id, admin_user.id)
+    change = change_service.apply(pending_change.id, admin_user.id)
+
+    assert change.status == "failed"
+    assert change.error_message == (
+        "Could not open an SSH session: credentials unavailable"
+    )
 
 
 def test_apply_aborts_when_the_backup_cannot_be_taken(
