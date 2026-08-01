@@ -11,11 +11,12 @@ device in the batch gets a ChangeRequest, or none of them do.
 
 from dataclasses import dataclass
 
+from ..audit.service import record_event
 from ..devices.model import Device
-from ..errors import NotFoundError, ValidationError
+from ..errors import InvalidStateError, NotFoundError, ValidationError
 from ..extensions import db
 from .model import ChangeBatch
-from .service import prepare_change
+from .service import _apply_approved_change, _fail, _now, prepare_change
 
 
 @dataclass(frozen=True)
@@ -122,3 +123,130 @@ def list_batches(limit: int = 100) -> list[ChangeBatch]:
         .limit(min(max(limit, 1), 500))
         .all()
     )
+
+
+# -- approve / cancel -------------------------------------------------------
+
+
+def approve_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
+    """Approve the batch and every pending child in the same transaction.
+
+    Children never go through their own individual approve() call - the
+    batch approval covers all of them at once.
+    """
+    batch = get_batch(batch_id)
+    if batch.status != "pending_approval":
+        raise InvalidStateError(
+            f"Only a batch in 'pending_approval' can be approved; "
+            f"batch {batch_id} is '{batch.status}'."
+        )
+    now = _now()
+    batch.status = "approved"
+    batch.approved_by_id = user_id
+    batch.approved_at = now
+    for change in batch.changes:
+        if change.status == "pending_approval":
+            change.status = "approved"
+            change.approved_by_id = user_id
+            change.approved_at = now
+    db.session.commit()
+    record_event(
+        action="batch.approve",
+        result="success",
+        user_id=user_id,
+        details={
+            "batch_id": batch.id,
+            "child_count": len(batch.changes),
+            "risk_level": batch.risk_level,
+        },
+    )
+    return batch
+
+
+def cancel_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
+    """Cancel the batch and every still-eligible child in the same transaction."""
+    batch = get_batch(batch_id)
+    if batch.status not in {"pending_approval", "approved"}:
+        raise InvalidStateError(
+            f"A batch in state '{batch.status}' can no longer be cancelled."
+        )
+    batch.status = "cancelled"
+    for change in batch.changes:
+        if change.status in {"pending_approval", "approved"}:
+            change.status = "cancelled"
+    db.session.commit()
+    record_event(
+        action="batch.cancel",
+        result="success",
+        user_id=user_id,
+        details={"batch_id": batch.id, "child_count": len(batch.changes)},
+    )
+    return batch
+
+
+# -- apply -------------------------------------------------------------------
+
+
+def aggregate_status(outcomes: list[str]) -> str:
+    """Roll many child outcomes up into one batch status."""
+    if all(outcome == "success" for outcome in outcomes):
+        return "success"
+    if all(outcome == "failed" for outcome in outcomes):
+        return "failed"
+    return "partial_success"
+
+
+def apply_batch(
+    batch_id: int, user_id: int | None, confirmation: str | None = None
+) -> ChangeBatch:
+    """Apply every child sequentially, aggregating partial success.
+
+    The batch-level confirmation is validated exactly once, before any SSH
+    work starts on any child - never per-child. A dangerous one-device batch
+    requires the exact hostname; a dangerous batch with two or more children
+    requires exactly "CONFIRM ALL" after trimming surrounding whitespace.
+    ``ChangeBatch.confirmation_text`` already computes the right expected
+    string for both cases, so a single trimmed-string comparison covers both.
+    """
+    batch = get_batch(batch_id)
+    if batch.status != "approved":
+        raise InvalidStateError(
+            f"Only an approved batch can be applied; batch {batch_id} is "
+            f"'{batch.status}'."
+        )
+
+    if batch.requires_confirmation:
+        if (confirmation or "").strip() != batch.confirmation_text:
+            raise ValidationError(
+                "This batch contains a dangerous command. Confirm by sending "
+                f"confirmation equal to {batch.confirmation_text!r}.",
+                {"confirmation_required": batch.confirmation_text},
+            )
+
+    batch.status = "running"
+    db.session.commit()
+
+    outcomes: list[str] = []
+    for change in batch.changes:
+        try:
+            _apply_approved_change(change, user_id)
+        except Exception as exc:  # pragma: no cover - defensive: one child must never abort the batch
+            _fail(change, f"Unexpected error while applying: {exc}", user_id)
+        outcomes.append(change.status)
+
+    batch.status = aggregate_status(outcomes)
+    batch.applied_at = _now()
+    db.session.commit()
+
+    record_event(
+        action="batch.apply",
+        result=batch.status,
+        user_id=user_id,
+        details={
+            "batch_id": batch.id,
+            "child_count": len(batch.changes),
+            "hostnames": [change.device.hostname for change in batch.changes],
+            "outcomes": outcomes,
+        },
+    )
+    return batch

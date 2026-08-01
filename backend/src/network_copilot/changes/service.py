@@ -566,10 +566,6 @@ def apply(
     change_id: int, user_id: int | None, confirm_hostname: str | None = None
 ) -> ChangeRequest:
     """Backup, configure, then verify. Order is fixed and never skipped."""
-    from ..backups.service import capture_backup
-    from ..ssh.client import build_client_for_device
-    from ..ssh.exceptions import SSHError
-
     change = get_change(change_id)
     if change.status != "approved":
         raise InvalidStateError(
@@ -588,50 +584,44 @@ def apply(
                 {"confirm_hostname_required": device.hostname},
             )
 
+    return _apply_approved_change(change, user_id)
+
+
+def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> ChangeRequest:
+    """Backup, run, then verify an already-authorized change.
+
+    Callers must enforce confirmation themselves before reaching here -
+    ``apply()`` does it for a standalone change and
+    ``batch_service.apply_batch()`` does it once for the whole batch before
+    any child reaches this function. This function assumes authorization
+    already happened and goes straight to SSH.
+    """
+    from ..backups.service import capture_backup
+    from ..ssh.client import build_client_for_device
+    from ..ssh.exceptions import SSHError
+
+    device = device_service.get_device(change.device_id)
     change.status = "running"
     db.session.commit()
-
     try:
         client = build_client_for_device(device)
-    except Exception as exc:  # pragma: no cover - missing credentials etc.
-        return _fail(change, f"Could not open an SSH session: {exc}", user_id)
-
-    # 1. Backup first. Without it, nothing is configured.
-    try:
         backup = capture_backup(device, change_request_id=change.id, client=client)
         change.backup_id = backup.id
-        db.session.commit()
-    except SSHError as exc:
-        return _fail(change, f"Pre-change backup failed: {exc.message}", user_id)
-
-    # 2. Push the configuration (or run the EXEC commands directly).
-    try:
-        if change.execution_mode == "exec":
-            result = client.run_exec(
+        result = (
+            client.run_exec(
                 list(change.commands or []), allow_confirm=change.requires_confirmation
             )
-        else:
-            result = client.run_config(list(change.commands or []))
+            if change.execution_mode == "exec"
+            else client.run_config(list(change.commands or []))
+        )
         change.apply_output = result.output
-        db.session.commit()
-    except SSHError as exc:
-        return _fail(change, f"Applying configuration failed: {exc.message}", user_id)
-
-    # 3. Verify on the device itself.
-    try:
         passed, results = run_verification(change, client)
     except SSHError as exc:
-        change.verification_output = None
-        return _fail(change, f"Verification could not run: {exc.message}", user_id)
+        return _fail(change, exc.message, user_id)
 
     change.verification_output = results
     if not passed:
-        return _fail(
-            change,
-            "Verification failed; the device does not reflect the requested change. "
-            "Review rollback_commands and apply them manually if required.",
-            user_id,
-        )
+        return _fail(change, "Verification failed.", user_id)
 
     change.status = "success"
     change.error_message = None
