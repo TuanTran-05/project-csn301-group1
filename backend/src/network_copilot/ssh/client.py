@@ -6,6 +6,7 @@ never rendered by repr().
 """
 
 import logging
+import re
 import socket
 import time
 
@@ -47,6 +48,26 @@ if _LEGACY_HOST_KEY not in paramiko.Transport._preferred_keys:
 _IDLE_SECONDS = 0.2
 _POLL_SECONDS = 0.05
 _READ_CHUNK = 65535
+
+# Confirmation-style prompts that Cisco EXEC commands (write erase, reload,
+# ...) show at the very end of their output while they wait for interactive
+# input. Matched against the freshly drained response, never the whole
+# transcript, so an anchored end-of-string search is enough.
+_CONFIRM_PROMPTS = (
+    (re.compile(r"\[confirm\]\s*$", re.I), "\n"),
+    (re.compile(r"(?:\[yes/no\]|\(y/n\))\s*[:?]?\s*$", re.I), "yes\n"),
+)
+
+# "copy running-config startup-config" asks for a destination filename and
+# offers a bracketed default. Accepting that default with a blank line is
+# safe because the command's own name already fixes the target file.
+_DESTINATION_FILENAME_PROMPT = re.compile(r"Destination filename.*\?\s*$", re.I)
+_COPY_RUNNING_TO_STARTUP = "copy running-config startup-config"
+
+# A shell that is back at its normal EXEC/config prompt ends with "#" or ">"
+# (Cisco IOS/ASA convention). Anything else at the tail of a drained
+# response means the device is still waiting on interactive input.
+_READY_PROMPT = re.compile(r"[#>]\s*$")
 
 
 class SSHClient:
@@ -157,8 +178,33 @@ class SSHClient:
     # -- configuration commands -------------------------------------------
     def run_config(self, commands: list[str]) -> SSHResult:
         """Send configuration commands sequentially over an interactive shell."""
+        return self._run_interactive(commands)
+
+    # -- privileged EXEC commands -------------------------------------------
+    def run_exec(self, commands: list[str], allow_confirm: bool = False) -> SSHResult:
+        """Run privileged EXEC commands sequentially over an interactive shell.
+
+        Some EXEC commands (``write erase``, ``reload``, ...) ask for an
+        interactive confirmation before they act. Pass ``allow_confirm=True``
+        to acknowledge those prompts; otherwise a batch never silently
+        confirms something destructive and raises ``SSHCommandError`` instead.
+        """
+        return self._run_interactive(commands, allow_confirm=allow_confirm)
+
+    # -- shared interactive-shell runner ------------------------------------
+    def _run_interactive(
+        self, commands: list[str], *, allow_confirm: bool = False
+    ) -> SSHResult:
+        """Send commands sequentially over an interactive shell.
+
+        Shared by run_config() and run_exec(): both need the same
+        login-banner drain, per-command send/drain loop, and interactive
+        confirm-prompt handling.
+        """
         if not commands:
-            raise ValueError("run_config requires at least one command.")
+            raise ValueError(
+                "An interactive command batch requires at least one command."
+            )
 
         started = time.monotonic()
         client = self._connect()
@@ -170,15 +216,17 @@ class SSHClient:
 
             for command in commands:
                 shell.send(f"{command}\n")
-                transcript += self._drain(shell)
+                transcript += self._respond_to_prompts(
+                    shell, command, allow_confirm=allow_confirm
+                )
         except (socket.timeout, TimeoutError) as exc:
             raise SSHTimeoutError(
-                f"Configuration timed out on {self.target.host} after "
+                f"Command timed out on {self.target.host} after "
                 f"{self.command_timeout}s."
             ) from exc
         except paramiko.SSHException as exc:
             raise SSHCommandError(
-                f"Configuration failed on {self.target.host}."
+                f"Command failed on {self.target.host}."
             ) from exc
         finally:
             if shell is not None:
@@ -190,6 +238,45 @@ class SSHClient:
             output=transcript,
             duration_ms=self._elapsed_ms(started),
         )
+
+    def _respond_to_prompts(self, shell, command: str, *, allow_confirm: bool) -> str:
+        """Drain a command's response, answering known interactive prompts.
+
+        Returns everything the shell sent back for this command once it
+        settles at its normal prompt. Raises SSHCommandError if the shell is
+        left waiting on a prompt we don't recognise, rather than guessing.
+        """
+        segment = self._drain(shell)
+        normalized = " ".join(command.split()).lower()
+
+        while not _READY_PROMPT.search(segment.rstrip()):
+            tail = segment.rstrip()
+
+            for pattern, answer in _CONFIRM_PROMPTS:
+                if pattern.search(tail):
+                    if not allow_confirm:
+                        raise SSHCommandError(
+                            f"{self.target.host} is waiting for an interactive "
+                            f"confirmation after '{command}': {tail!r}. Retry "
+                            "with allow_confirm=True to acknowledge it."
+                        )
+                    shell.send(answer)
+                    segment += self._drain(shell)
+                    break
+            else:
+                if normalized == _COPY_RUNNING_TO_STARTUP and (
+                    _DESTINATION_FILENAME_PROMPT.search(tail)
+                ):
+                    shell.send("\n")
+                    segment += self._drain(shell)
+                    continue
+
+                raise SSHCommandError(
+                    f"Unsupported interactive prompt from {self.target.host} "
+                    f"after '{command}': {tail!r}"
+                )
+
+        return segment
 
     # -- helpers -----------------------------------------------------------
     def _drain(self, shell) -> str:

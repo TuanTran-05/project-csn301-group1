@@ -16,16 +16,19 @@ class FakeSSHClient:
         reachable: bool = True,
         fail_with: Exception | None = None,
         config_output: str = "",
+        exec_output: str = "",
     ):
         self.responses = responses or {}
         self.default_output = default_output
         self.reachable = reachable
         self.fail_with = fail_with
         self.config_output = config_output
+        self.exec_output = exec_output
 
         # Call log, in execution order.
         self.show_commands: list[str] = []
         self.config_batches: list[list[str]] = []
+        self.exec_batches: list[list[str]] = []
         self.calls: list[tuple[str, object]] = []
 
     # -- helpers -----------------------------------------------------------
@@ -62,6 +65,14 @@ class FakeSSHClient:
         self.config_batches.append(list(commands))
         return SSHResult(
             command="\n".join(commands), output=self.config_output, duration_ms=1
+        )
+
+    def run_exec(self, commands: list[str], allow_confirm: bool = False) -> SSHResult:
+        self.calls.append(("run_exec", list(commands)))
+        self._raise_if_configured()
+        self.exec_batches.append(list(commands))
+        return SSHResult(
+            command="\n".join(commands), output=self.exec_output, duration_ms=1
         )
 
     def close(self) -> None:

@@ -7,6 +7,7 @@ from network_copilot.credentials.service import store_device_credential
 from network_copilot.ssh.client import SSHClient, build_client_for_device
 from network_copilot.ssh.exceptions import (
     SSHAuthenticationError,
+    SSHCommandError,
     SSHConnectionError,
     SSHTimeoutError,
 )
@@ -252,6 +253,48 @@ def test_run_config_rejects_an_empty_batch():
     client, _ = make_client()
     with pytest.raises(ValueError):
         client.run_config([])
+
+
+# -- run_exec ---------------------------------------------------------------
+
+
+class PromptingFakeShell(FakeShell):
+    def __init__(self, prompts: dict[str, str]):
+        super().__init__()
+        self.prompts = prompts
+
+    def send(self, data: str) -> int:
+        self.sent.append(data)
+        command = data.strip()
+        self._buffer += self.prompts.get(command, "CORE-SW1#").encode()
+        return len(data)
+
+
+def test_run_exec_sends_commands_without_config_wrappers():
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    result = client.run_exec(["write memory"])
+    assert [line.strip() for line in shell.sent] == ["write memory"]
+    assert result.command == "write memory"
+
+
+def test_run_exec_only_answers_confirm_prompt_when_authorized():
+    shell = PromptingFakeShell({"write erase": "Erase nvram? [confirm]"})
+    client, _ = make_client(shell=shell)
+    with pytest.raises(SSHCommandError, match="interactive confirmation"):
+        client.run_exec(["write erase"], allow_confirm=False)
+
+    shell = PromptingFakeShell({"write erase": "Erase nvram? [confirm]"})
+    client, _ = make_client(shell=shell)
+    client.run_exec(["write erase"], allow_confirm=True)
+    assert shell.sent == ["write erase\n", "\n"]
+
+
+def test_run_exec_rejects_unknown_interactive_prompt():
+    shell = PromptingFakeShell({"custom command": "Enter arbitrary value:"})
+    client, _ = make_client(shell=shell)
+    with pytest.raises(SSHCommandError, match="Unsupported interactive prompt"):
+        client.run_exec(["custom command"], allow_confirm=True)
 
 
 # -- secret hygiene -------------------------------------------------------
