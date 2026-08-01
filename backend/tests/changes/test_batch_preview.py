@@ -5,6 +5,7 @@ from network_copilot.changes import service as change_service
 from network_copilot.changes.batch_service import BatchOperation
 from network_copilot.changes.model import ChangeBatch, ChangeRequest
 from network_copilot.errors import NotFoundError, ValidationError
+from network_copilot.extensions import db
 
 
 def write_all():
@@ -31,6 +32,34 @@ def test_wildcard_preview_freezes_devices_in_hostname_order(
     assert all(change.execution_mode == "exec" for change in batch.changes)
     assert batch.requires_confirmation is True
     assert batch.risk_level == "high"
+
+
+def test_preview_persists_frozen_connection_identity(
+    app, admin_user, access_switch
+):
+    batch = batch_service.create_batch_preview(
+        admin_user.id, [write_all()], "Save every device"
+    )
+    child = batch.changes[0]
+
+    assert child.target_hostname == "ACC-SW1"
+    assert child.target_management_ip == "10.10.10.31"
+    assert child.target_ssh_port == 22
+    assert child.target_device_type == "cisco_ios"
+
+
+def test_serialization_and_confirmation_keep_the_frozen_hostname_after_rename(
+    app, admin_user, access_switch
+):
+    batch = batch_service.create_batch_preview(
+        admin_user.id, [write_all()], "Save every device"
+    )
+    access_switch.hostname = "RENAMED-SW1"
+    db.session.commit()
+
+    payload = batch.to_dict()
+    assert payload["confirmation_text"] == "ACC-SW1"
+    assert payload["changes"][0]["device"]["hostname"] == "ACC-SW1"
 
 
 def test_wildcard_snapshot_does_not_gain_later_device(

@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 from sqlalchemy import update
 
 from network_copilot.audit.model import AuditLog
@@ -6,7 +7,8 @@ from network_copilot.auth.model import User
 from network_copilot.changes import batch_service
 from network_copilot.changes.batch_service import BatchOperation
 from network_copilot.changes.model import ChangeRequest
-from network_copilot.errors import InvalidStateError, ValidationError
+from network_copilot.devices import service as device_service
+from network_copilot.errors import ConflictError, InvalidStateError, ValidationError
 from network_copilot.extensions import db
 from network_copilot.ssh.exceptions import SSHConnectionError
 
@@ -132,18 +134,22 @@ def test_dangerous_single_device_batch_requires_exact_hostname(
     assert ssh_factory.clients == {}
 
 
-def test_dangerous_single_device_batch_rejects_whitespace_around_hostname(
+def test_dangerous_single_device_batch_tolerates_whitespace_around_hostname(
     app, admin_user, access_switch, ssh_factory
 ):
     batch = make_write_batch(admin_user.id, [access_switch])
+    ssh_factory.set_client(
+        access_switch.hostname,
+        responses={
+            "show running-config": "hostname ACC-SW1",
+            "show startup-config": "hostname ACC-SW1",
+        },
+    )
     batch_service.approve_batch(batch.id, admin_user.id)
-
-    with pytest.raises(ValidationError):
-        batch_service.apply_batch(
-            batch.id, admin_user.id, confirmation="  ACC-SW1  "
-        )
-
-    assert ssh_factory.clients == {}
+    result = batch_service.apply_batch(
+        batch.id, admin_user.id, confirmation="  ACC-SW1  "
+    )
+    assert result.status == "success"
 
 
 def test_confirm_all_tolerates_surrounding_whitespace(
@@ -190,6 +196,61 @@ def test_confirmation_is_checked_before_any_ssh_work(
         "ACC-SW1": "approved",
         "DIST-SW1": "approved",
     }
+
+
+def test_live_connection_identity_mutation_fails_child_without_connecting(
+    app, admin_user, access_switch, ssh_factory
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    access_switch.management_ip = "10.10.10.99"
+    db.session.commit()
+
+    result = batch_service.apply_batch(
+        batch.id, admin_user.id, confirmation="ACC-SW1"
+    )
+
+    assert result.status == "failed"
+    assert "identity changed" in result.changes[0].error_message.lower()
+    assert ssh_factory.clients == {}
+
+
+def test_deleted_target_fails_child_and_later_child_still_runs(
+    app, admin_user, access_switch, dist_switch, ssh_factory
+):
+    batch = make_write_batch(admin_user.id, [access_switch, dist_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    ssh_factory.set_client(
+        dist_switch.hostname,
+        responses={
+            "show running-config": "hostname DIST-SW1",
+            "show startup-config": "hostname DIST-SW1",
+        },
+    )
+
+    db.session.delete(access_switch)
+    db.session.commit()
+
+    result = batch_service.apply_batch(
+        batch.id, admin_user.id, confirmation="CONFIRM ALL"
+    )
+    assert result.status == "partial_success"
+    assert {change.target_hostname: change.status for change in result.changes} == {
+        "ACC-SW1": "failed",
+        "DIST-SW1": "success",
+    }
+    assert set(ssh_factory.clients) == {"DIST-SW1"}
+
+
+def test_device_service_rejects_deleting_a_nonterminal_batch_target(
+    app, admin_user, access_switch
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+
+    with pytest.raises(ConflictError, match="active change batch"):
+        device_service.delete_device(access_switch.id)
+
+    assert batch_service.get_batch(batch.id).confirmation_text == "ACC-SW1"
 
 
 # -- apply_batch: partial success continuation --------------------------------
@@ -414,6 +475,59 @@ def test_only_approved_batches_can_be_applied(app, admin_user, access_switch, ss
     batch = make_write_batch(admin_user.id, [access_switch])
     with pytest.raises(InvalidStateError):
         batch_service.apply_batch(batch.id, admin_user.id, confirmation="ACC-SW1")
+    assert ssh_factory.clients == {}
+
+
+def test_standalone_lifecycle_functions_reject_batch_children(
+    app, admin_user, access_switch, ssh_factory
+):
+    from network_copilot.changes import service as change_service
+
+    batch = make_write_batch(admin_user.id, [access_switch])
+    child = batch.changes[0]
+    with pytest.raises(InvalidStateError, match="batch"):
+        change_service.approve(child.id, admin_user.id)
+
+    batch_service.approve_batch(batch.id, admin_user.id)
+    with pytest.raises(InvalidStateError, match="batch"):
+        change_service.apply(
+            child.id, admin_user.id, confirm_hostname="ACC-SW1"
+        )
+    with pytest.raises(InvalidStateError, match="batch"):
+        change_service.cancel(child.id, admin_user.id)
+    assert ssh_factory.clients == {}
+
+
+def test_internal_batch_apply_requires_approved_child_and_running_parent(
+    app, admin_user, access_switch, ssh_factory
+):
+    from network_copilot.changes import service as change_service
+
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+
+    with pytest.raises(InvalidStateError, match="running"):
+        change_service._apply_approved_change(batch.changes[0], admin_user.id)
+    assert ssh_factory.clients == {}
+
+
+def test_apply_batch_aborts_when_atomic_claim_loses_a_race(
+    app, admin_user, access_switch, ssh_factory, monkeypatch
+):
+    batch = make_write_batch(admin_user.id, [access_switch])
+    batch_service.approve_batch(batch.id, admin_user.id)
+    original_execute = db.session.execute
+
+    def lose_claim(statement, *args, **kwargs):
+        if getattr(getattr(statement, "table", None), "name", None) == "change_batches":
+            return SimpleNamespace(rowcount=0)
+        return original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db.session, "execute", lose_claim)
+    with pytest.raises(InvalidStateError, match="claimed"):
+        batch_service.apply_batch(
+            batch.id, admin_user.id, confirmation="ACC-SW1"
+        )
     assert ssh_factory.clients == {}
 
 

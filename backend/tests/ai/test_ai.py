@@ -56,6 +56,25 @@ WRITE_ALL_ACTION = {
     "explanation": "Luu cau hinh tren tat ca thiet bi.",
 }
 
+HETEROGENEOUS_CONFIGURE_ACTION = {
+    "intent": "configure",
+    "operations": [
+        {
+            "device_hostnames": ["ACC-SW1", "CORE-SW1"],
+            "execution_mode": "exec",
+            "commands": ["write memory"],
+            "verification_commands": ["show startup-config"],
+        },
+        {
+            "device_hostnames": ["DIST-SW1"],
+            "execution_mode": "config",
+            "commands": ["vlan 220", "name VOICE"],
+            "verification_commands": ["show vlan brief"],
+        },
+    ],
+    "explanation": "Save access and core configs, then create the voice VLAN on distribution.",
+}
+
 OSPF_OUTPUT = """Neighbor ID     Pri   State           Dead Time   Address         Interface
 2.2.2.2           1   FULL/DR         00:00:33    10.255.0.6      GigabitEthernet0/2
 """
@@ -469,6 +488,38 @@ def test_configure_intent_persists_the_change_request(
         "name MARKETING",
         "end",
     ]
+
+
+def test_configure_ai_freezes_disjoint_heterogeneous_operations_into_children(
+    app, admin_user, access_switch, core_switch, dist_switch, ssh_factory
+):
+    service, _ = service_with(app, HETEROGENEOUS_CONFIGURE_ACTION)
+
+    result = service.handle("save configs and create the voice VLAN", admin_user.id)
+
+    batch = result["batch"]
+    persisted = {
+        change.device.hostname: change
+        for change in db.session.query(ChangeRequest).all()
+    }
+    assert batch["status"] == "pending_approval"
+    assert batch["source"] == "ai"
+    assert set(persisted) == {"ACC-SW1", "CORE-SW1", "DIST-SW1"}
+    for hostname in ("ACC-SW1", "CORE-SW1"):
+        child = persisted[hostname]
+        assert child.execution_mode == "exec"
+        assert child.commands == ["write memory"]
+        assert child.verification_commands == ["show startup-config"]
+    dist_child = persisted["DIST-SW1"]
+    assert dist_child.execution_mode == "config"
+    assert dist_child.commands == [
+        "configure terminal",
+        "vlan 220",
+        "name VOICE",
+        "end",
+    ]
+    assert dist_child.verification_commands == ["show vlan brief"]
+    assert ssh_factory.clients == {}
 
 
 def test_configure_intent_requires_approval_before_anything_runs(

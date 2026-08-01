@@ -470,6 +470,30 @@ def test_apply_service_accepts_the_correct_confirm_hostname(
     assert result.status == "success"
 
 
+def test_apply_service_trims_confirmation_hostname_whitespace(
+    app, admin_user, access_switch, ssh_factory
+):
+    ssh_factory.set_client(
+        access_switch.hostname,
+        responses={
+            "show running-config": "hostname ACC-SW1",
+            "show startup-config": "hostname ACC-SW1",
+        },
+    )
+    change = change_service.create_preview(
+        admin_user.id,
+        device_id=access_switch.id,
+        execution_mode="exec",
+        commands=["write memory"],
+    )
+    change_service.approve(change.id, admin_user.id)
+
+    result = change_service.apply(
+        change.id, admin_user.id, confirm_hostname="  ACC-SW1  "
+    )
+    assert result.status == "success"
+
+
 def test_apply_service_does_not_require_confirmation_for_ordinary_changes(
     app, admin_user, pending_change, applying_client
 ):
