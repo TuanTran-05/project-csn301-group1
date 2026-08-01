@@ -261,6 +261,10 @@
                           <span class="operational-label">Commands</span>
                           <pre x-text="(child.commands || []).join('\n')"></pre>
                         </div>
+                        <div class="change-detail" x-show="batchVerificationPlan(child).length">
+                          <span class="operational-label">Verification plan</span>
+                          <pre x-text="batchVerificationPlan(child).join('\n')"></pre>
+                        </div>
                         <div class="change-detail" x-show="child.apply_output">
                           <span class="operational-label">Apply output</span>
                           <pre x-text="child.apply_output"></pre>
@@ -270,6 +274,29 @@
                           x-show="child.error_message"
                           x-text="child.error_message"
                         ></div>
+                        <template x-if="batchVerificationResults(child).length">
+                          <div class="verification-results">
+                            <span class="operational-label">Final verification</span>
+                            <template x-for="result in batchVerificationResults(child)" :key="result.command">
+                              <div class="verification-row">
+                                <div class="result-heading">
+                                  <code x-text="result.command"></code>
+                                  <span
+                                    class="result-status"
+                                    :class="result.status === 'passed' ? 'result-success' : 'result-failed'"
+                                    x-text="result.status"
+                                  ></span>
+                                </div>
+                                <div
+                                  class="verification-details"
+                                  x-show="result.details.length"
+                                  x-text="result.details.join(' ')"
+                                ></div>
+                                <pre x-show="result.output" x-text="result.output"></pre>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
                       </details>
                     </template>
                   </div>

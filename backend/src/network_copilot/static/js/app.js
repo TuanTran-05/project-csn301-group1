@@ -343,6 +343,46 @@ document.addEventListener("alpine:init", () => {
       ).length;
     },
 
+    batchVerificationPlan(child) {
+      if (!child || !Array.isArray(child.verification_commands)) return [];
+      return child.verification_commands.filter(
+        (command) => typeof command === "string" && command.trim() !== ""
+      );
+    },
+
+    batchVerificationResults(child) {
+      const verification = child && child.verification_output;
+      if (
+        !verification ||
+        typeof verification !== "object" ||
+        Array.isArray(verification)
+      ) {
+        return [];
+      }
+      return Object.entries(verification).map(([command, result]) => {
+        const value = result && typeof result === "object" ? result : {};
+        const redacted = Boolean(
+          value.redacted || value.is_redacted || value.output_redacted
+        );
+        const details = Array.isArray(value.details)
+          ? value.details.filter((detail) => typeof detail === "string")
+          : typeof value.details === "string"
+            ? [value.details]
+            : [];
+        return {
+          command,
+          status: value.passed ? "passed" : "failed",
+          details,
+          output: redacted
+            ? "Verification output redacted for safety."
+            : typeof value.output === "string"
+              ? value.output
+              : "",
+          redacted,
+        };
+      });
+    },
+
     async applyBatch(id) {
       if (this.batchActionIds[id]) return;
       const batch = this.batchesById[id];

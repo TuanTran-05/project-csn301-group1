@@ -18,6 +18,10 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function makeChange(id, batchId, hostname, status = "pending_approval") {
   const wasApproved = !["pending_approval", "cancelled"].includes(status);
   return {
@@ -256,6 +260,95 @@ async function confirmationIsExactAndUntrimmed() {
   assert.deepEqual(submittedBody, { confirmation: "CONFIRM ALL" });
 }
 
+async function verificationPlanIsAvailableBeforeApproval() {
+  const { app } = createApp();
+  const batch = makeBatch(1, "pending_approval");
+  const child = batch.changes[0];
+  child.verification_commands = ["show startup-config", "show vlan brief"];
+  app.batchesById[batch.id] = batch;
+
+  assert.deepEqual(plain(app.batchVerificationPlan(child)), [
+    "show startup-config",
+    "show vlan brief",
+  ]);
+  assert.deepEqual(plain(app.batchVerificationResults(child)), []);
+}
+
+async function verificationResultsAppearAfterApply() {
+  const { app } = createApp();
+  const batch = makeBatch(1, "approved");
+  app.batchesById[batch.id] = batch;
+  app.batchConfirmInputs[batch.id] = "CONFIRM ALL";
+
+  const applied = makeBatch(1, "partial_success");
+  applied.changes[0].status = "success";
+  applied.changes[0].verification_output = {
+    "show startup-config": {
+      passed: true,
+      details: ["Startup configuration verified."],
+      output: "startup configuration is present",
+    },
+    "show vlan brief": {
+      passed: false,
+      details: ["Expected VLAN 25 was not found."],
+      output: "VLAN 10 active",
+    },
+    "show running-config": {
+      passed: true,
+      details: ["Sensitive configuration was withheld."],
+      output: "username admin secret 5 sensitive-value",
+      redacted: true,
+    },
+  };
+  applied.changes[1].status = "failed";
+  applied.changes[1].verification_output = {
+    "show interfaces": {
+      passed: false,
+      details: ["Interface Gi0/1 remains down."],
+      output: "Gi0/1 is administratively down",
+    },
+  };
+  app.authFetch = (url) => {
+    assert.equal(url, "/api/change-batches/1/apply");
+    return Promise.resolve(applied);
+  };
+
+  await app.applyBatch(1);
+
+  assert.deepEqual(plain(app.batchVerificationResults(app.batchesById[1].changes[0])), [
+    {
+      command: "show startup-config",
+      status: "passed",
+      details: ["Startup configuration verified."],
+      output: "startup configuration is present",
+      redacted: false,
+    },
+    {
+      command: "show vlan brief",
+      status: "failed",
+      details: ["Expected VLAN 25 was not found."],
+      output: "VLAN 10 active",
+      redacted: false,
+    },
+    {
+      command: "show running-config",
+      status: "passed",
+      details: ["Sensitive configuration was withheld."],
+      output: "Verification output redacted for safety.",
+      redacted: true,
+    },
+  ]);
+  assert.deepEqual(plain(app.batchVerificationResults(app.batchesById[1].changes[1])), [
+    {
+      command: "show interfaces",
+      status: "failed",
+      details: ["Interface Gi0/1 remains down."],
+      output: "Gi0/1 is administratively down",
+      redacted: false,
+    },
+  ]);
+}
+
 async function logoutInvalidatesActionAndCleansTimers() {
   const { app, clearedIntervals } = createApp();
   const actionResponse = deferred();
@@ -286,6 +379,8 @@ const cases = {
   refresh_skips_during_action: refreshSkipsWhileActionRuns,
   actions_lock_per_batch: actionsLockPerBatch,
   confirmation_exact: confirmationIsExactAndUntrimmed,
+  verification_plan_before_approval: verificationPlanIsAvailableBeforeApproval,
+  verification_results_after_apply: verificationResultsAppearAfterApply,
   logout_cleanup: logoutInvalidatesActionAndCleansTimers,
 };
 

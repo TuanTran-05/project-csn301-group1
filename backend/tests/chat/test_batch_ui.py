@@ -62,5 +62,13 @@ def test_batch_confirmation_is_exact_and_submitted_untrimmed():
     assert_behavior_case("confirmation_exact")
 
 
+def test_batch_child_exposes_verification_plan_before_approval():
+    assert_behavior_case("verification_plan_before_approval")
+
+
+def test_batch_child_renders_passed_failed_and_redacted_verification_after_apply():
+    assert_behavior_case("verification_results_after_apply")
+
+
 def test_logout_invalidates_batch_action_and_cleans_polling_timers():
     assert_behavior_case("logout_cleanup")
