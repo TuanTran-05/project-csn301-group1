@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import event
+
 from ..extensions import db
 
 CHANGE_STATUSES = (
@@ -59,13 +61,11 @@ class ChangeBatch(db.Model):
         if not self.requires_confirmation or not self.changes:
             return None
         if len(self.changes) == 1:
-            return self.changes[0].device.hostname
+            return self.changes[0].target_hostname
         return "CONFIRM ALL"
 
     def to_dict(self) -> dict:
-        sorted_changes = sorted(
-            self.changes, key=lambda c: c.device.hostname if c.device else ""
-        )
+        sorted_changes = sorted(self.changes, key=lambda c: c.target_hostname or "")
         return {
             "id": self.id,
             "status": self.status,
@@ -106,6 +106,17 @@ class ChangeRequest(db.Model):
         db.Integer, db.ForeignKey("change_batches.id", ondelete="CASCADE"), index=True
     )
     execution_mode = db.Column(db.String(16), nullable=False, default="config", server_default="config")
+
+    # Connection identity frozen at Preview time. Apply must compare these
+    # against the live Device row and refuse to connect if they diverge - a
+    # rename, re-IP, or device-type change between Preview and Apply means
+    # the operator approved a different device than the one Apply would now
+    # reach, which is exactly the confused-deputy scenario approval exists
+    # to prevent.
+    target_hostname = db.Column(db.String(64), nullable=False)
+    target_management_ip = db.Column(db.String(45), nullable=False)
+    target_ssh_port = db.Column(db.Integer, nullable=False, default=22)
+    target_device_type = db.Column(db.String(32), nullable=False)
 
     description = db.Column(db.String(255))
     commands = db.Column(db.JSON, nullable=False, default=list)
@@ -154,17 +165,15 @@ class ChangeRequest(db.Model):
             "risk_level": self.risk_level,
             "requires_confirmation": self.requires_confirmation,
             "description": self.description,
-            "device": (
-                {
-                    "id": self.device.id,
-                    "hostname": self.device.hostname,
-                    "management_ip": self.device.management_ip,
-                    "role": self.device.role,
-                    "device_type": self.device.device_type,
-                }
-                if self.device
-                else {"id": self.device_id}
-            ),
+            "device": {
+                "id": self.device.id if self.device else self.device_id,
+                "hostname": self.target_hostname or (self.device.hostname if self.device else None),
+                "management_ip": self.target_management_ip
+                or (self.device.management_ip if self.device else None),
+                "role": self.device.role if self.device else None,
+                "device_type": self.target_device_type
+                or (self.device.device_type if self.device else None),
+            },
             "commands": self.commands or [],
             "verification_commands": self.verification_commands or [],
             "rollback_commands": self.rollback_commands or [],
@@ -185,3 +194,25 @@ class ChangeRequest(db.Model):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"<ChangeRequest {self.id} {self.status}>"
+
+
+@event.listens_for(ChangeRequest, "before_insert")
+def _freeze_target_identity_if_unset(mapper, connection, target: ChangeRequest) -> None:
+    """Safety net for ChangeRequest rows built without prepare_change().
+
+    prepare_change() already freezes target_* explicitly from the Device it
+    was handed. This only fills the gap for direct ORM construction (tests,
+    scripts) so target_hostname's NOT NULL constraint stays meaningful
+    without forcing every caller to know about connection-identity freezing.
+    """
+    if target.target_hostname is not None:
+        return
+    from ..devices.model import Device
+
+    device = db.session.get(Device, target.device_id)
+    if device is None:
+        return
+    target.target_hostname = device.hostname
+    target.target_management_ip = device.management_ip
+    target.target_ssh_port = device.ssh_port
+    target.target_device_type = device.device_type
