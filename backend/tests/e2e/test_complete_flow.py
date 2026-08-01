@@ -10,6 +10,7 @@ from fakes.fake_ai_provider import FakeAIProvider
 from network_copilot.audit.model import AuditLog
 from network_copilot.backups.model import ConfigBackup
 from network_copilot.extensions import db
+from network_copilot.ssh.exceptions import SSHConnectionError
 
 IFACE_OUTPUT = """Interface                  IP-Address      OK? Method Status                Protocol
 GigabitEthernet0/0         10.255.0.2      YES NVRAM  up                    up
@@ -38,18 +39,35 @@ VLAN_AFTER = """VLAN Name                             Status    Ports
 
 AI_VLAN_ACTION = {
     "intent": "configure",
-    "device_hostname": "ACC-SW1",
-    "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
-    "verification_commands": ["show vlan brief"],
+    "operations": [{
+        "device_hostnames": ["ACC-SW1"],
+        "execution_mode": "config",
+        "commands": ["configure terminal", "vlan 25", "name MARKETING", "end"],
+        "verification_commands": ["show vlan brief"],
+    }],
     "explanation": "Creating VLAN 25 named MARKETING on ACC-SW1.",
 }
 
 AI_WRITE_ERASE_ACTION = {
     "intent": "configure",
-    "device_hostname": "ACC-SW1",
-    "commands": ["write erase"],
-    "verification_commands": [],
+    "operations": [{
+        "device_hostnames": ["ACC-SW1"],
+        "execution_mode": "exec",
+        "commands": ["write erase"],
+        "verification_commands": [],
+    }],
     "explanation": "Wiping the configuration.",
+}
+
+WRITE_ALL_ACTION = {
+    "intent": "configure",
+    "operations": [{
+        "device_hostnames": ["*"],
+        "execution_mode": "exec",
+        "commands": ["write memory"],
+        "verification_commands": [],
+    }],
+    "explanation": "Luu cau hinh tren tat ca thiet bi.",
 }
 
 
@@ -134,19 +152,20 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     assert chat.status_code == 200
     body = chat.get_json()
     assert body["requires_approval"] is True
-    change_id = body["change"]["id"]
-    assert body["change"]["status"] == "pending_approval"
+    batch_id = body["batch"]["id"]
+    change_id = body["batch"]["changes"][0]["id"]
+    assert body["batch"]["status"] == "pending_approval"
     assert lab.config_batches == []
 
     # 5. Approve.
-    approve = client.post(f"/api/changes/{change_id}/approve", headers=headers)
+    approve = client.post(f"/api/change-batches/{batch_id}/approve", headers=headers)
     assert approve.status_code == 200
     assert approve.get_json()["status"] == "approved"
 
     # 6 & 7. Apply: backup, configure, verify.
-    applied = client.post(f"/api/changes/{change_id}/apply", headers=headers)
+    applied = client.post(f"/api/change-batches/{batch_id}/apply", headers=headers)
     assert applied.status_code == 200
-    result = applied.get_json()
+    result = applied.get_json()["changes"][0]
     assert result["status"] == "success"
 
     assert lab.show_commands[1] == "show running-config"
@@ -171,9 +190,9 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
         "/api/ai/chat", headers=headers, json={"message": "write erase ACC-SW1"}
     )
     assert dangerous.status_code == 200
-    dangerous_change = dangerous.get_json()["change"]
-    assert dangerous_change["status"] == "pending_approval"
-    assert dangerous_change["requires_confirmation"] is True
+    dangerous_batch = dangerous.get_json()["batch"]
+    assert dangerous_batch["status"] == "pending_approval"
+    assert dangerous_batch["requires_confirmation"] is True
     assert lab.config_batches == [
         ["configure terminal", "vlan 25", "name MARKETING", "end"]
     ]
@@ -181,10 +200,10 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     # Applying it without the confirmation is rejected, and still never
     # reaches the device.
     client.post(
-        f"/api/changes/{dangerous_change['id']}/approve", headers=headers
+        f"/api/change-batches/{dangerous_batch['id']}/approve", headers=headers
     )
     unconfirmed_apply = client.post(
-        f"/api/changes/{dangerous_change['id']}/apply", headers=headers
+        f"/api/change-batches/{dangerous_batch['id']}/apply", headers=headers
     )
     assert unconfirmed_apply.status_code == 422
     assert lab.config_batches == [
@@ -197,8 +216,9 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     assert {
         "auth.login",
         "command.readonly",
-        "change.preview",
-        "change.approve",
+        "ai.action",
+        "batch.approve",
+        "batch.apply",
         "change.apply",
     } <= actions
 
@@ -215,22 +235,58 @@ def test_flow_never_leaks_credentials(client, app, lab, access_switch, admin_use
     headers = {"Authorization": f"Bearer {login.get_json()['access_token']}"}
 
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=AI_VLAN_ACTION)
-    change_id = client.post(
+    batch = client.post(
         "/api/ai/chat", headers=headers, json={"message": "Tao VLAN 25"}
-    ).get_json()["change"]["id"]
-    client.post(f"/api/changes/{change_id}/approve", headers=headers)
-    client.post(f"/api/changes/{change_id}/apply", headers=headers)
+    ).get_json()["batch"]
+    change_id = batch["changes"][0]["id"]
+    client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers)
+    client.post(f"/api/change-batches/{batch['id']}/apply", headers=headers)
 
     surfaces = [
         client.get("/api/devices", headers=headers),
         client.get("/api/audit-logs", headers=headers),
         client.get("/api/commands/history", headers=headers),
         client.get(f"/api/changes/{change_id}", headers=headers),
+        client.get(f"/api/change-batches/{batch['id']}", headers=headers),
     ]
     for response in surfaces:
         text = response.get_data(as_text=True)
         assert "Secret123!" not in text
         assert "StrongPass123!" not in text
+
+
+def test_write_all_preview_confirm_and_partial_result(
+    client, admin_headers, app, access_switch, dist_switch, ssh_factory
+):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=WRITE_ALL_ACTION)
+    ssh_factory.set_failing(access_switch.hostname, SSHConnectionError("offline"))
+    ssh_factory.set_client(
+        dist_switch.hostname,
+        responses={
+            "show running-config": "hostname DIST-SW1",
+            "show startup-config": "hostname DIST-SW1",
+        },
+    )
+
+    preview = client.post(
+        "/api/ai/chat",
+        headers=admin_headers,
+        json={"message": "thuc hien lenh write tren toan bo thiet bi"},
+    )
+    assert preview.status_code == 200
+    batch = preview.get_json()["batch"]
+    assert batch["confirmation_text"] == "CONFIRM ALL"
+
+    assert client.post(
+        f"/api/change-batches/{batch['id']}/approve", headers=admin_headers
+    ).status_code == 200
+    applied = client.post(
+        f"/api/change-batches/{batch['id']}/apply",
+        headers=admin_headers,
+        json={"confirmation": "CONFIRM ALL"},
+    )
+    assert applied.status_code == 200
+    assert applied.get_json()["status"] == "partial_success"
 
 
 def test_verification_failure_stops_the_flow_at_failed(

@@ -12,13 +12,13 @@ The rules below are enforced by code and covered by tests, not by convention:
 
 | Rule | Where it is enforced |
 |---|---|
-| Unknown commands are denied by default | `commands/policy.py` — allowlist only |
-| Destructive commands (`write erase`, `reload`, `debug`, …) never reach a device | `commands/policy.py`, checked before any SSH session opens |
+| Unknown read-only commands are denied by default | `commands/policy.py` — allowlist only |
+| Destructive configuration commands are never silently blocked or silently executed: they become high-risk previews and require typed confirmation before Apply | `changes/service.py`, `changes/batch_service.py` |
 | Only `ADMIN` may approve or apply a change | `auth/service.py::roles_required` |
 | Every change is previewed and approved before it runs | `changes/service.py` |
 | A `show running-config` backup is taken before every apply | `backups/service.py` |
 | Verification runs after every apply; a failed check never reports success | `changes/service.py::run_verification` |
-| Configuration is limited to three templates (VLAN, access port, description) | `changes/service.py::TEMPLATES` |
+| AI configuration proposals are validated and frozen into device-scoped changes before approval; the AI request itself never opens SSH | `ai/schemas.py`, `changes/batch_service.py` |
 | Credentials are encrypted at rest and never serialised | `credentials/service.py` |
 | The AI never receives credentials, management IPs or a full running-config | `ai/service.py::build_context` |
 | Audit entries are redacted before they are stored | `audit/service.py::redact_sensitive` |
@@ -53,9 +53,16 @@ every stored device password unrecoverable.
 ```bash
 cd backend
 flask db upgrade
+# Choose this secret yourself; the repository does not provide a demo password.
+export SEED_ADMIN_PASSWORD='<chosen-password>'
 python scripts/seed_lab.py
 flask --app wsgi run --host 0.0.0.0 --port 5000
 ```
+
+On Windows PowerShell, set `$env:SEED_ADMIN_PASSWORD` instead of using
+`export`. `SEED_ADMIN_USERNAME` is optional and defaults to `admin`; the seeded
+account has the `ADMIN` role. Open <http://127.0.0.1:5000/> after the server
+starts.
 
 Set `MONITORING_ENABLED=true` to start the 60-second polling scheduler. It is off
 by default so tests and one-off CLI commands never spawn background jobs.
@@ -94,6 +101,29 @@ To use Claude instead: `AI_PROVIDER=anthropic`, `AI_MODEL=claude-sonnet-5`, and
 
 Without a key the API stays up and every non-AI endpoint works; `/api/ai/chat`
 answers `503 ai_not_configured` rather than failing as a server error.
+
+### Full-authority batch operator flow
+
+The motivating demo deliberately separates the AI proposal from operator
+authority:
+
+1. Ask: `thuc hien lenh write tren toan bo thiet bi`
+2. Inspect the frozen devices, execution modes, commands, and risk.
+3. Approve the batch.
+4. Type `CONFIRM ALL` exactly.
+5. Apply and review every child result; `partial_success` requires manual
+   follow-up before retrying failed devices.
+
+For a live lab, configure `AI_API_KEY`, seed the ADMIN account and encrypted SSH
+credentials, start the backend, then run:
+
+```bash
+python scripts/demo_check.py --username admin --password '<chosen-password>'
+```
+
+Use the username selected through `SEED_ADMIN_USERNAME` if it is not `admin`.
+The password is the operator-chosen `SEED_ADMIN_PASSWORD`; no demo credential is
+hard-coded in this repository.
 
 ## Deploying to the AI Server node
 
@@ -230,6 +260,11 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | POST | `/api/changes/<id>/approve` | ADMIN | Approve |
 | POST | `/api/changes/<id>/apply` | ADMIN | Backup → apply → verify (10 req/min) |
 | POST | `/api/changes/<id>/cancel` | ADMIN | Cancel |
+| GET | `/api/change-batches` | any | List frozen multi-device batches |
+| GET | `/api/change-batches/<id>` | any | One batch with every child result |
+| POST | `/api/change-batches/<id>/approve` | ADMIN | Approve all frozen children |
+| POST | `/api/change-batches/<id>/apply` | ADMIN | Apply all children; high risk requires typed confirmation |
+| POST | `/api/change-batches/<id>/cancel` | ADMIN | Cancel the batch |
 | GET | `/api/audit-logs` | ADMIN | Filterable audit trail |
 | POST | `/api/ai/chat` | any* | AI copilot (20 req/min/user) |
 
@@ -239,6 +274,10 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 
 `pending_approval → approved → running → success | failed`, plus `cancelled`
 from either of the first two states.
+
+Batch changes add the terminal `partial_success` state. It means processing
+continued after one or more child failures; operators must inspect every child
+result and manually follow up on failed devices.
 
 ### Error contract
 
@@ -323,13 +362,16 @@ distribution devices, and VLANs on access and distribution ones.
 
 ## Demo script
 
-1. Backend SSHes into `INTERNAL-RTR`.
-2. `show ip interface brief` returns output.
-3. Monitoring stores a snapshot.
-4. "Kiểm tra OSPF của DIST-SW1" runs a read-only command.
-5. "Tạo VLAN 25 MARKETING trên ACC-SW1" creates a Preview only.
-6. Admin approves and applies.
-7. `show vlan brief` confirms VLAN 25.
-8. "write erase" is blocked and audited.
+1. The backend logs in an ADMIN, lists inventory, and checks the live lab.
+2. `show ip interface brief` and the OSPF monitor request exercise read-only
+   paths.
+3. `thuc hien lenh write tren toan bo thiet bi` creates a frozen batch preview;
+   no SSH write occurs during the AI request.
+4. The script inspects every target, execution mode, command, and risk before it
+   approves anything.
+5. It approves, submits the exact `CONFIRM ALL` text, and reviews every child
+   result. A `partial_success` or `failed` result prints a manual-follow-up
+   warning and exits non-zero through the failed child checks.
 
-Steps 1–8 are covered end to end by `tests/e2e/test_complete_flow.py`.
+The workflow and credential-redaction surfaces are covered end to end by
+`tests/e2e/test_complete_flow.py`.

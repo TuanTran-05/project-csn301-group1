@@ -1,6 +1,6 @@
 """Run the full demo flow against a live backend and a real PNETLab topology.
 
-    .venv/bin/python scripts/demo_check.py --username g1 --password <mat-khau>
+    .venv/bin/python scripts/demo_check.py --username admin --password <chosen-password>
 
 Exercises, in order, against real devices over SSH:
 
@@ -9,9 +9,10 @@ Exercises, in order, against real devices over SSH:
   3. run a read-only show command on INTERNAL-RTR
   4. refresh (poll) INTERNAL-RTR
   5. ask the AI copilot about OSPF on DIST-SW1          (skipped if no AI key)
-  6. ask the AI copilot to create VLAN 25 on ACC-SW1    (skipped if no AI key)
-  7. approve and apply that change; verify VLAN 25 landed
-  8. confirm 'write erase' is blocked and audited
+  6. ask the AI copilot to write memory on every device
+  7. inspect the frozen targets, execution mode, commands, risk, and confirmation
+  8. approve the batch and apply it with the exact text CONFIRM ALL
+  9. review every child result; partial success is reported for manual follow-up
 
 Prints PASS/FAIL per step and exits 1 if anything failed. Uses only the
 standard library so it needs no extra dependency beyond the backend's own.
@@ -26,7 +27,7 @@ import urllib.request
 CORE_HOSTNAME = "INTERNAL-RTR"
 DIST_HOSTNAME = "DIST-SW1"
 ACCESS_HOSTNAME = "ACC-SW1"
-VLAN_COMMANDS = ["configure terminal", "vlan 25", "name MARKETING", "end"]
+WRITE_ALL_REQUEST = "thuc hien lenh write tren toan bo thiet bi"
 
 
 class Step:
@@ -92,8 +93,6 @@ def main() -> int:
             return 1
 
     core_id = devices[CORE_HOSTNAME]["id"]
-    access_id = devices[ACCESS_HOSTNAME]["id"]
-
     # 3. Read-only command on the core device.
     status, body = call(
         args.base_url,
@@ -129,84 +128,112 @@ def main() -> int:
             f"(status={status})",
         )
 
-    # 6. AI: configure intent -> preview.
-    change_id = None
+    # 6. AI: configure intent -> frozen multi-device preview.
     status, body = call(
         args.base_url,
         "/api/ai/chat",
         "POST",
-        {"message": f"Tao VLAN 25 MARKETING tren {ACCESS_HOSTNAME}"},
+        {"message": WRITE_ALL_REQUEST},
         token=token,
     )
-    if status == 503:
-        step.skip("AI configure intent", "AI_API_KEY not configured")
-    else:
-        payload = json.loads(body) if status == 200 else {}
-        change_id = payload.get("change", {}).get("id")
+    payload = json.loads(body) if status == 200 else {}
+    batch = payload.get("batch") or {}
+    children = batch.get("changes") or []
+    batch_id = batch.get("id")
+    preview_ok = step.check(
+        "AI write-all request creates a batch preview",
+        status == 200 and batch.get("status") == "pending_approval",
+        f"(status={status})",
+    )
+
+    # 7. Inspect exactly what was frozen before allowing the script to approve.
+    frozen_hostnames = {
+        child.get("device", {}).get("hostname") for child in children
+    }
+    inspections = [
         step.check(
-            "AI configure intent creates a preview",
-            status == 200 and payload.get("change", {}).get("status") == "pending_approval",
+            "preview freezes every current device",
+            frozen_hostnames == set(devices),
+            f"({len(frozen_hostnames)}/{len(devices)} devices)",
+        ),
+        step.check(
+            "every child uses EXEC mode",
+            bool(children)
+            and all(child.get("execution_mode") == "exec" for child in children),
+        ),
+        step.check(
+            "every child freezes 'write memory'",
+            bool(children)
+            and all(child.get("commands") == ["write memory"] for child in children),
+        ),
+        step.check(
+            "batch is high risk and requires CONFIRM ALL",
+            batch.get("risk_level") == "high"
+            and batch.get("requires_confirmation") is True
+            and batch.get("confirmation_text") == "CONFIRM ALL",
+        ),
+    ]
+
+    for child in children:
+        device = child.get("device", {}).get("hostname", "<unknown>")
+        print(
+            f"    frozen: {device} mode={child.get('execution_mode')} "
+            f"commands={child.get('commands')} risk={child.get('risk_level')}"
+        )
+
+    # 8 & 9. Approve, type the exact confirmation, apply, and inspect every
+    # child. Never continue when the preview differs from the requested scope.
+    if preview_ok and all(inspections) and batch_id is not None:
+        status, body = call(
+            args.base_url,
+            f"/api/change-batches/{batch_id}/approve",
+            "POST",
+            token=token,
+        )
+        approved = step.check(
+            "approve batch",
+            status == 200 and json.loads(body).get("status") == "approved",
             f"(status={status})",
         )
 
-    # Fall back to a direct preview if the AI path was skipped or failed.
-    if change_id is None:
-        status, body = call(
-            args.base_url,
-            "/api/changes/preview",
-            "POST",
-            {
-                "device_id": access_id,
-                "commands": VLAN_COMMANDS,
-                "verification_commands": ["show vlan brief"],
-            },
-            token=token,
-        )
-        if step.check("direct change preview", status == 201, f"(status={status})"):
-            change_id = json.loads(body)["id"]
-
-    # 7. Approve, apply, verify.
-    if change_id is not None:
-        status, body = call(
-            args.base_url,
-            f"/api/changes/{change_id}/approve",
-            "POST",
-            token=token,
-        )
-        step.check("approve change", status == 200, f"(status={status})")
-
-        status, body = call(
-            args.base_url, f"/api/changes/{change_id}/apply", "POST", token=token
-        )
-        result = json.loads(body) if status == 200 else {}
-        ok = status == 200 and result.get("status") == "success"
-        step.check("apply change (backup + configure + verify)", ok, f"(status={status})")
-        if not ok:
-            print(f"\n  response: {body}")
-
-        verification = (result.get("verification_output") or {}).get("show vlan brief", {})
-        step.check(
-            "VLAN 25 confirmed on the device",
-            verification.get("passed") is True,
-            "",
-        )
+        if approved:
+            status, body = call(
+                args.base_url,
+                f"/api/change-batches/{batch_id}/apply",
+                "POST",
+                {"confirmation": "CONFIRM ALL"},
+                token=token,
+            )
+            result = json.loads(body) if status == 200 else {}
+            terminal = result.get("status") in {
+                "success",
+                "partial_success",
+                "failed",
+            }
+            step.check(
+                "apply batch with exact CONFIRM ALL",
+                status == 200 and terminal,
+                f"(status={status}, batch={result.get('status')})",
+            )
+            for child in result.get("changes") or []:
+                hostname = child.get("device", {}).get("hostname", "<unknown>")
+                step.check(
+                    f"review child result for {hostname}",
+                    child.get("status") == "success",
+                    child.get("error_message") or f"({child.get('status')})",
+                )
+            if result.get("status") == "partial_success":
+                print(
+                    "\nMANUAL FOLLOW-UP REQUIRED: at least one device failed; "
+                    "review every failed child before retrying."
+                )
+            elif result.get("status") == "failed":
+                print(
+                    "\nMANUAL FOLLOW-UP REQUIRED: the batch failed; review every "
+                    "child error before retrying."
+                )
     else:
-        print("  (no change_id available, skipping approve/apply/verify)")
-
-    # 8. Blocked command.
-    status, body = call(
-        args.base_url,
-        "/api/commands/execute-readonly",
-        "POST",
-        {"device_id": access_id, "command": "write erase"},
-        token=token,
-    )
-    payload = json.loads(body) if body else {}
-    step.check(
-        "'write erase' is blocked",
-        status == 403 and payload.get("error") == "policy_violation",
-        f"(status={status})",
-    )
+        step.skip("approve/apply batch", "preview inspection failed")
 
     print()
     if step.failures:
