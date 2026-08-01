@@ -63,6 +63,9 @@ class ChangeBatch(db.Model):
         return "CONFIRM ALL"
 
     def to_dict(self) -> dict:
+        sorted_changes = sorted(
+            self.changes, key=lambda c: c.device.hostname if c.device else ""
+        )
         return {
             "id": self.id,
             "status": self.status,
@@ -76,7 +79,7 @@ class ChangeBatch(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "approved_at": self.approved_at.isoformat() if self.approved_at else None,
             "applied_at": self.applied_at.isoformat() if self.applied_at else None,
-            "changes": [change.to_dict() for change in self.changes],
+            "changes": [change.to_dict() for change in sorted_changes],
         }
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
