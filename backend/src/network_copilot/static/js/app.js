@@ -39,6 +39,7 @@ document.addEventListener("alpine:init", () => {
     batchActionIds: {},
     batchActionErrors: {},
     _batchesRefreshGeneration: 0,
+    _batchesRefreshRequestToken: 0,
     batchesLoading: false,
     batchesError: "",
 
@@ -152,6 +153,7 @@ document.addEventListener("alpine:init", () => {
       this._deviceRefreshGeneration += 1;
       this._changesRefreshGeneration += 1;
       this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
       this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
@@ -258,30 +260,45 @@ document.addEventListener("alpine:init", () => {
     },
 
     async refreshBatches() {
+      if (Object.keys(this.batchActionIds).length > 0) return;
       const generation = this._batchesRefreshGeneration;
+      const requestToken = ++this._batchesRefreshRequestToken;
       this.batchesLoading = true;
       this.batchesError = "";
       try {
         const data = await this.authFetch("/api/change-batches?limit=500");
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._batchesRefreshGeneration &&
+          requestToken === this._batchesRefreshRequestToken
+        ) {
           this.batchesById = Object.fromEntries(
             data.items.map((batch) => [batch.id, batch])
           );
         }
       } catch (err) {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._batchesRefreshGeneration &&
+          requestToken === this._batchesRefreshRequestToken
+        ) {
           this.batchesError = err.message || "Could not load batches.";
         }
         throw err;
       } finally {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._batchesRefreshGeneration &&
+          requestToken === this._batchesRefreshRequestToken
+        ) {
           this.batchesLoading = false;
         }
       }
     },
 
     async approveBatch(id) {
-      const generation = this._batchesRefreshGeneration;
+      if (this.batchActionIds[id]) return;
+      const generation = this._sessionGeneration;
+      this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
+      this.batchesLoading = false;
       this.batchActionIds[id] = "approve";
       delete this.batchActionErrors[id];
       try {
@@ -289,15 +306,24 @@ document.addEventListener("alpine:init", () => {
           `/api/change-batches/${id}/approve`,
           { method: "POST" }
         );
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "approve"
+        ) {
           this.batchesById[id] = batch;
         }
       } catch (err) {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "approve"
+        ) {
           this.batchActionErrors[id] = err.message || "Approval failed.";
         }
       } finally {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "approve"
+        ) {
           delete this.batchActionIds[id];
         }
       }
@@ -318,9 +344,13 @@ document.addEventListener("alpine:init", () => {
     },
 
     async applyBatch(id) {
+      if (this.batchActionIds[id]) return;
       const batch = this.batchesById[id];
       if (!batch || !this.batchConfirmationMatches(id)) return;
-      const generation = this._batchesRefreshGeneration;
+      const generation = this._sessionGeneration;
+      this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
+      this.batchesLoading = false;
       this.batchActionIds[id] = "apply";
       delete this.batchActionErrors[id];
       try {
@@ -335,23 +365,36 @@ document.addEventListener("alpine:init", () => {
             body: JSON.stringify(body),
           }
         );
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "apply"
+        ) {
           this.batchesById[id] = updated;
           delete this.batchConfirmInputs[id];
         }
       } catch (err) {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "apply"
+        ) {
           this.batchActionErrors[id] = err.message || "Apply failed.";
         }
       } finally {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "apply"
+        ) {
           delete this.batchActionIds[id];
         }
       }
     },
 
     async cancelBatch(id) {
-      const generation = this._batchesRefreshGeneration;
+      if (this.batchActionIds[id]) return;
+      const generation = this._sessionGeneration;
+      this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
+      this.batchesLoading = false;
       this.batchActionIds[id] = "cancel";
       delete this.batchActionErrors[id];
       try {
@@ -359,16 +402,25 @@ document.addEventListener("alpine:init", () => {
           `/api/change-batches/${id}/cancel`,
           { method: "POST" }
         );
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "cancel"
+        ) {
           this.batchesById[id] = batch;
           delete this.batchConfirmInputs[id];
         }
       } catch (err) {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "cancel"
+        ) {
           this.batchActionErrors[id] = err.message || "Cancellation failed.";
         }
       } finally {
-        if (generation === this._batchesRefreshGeneration) {
+        if (
+          generation === this._sessionGeneration &&
+          this.batchActionIds[id] === "cancel"
+        ) {
           delete this.batchActionIds[id];
         }
       }
@@ -534,7 +586,7 @@ document.addEventListener("alpine:init", () => {
         this.changesById[change.id] = change;
       }
       const batch = message.payload && message.payload.batch;
-      if (batch && batch.id != null) {
+      if (batch && batch.id != null && !(batch.id in this.batchesById)) {
         this.batchesById[batch.id] = batch;
       }
     },
