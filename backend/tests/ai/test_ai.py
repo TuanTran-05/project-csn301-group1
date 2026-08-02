@@ -820,3 +820,64 @@ def test_provider_schema_offers_the_chat_intent():
 
     schema = build_ai_action_schema(["DIST-SW1"])
     assert "chat" in schema["properties"]["intent"]["enum"]
+
+
+def test_handle_returns_a_chat_reply_without_touching_devices(
+    app, admin_user, ssh_factory
+):
+    service, _ = service_with(app, CHAT_ACTION)
+
+    result = service.handle("alo", admin_user.id)
+
+    assert result["intent"] == "chat"
+    assert result["explanation"] == CHAT_ACTION["explanation"]
+    assert result["requires_approval"] is False
+    assert "results" not in result
+    assert "change" not in result
+    assert "batch" not in result
+
+
+def test_handle_chat_never_opens_an_ssh_session(app, admin_user, ssh_factory):
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+    assert ssh_factory.clients == {}
+
+
+def test_handle_chat_creates_no_change_or_batch(app, admin_user, ssh_factory):
+    from network_copilot.changes.model import ChangeBatch
+
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+
+    assert db.session.query(ChangeRequest).count() == 0
+    assert db.session.query(ChangeBatch).count() == 0
+
+
+def test_handle_chat_writes_no_audit_row(app, admin_user, ssh_factory):
+    """Deliberate: audit_logs traces operations against devices, and a
+    greeting performs none. The turn is still fully recorded in
+    chat_messages."""
+    from network_copilot.audit.model import AuditLog
+
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+
+    assert db.session.query(AuditLog).count() == 0
+
+
+def test_interpret_still_refuses_an_empty_action_intent(app, admin_user):
+    refusal = {
+        "intent": "monitor",
+        "operations": [],
+        "explanation": "Khong tim thay thiet bi phu hop.",
+    }
+    service, _ = service_with(app, refusal)
+    with pytest.raises(ValidationError):
+        service.interpret("kiem tra thiet bi khong ton tai", admin_user.id)
+
+
+def test_prompt_forbids_inventing_live_device_state_in_chat(app, admin_user):
+    service, provider = service_with(app, CHAT_ACTION)
+    service.interpret("alo", admin_user.id)
+    prompt = provider.prompts[0]["system_prompt"]
+    assert "invent the live state" in prompt

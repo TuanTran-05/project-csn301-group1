@@ -220,7 +220,12 @@ def test_the_action_schema_matches_the_ai_action_model(
     schema = recorded_action_schema(admin_user.id)
     properties = schema["properties"]
     assert set(properties) == set(AIAction.model_fields)
-    assert properties["intent"]["enum"] == ["monitor", "configure", "troubleshoot"]
+    assert properties["intent"]["enum"] == [
+        "monitor",
+        "configure",
+        "troubleshoot",
+        "chat",
+    ]
     assert properties["operations"]["type"] == "array"
     operation_schema = properties["operations"]["items"]
     assert set(operation_schema["properties"]) == set(AIOperation.model_fields)
