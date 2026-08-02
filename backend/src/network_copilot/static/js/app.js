@@ -49,6 +49,11 @@ document.addEventListener("alpine:init", () => {
     sending: false,
     _messagesRefreshGeneration: 0,
     _clientMessageSequence: 0,
+    // ISO timestamp string, or null. Set by startNewChat(), cleared by
+    // showFullHistory() and by logout(). Persisted to localStorage so it
+    // survives a page refresh, but never sent to the server: this hides
+    // history in this browser only, per the design's explicit scope.
+    chatCutoff: localStorage.getItem("nc_chat_cutoff") || null,
 
     get pendingChanges() {
       return Object.values(this.changesById).filter(
@@ -61,6 +66,34 @@ document.addEventListener("alpine:init", () => {
         (batch) =>
           batch.status === "pending_approval" || batch.status === "approved"
       );
+    },
+
+    get visibleMessages() {
+      if (!this.chatCutoff) return this.messages;
+      // Reuse _messageTimestamp() (defined further down in this component)
+      // rather than comparing created_at strings directly: it normalises
+      // server timestamps that arrive without a timezone suffix, which a
+      // naive string comparison against an always-suffixed chatCutoff
+      // (from toISOString()) would get wrong.
+      const cutoffTime = Date.parse(this.chatCutoff);
+      return this.messages.filter((message) => {
+        const timestamp = this._messageTimestamp(message);
+        return timestamp === null || timestamp > cutoffTime;
+      });
+    },
+
+    get hiddenMessageCount() {
+      return this.messages.length - this.visibleMessages.length;
+    },
+
+    startNewChat() {
+      this.chatCutoff = new Date().toISOString();
+      localStorage.setItem("nc_chat_cutoff", this.chatCutoff);
+    },
+
+    showFullHistory() {
+      this.chatCutoff = null;
+      localStorage.removeItem("nc_chat_cutoff");
     },
 
     init() {
@@ -176,6 +209,8 @@ document.addEventListener("alpine:init", () => {
       this.messages = [];
       this.draftMessage = "";
       this.sending = false;
+      this.chatCutoff = null;
+      localStorage.removeItem("nc_chat_cutoff");
     },
 
     async startApp() {
