@@ -19,6 +19,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..audit.service import record_event, redact_sensitive
 from ..auth.model import User
+from ..chat import service as chat_service
 from ..changes import batch_service
 from ..changes.batch_service import BatchOperation
 from ..commands import service as command_service
@@ -41,7 +42,7 @@ SYSTEM_PROMPT = """You are a network operations assistant for a Cisco lab.
 
 Reply with a single JSON object and nothing else. The schema is:
 {
-  "intent": "monitor" | "configure" | "troubleshoot",
+  "intent": "monitor" | "configure" | "troubleshoot" | "chat",
   "operations": [{
     "device_hostnames": ["<hostname>", ...] | ["*"],
     "execution_mode": "config" | "exec",
@@ -69,6 +70,16 @@ Rules:
   "commands" and leave "verification_commands" empty.
 - Use "troubleshoot" when the user reports a problem. Put read-only diagnostic
   commands in "commands", not in "verification_commands".
+- Use "chat" for messages that are not a request to act on a device:
+  greetings, small talk, questions about what you can do, and general or
+  theoretical networking knowledge. For "chat", "operations" must be empty
+  and "explanation" carries your actual answer, which may be a short
+  paragraph rather than a single sentence.
+- Never use "chat" to describe, guess at, or invent the live state of any
+  device in this lab. Any question about what a device is actually doing
+  right now must use "monitor" or "troubleshoot" and run a real command.
+- If a question is outside networking entirely, reply with a brief "chat"
+  answer saying it is outside what you cover. Never invent an answer.
 - For "configure", "verification_commands" contains only read-only commands that
   prove the change landed. It may be empty so the backend can derive verification.
 - A device's "status" in context is only the last background health check and
@@ -78,8 +89,9 @@ Rules:
   command runs, and that failure is reported back to the user.
 - If you cannot form a valid proposal, return an empty "operations" list and
   explain why in "explanation".
-- The user may write in Vietnamese or English. Reply with JSON either way, and
-  keep "explanation" to a single short sentence.
+- The user may write in Vietnamese or English. Reply with JSON either way. For
+  "monitor", "configure" and "troubleshoot", keep "explanation" to a single
+  short sentence.
 """
 
 EXPLAIN_PROMPT = """You are a network operations assistant for a Cisco lab.
@@ -102,7 +114,7 @@ class AIService:
 
     # -- context ----------------------------------------------------------
     def build_context(self) -> dict:
-        """Everything the model is allowed to know. Nothing more."""
+        """Safe lab context; per-session conversation is added by interpret()."""
         devices = db.session.query(Device).order_by(Device.hostname).all()
         commands = sorted(
             {
@@ -123,6 +135,47 @@ class AIService:
             ],
             "supported_commands": commands,
         }
+
+    # -- conversation history ---------------------------------------------
+    # How many recent turns the model sees, and how many rows to fetch to
+    # find them: the fetch is wider than the window because system messages
+    # and the duplicate of the current turn are filtered out below.
+    HISTORY_LIMIT = 10
+    _HISTORY_FETCH_LIMIT = 40
+
+    @classmethod
+    def _recent_history(
+        cls, session_id: int | None, current_message: str
+    ) -> list[dict]:
+        """Recent turns of this chat session, for conversational follow-ups.
+
+        Only role and content are returned. A message's payload carries raw
+        command output, which can contain configuration detail, and this
+        module's standing rule is that the model never receives credentials,
+        management IPs or a running-config.
+        """
+        if session_id is None:
+            return []
+
+        rows = chat_service.list_messages(
+            session_id=session_id, limit=cls._HISTORY_FETCH_LIMIT
+        )
+        turns = [
+            {"role": row.role, "content": row.content}
+            for row in rows
+            if row.role in ("user", "assistant")
+        ]
+
+        # ai/routes.py records the incoming message before calling handle(),
+        # so it is already the newest row here.
+        if (
+            turns
+            and turns[-1]["role"] == "user"
+            and turns[-1]["content"] == current_message
+        ):
+            turns.pop()
+
+        return turns[-cls.HISTORY_LIMIT :]
 
     # -- interpret --------------------------------------------------------
     @staticmethod
@@ -154,9 +207,12 @@ class AIService:
             raise ValidationError("The AI response was not a JSON object.")
         return payload
 
-    def interpret(self, message: str, user_id: int | None) -> AIAction:
+    def interpret(
+        self, message: str, user_id: int | None, session_id: int | None = None
+    ) -> AIAction:
         """Ask the model for a structured action. No side effects."""
         context = self.build_context()
+        context["conversation"] = self._recent_history(session_id, message)
         schema = build_ai_action_schema(
             device["hostname"] for device in context["devices"]
         )
@@ -179,8 +235,13 @@ class AIService:
 
         # A well-formed empty operation list is a deliberate refusal, not a
         # transient schema fault. Surface the model's explanation and do not
-        # retry a real answer.
-        if isinstance(payload.get("operations"), list) and not payload["operations"]:
+        # retry a real answer. "chat" is the exception: an empty list is its
+        # expected shape, and the explanation is the answer itself.
+        if (
+            payload.get("intent") != "chat"
+            and isinstance(payload.get("operations"), list)
+            and not payload["operations"]
+        ):
             raise ValidationError(
                 payload.get("explanation")
                 or "The AI could not form a valid proposal for that request."
@@ -381,8 +442,20 @@ class AIService:
         }
 
     # -- entry point ------------------------------------------------------
-    def handle(self, message: str, user_id: int | None) -> dict:
-        action = self.interpret(message, user_id)
+    def handle(
+        self, message: str, user_id: int | None, session_id: int | None = None
+    ) -> dict:
+        action = self.interpret(message, user_id, session_id=session_id)
+
+        # A conversational turn touches nothing: no device is resolved, no
+        # policy is evaluated, no SSH session is opened, and no audit row is
+        # written (the transcript in chat_messages is the record).
+        if action.intent == "chat":
+            return {
+                "intent": "chat",
+                "explanation": action.explanation,
+                "requires_approval": False,
+            }
 
         if action.intent == "configure":
             self._require_admin(user_id)

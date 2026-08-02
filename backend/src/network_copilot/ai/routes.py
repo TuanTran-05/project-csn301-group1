@@ -67,7 +67,7 @@ def chat():
     record_chat_message(
         user_id, username, "user", data.message, session_id=data.session_id
     )
-    result = AIService().handle(data.message, user_id)
+    result = AIService().handle(data.message, user_id, session_id=data.session_id)
     record_chat_message(
         user_id,
         username,

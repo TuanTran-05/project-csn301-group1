@@ -24,13 +24,32 @@ class AIAction(BaseModel):
 
     The AI never executes anything: this object is a *proposal* that the policy
     engine and the change workflow then accept or refuse.
+
+    "chat" is the one intent that carries no operations: it is a plain
+    conversational reply (a greeting, a capability question, general
+    networking knowledge) whose answer is the explanation itself. Every
+    other intent still requires at least one operation, so relaxing the
+    field constraint is expressed as a validator rather than by weakening
+    the field.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    intent: Literal["monitor", "configure", "troubleshoot"]
-    operations: list[AIOperation] = Field(min_length=1)
+    intent: Literal["monitor", "configure", "troubleshoot", "chat"]
+    # Still a required key - the provider schema declares it required too.
+    # Only the "at least one entry" part moves into the validator below, so
+    # a chat action must send an explicit empty list, never omit the field.
+    operations: list[AIOperation]
     explanation: str
+
+    @model_validator(mode="after")
+    def validate_operations_match_intent(self):
+        if self.intent == "chat":
+            if self.operations:
+                raise ValueError("a chat action must not carry operations")
+        elif not self.operations:
+            raise ValueError("at least one operation is required")
+        return self
 
 
 def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
@@ -62,7 +81,7 @@ def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["monitor", "configure", "troubleshoot"],
+                "enum": ["monitor", "configure", "troubleshoot", "chat"],
             },
             "operations": {
                 "type": "array",

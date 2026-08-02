@@ -770,3 +770,228 @@ def test_viewer_cannot_create_a_configuration_preview(
         "/api/ai/chat", headers=viewer_headers, json={"message": "tao vlan 25"}
     )
     assert response.status_code == 403
+
+
+CHAT_ACTION = {
+    "intent": "chat",
+    "operations": [],
+    "explanation": "Chao ban! Toi co the giup kiem tra va cau hinh thiet bi mang.",
+}
+
+
+def test_ai_action_accepts_a_chat_intent_with_no_operations():
+    action = AIAction(**CHAT_ACTION)
+    assert action.intent == "chat"
+    assert action.operations == []
+
+
+def test_ai_action_rejects_a_chat_intent_carrying_operations():
+    payload = deepcopy(CHAT_ACTION)
+    payload["operations"] = [
+        {
+            "device_hostnames": ["DIST-SW1"],
+            "execution_mode": "exec",
+            "commands": ["show ip ospf neighbor"],
+            "verification_commands": [],
+        }
+    ]
+    with pytest.raises(PydanticValidationError):
+        AIAction(**payload)
+
+
+def test_ai_action_rejects_chat_without_operations():
+    """operations stays a required key: the provider schema declares it
+    required, so a chat action sends an explicit empty list rather than
+    omitting the field."""
+    with pytest.raises(PydanticValidationError):
+        AIAction(intent="chat", explanation="hello")
+
+
+@pytest.mark.parametrize("intent", ["monitor", "configure", "troubleshoot"])
+def test_ai_action_still_rejects_an_action_intent_with_no_operations(intent):
+    """Relaxing operations for chat must not relax it for the intents that
+    actually run commands."""
+    with pytest.raises(PydanticValidationError):
+        AIAction(intent=intent, operations=[], explanation="x")
+
+
+def test_provider_schema_offers_the_chat_intent():
+    from network_copilot.ai.schemas import build_ai_action_schema
+
+    schema = build_ai_action_schema(["DIST-SW1"])
+    assert "chat" in schema["properties"]["intent"]["enum"]
+
+
+def test_handle_returns_a_chat_reply_without_touching_devices(
+    app, admin_user, ssh_factory
+):
+    service, _ = service_with(app, CHAT_ACTION)
+
+    result = service.handle("alo", admin_user.id)
+
+    assert result["intent"] == "chat"
+    assert result["explanation"] == CHAT_ACTION["explanation"]
+    assert result["requires_approval"] is False
+    assert "results" not in result
+    assert "change" not in result
+    assert "batch" not in result
+
+
+def test_handle_chat_never_opens_an_ssh_session(app, admin_user, ssh_factory):
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+    assert ssh_factory.clients == {}
+
+
+def test_handle_chat_creates_no_change_or_batch(app, admin_user, ssh_factory):
+    from network_copilot.changes.model import ChangeBatch
+
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+
+    assert db.session.query(ChangeRequest).count() == 0
+    assert db.session.query(ChangeBatch).count() == 0
+
+
+def test_handle_chat_writes_no_audit_row(app, admin_user, ssh_factory):
+    """Deliberate: audit_logs traces operations against devices, and a
+    greeting performs none. The turn is still fully recorded in
+    chat_messages."""
+    from network_copilot.audit.model import AuditLog
+
+    service, _ = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id)
+
+    assert db.session.query(AuditLog).count() == 0
+
+
+def test_interpret_still_refuses_an_empty_action_intent(app, admin_user):
+    refusal = {
+        "intent": "monitor",
+        "operations": [],
+        "explanation": "Khong tim thay thiet bi phu hop.",
+    }
+    service, _ = service_with(app, refusal)
+    with pytest.raises(ValidationError):
+        service.interpret("kiem tra thiet bi khong ton tai", admin_user.id)
+
+
+def test_prompt_forbids_inventing_live_device_state_in_chat(app, admin_user):
+    service, provider = service_with(app, CHAT_ACTION)
+    service.interpret("alo", admin_user.id)
+    prompt = provider.prompts[0]["system_prompt"]
+    assert "invent the live state" in prompt
+
+
+def test_recent_history_returns_user_and_assistant_turns_oldest_first(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi 1", session_id=session.id)
+    record_message(1, "g1", "assistant", "tra loi 1", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert history == [
+        {"role": "user", "content": "cau hoi 1"},
+        {"role": "assistant", "content": "tra loi 1"},
+    ]
+
+
+def test_recent_history_excludes_system_messages(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi", session_id=session.id)
+    record_message(None, None, "system", "Request failed.", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert [turn["role"] for turn in history] == ["user"]
+
+
+def test_recent_history_is_scoped_to_one_session(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session_a = create_session()
+    session_b = create_session()
+    record_message(1, "g1", "user", "trong phien A", session_id=session_a.id)
+    record_message(1, "g1", "user", "trong phien B", session_id=session_b.id)
+
+    history = AIService()._recent_history(session_a.id, "cau hoi moi")
+
+    assert [turn["content"] for turn in history] == ["trong phien A"]
+
+
+def test_recent_history_keeps_only_the_last_ten_turns(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    for index in range(14):
+        record_message(1, "g1", "user", f"tin {index}", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert len(history) == 10
+    assert history[0]["content"] == "tin 4"
+    assert history[-1]["content"] == "tin 13"
+
+
+def test_recent_history_drops_the_message_being_handled(app):
+    """ai/routes.py records the incoming message before calling handle(), so
+    it is already the newest row: sending it again would duplicate it."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id)
+    record_message(1, "g1", "user", "cau hoi moi", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert [turn["content"] for turn in history] == ["cau hoi cu"]
+
+
+def test_recent_history_is_empty_without_a_session(app):
+    assert AIService()._recent_history(None, "cau hoi moi") == []
+
+
+def test_conversation_history_reaches_the_model(app, admin_user, ssh_factory):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "OSPF la gi?", session_id=session.id)
+
+    service, provider = service_with(app, CHAT_ACTION)
+    service.handle("con VLAN thi sao?", admin_user.id, session_id=session.id)
+
+    conversation = provider.prompts[0]["context"]["conversation"]
+    assert conversation == [{"role": "user", "content": "OSPF la gi?"}]
+
+
+def test_conversation_history_never_leaks_message_payloads(
+    app, admin_user, ssh_factory
+):
+    """Payloads carry raw command output. Only role and content may be sent."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(
+        1,
+        "g1",
+        "assistant",
+        "Da chay xong.",
+        {"results": [{"output": "SENTINEL-SECRET-XYZ"}]},
+        session_id=session.id,
+    )
+
+    service, provider = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id, session_id=session.id)
+
+    assert "SENTINEL-SECRET-XYZ" not in provider.everything_sent()
