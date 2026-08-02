@@ -145,3 +145,41 @@ def test_list_messages_only_returns_the_given_session(app):
     rows = list_messages(session_id=session_a.id)
 
     assert [row.content for row in rows] == ["in A"]
+
+
+def test_create_session_endpoint_requires_authentication(client):
+    assert client.post("/api/chat/sessions").status_code == 401
+
+
+def test_create_session_endpoint_is_usable_by_viewer(client, viewer_headers):
+    response = client.post("/api/chat/sessions", headers=viewer_headers)
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["title"] == "New chat"
+    assert body["id"] is not None
+
+
+def test_list_sessions_endpoint_requires_authentication(client):
+    assert client.get("/api/chat/sessions").status_code == 401
+
+
+def test_list_sessions_endpoint_returns_created_sessions(client, admin_headers):
+    created = client.post("/api/chat/sessions", headers=admin_headers).get_json()
+    response = client.get("/api/chat/sessions", headers=admin_headers)
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.get_json()["items"]]
+    assert created["id"] in ids
+
+
+def test_messages_endpoint_filters_by_session_id(client, admin_headers, app):
+    session_a = client.post("/api/chat/sessions", headers=admin_headers).get_json()
+    session_b = client.post("/api/chat/sessions", headers=admin_headers).get_json()
+    record_message(1, "g1", "user", "in A", session_id=session_a["id"])
+    record_message(1, "g1", "user", "in B", session_id=session_b["id"])
+
+    response = client.get(
+        f"/api/chat/messages?session_id={session_a['id']}", headers=admin_headers
+    )
+
+    items = response.get_json()["items"]
+    assert [item["content"] for item in items] == ["in A"]
