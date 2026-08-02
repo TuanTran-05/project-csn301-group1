@@ -33,12 +33,16 @@ def record_failed_chat_response(response):
     content = payload.get("message")
     if not isinstance(content, str):
         content = "Request failed."
+    body = request.get_json(silent=True) or {}
+    raw_session_id = body.get("session_id") if isinstance(body, dict) else None
+    session_id = raw_session_id if isinstance(raw_session_id, int) else None
     record_chat_message(
         user.id if user else None,
         user.username if user else None,
         "system",
         content,
         payload,
+        session_id=session_id,
     )
     return response
 
@@ -60,9 +64,16 @@ def chat():
     user_id = user.id if user else None
     username = user.username if user else None
 
-    record_chat_message(user_id, username, "user", data.message)
+    record_chat_message(
+        user_id, username, "user", data.message, session_id=data.session_id
+    )
     result = AIService().handle(data.message, user_id)
     record_chat_message(
-        user_id, username, "assistant", result.get("explanation", ""), result
+        user_id,
+        username,
+        "assistant",
+        result.get("explanation", ""),
+        result,
+        session_id=data.session_id,
     )
     return jsonify(result), 200

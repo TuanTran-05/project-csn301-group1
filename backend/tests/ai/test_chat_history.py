@@ -61,6 +61,34 @@ def test_chat_endpoint_records_a_user_and_assistant_message(
     assert rows[1].content == "Checking the routing table."
 
 
+def test_chat_endpoint_records_messages_against_the_given_session(
+    client, admin_headers, app, dist_switch, ssh_factory
+):
+    from network_copilot.chat.session_service import create_session
+
+    ssh_factory.set_client(dist_switch.hostname, default_output="ok")
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=MONITOR_ACTION)
+    session = create_session()
+
+    client.post(
+        "/api/ai/chat",
+        headers=admin_headers,
+        json={"message": "check routes", "session_id": session.id},
+    )
+
+    rows = db.session.query(ChatMessage).order_by(ChatMessage.id).all()
+    assert [row.session_id for row in rows] == [session.id, session.id]
+
+
+def test_chat_endpoint_rejects_a_non_integer_session_id(client, admin_headers):
+    response = client.post(
+        "/api/ai/chat",
+        headers=admin_headers,
+        json={"message": "hi", "session_id": "not-a-number"},
+    )
+    assert response.status_code == 422
+
+
 def test_chat_endpoint_records_a_dangerous_proposal_as_an_assistant_message(
     client, admin_headers, app, access_switch, ssh_factory
 ):
