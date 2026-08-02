@@ -770,3 +770,53 @@ def test_viewer_cannot_create_a_configuration_preview(
         "/api/ai/chat", headers=viewer_headers, json={"message": "tao vlan 25"}
     )
     assert response.status_code == 403
+
+
+CHAT_ACTION = {
+    "intent": "chat",
+    "operations": [],
+    "explanation": "Chao ban! Toi co the giup kiem tra va cau hinh thiet bi mang.",
+}
+
+
+def test_ai_action_accepts_a_chat_intent_with_no_operations():
+    action = AIAction(**CHAT_ACTION)
+    assert action.intent == "chat"
+    assert action.operations == []
+
+
+def test_ai_action_rejects_a_chat_intent_carrying_operations():
+    payload = deepcopy(CHAT_ACTION)
+    payload["operations"] = [
+        {
+            "device_hostnames": ["DIST-SW1"],
+            "execution_mode": "exec",
+            "commands": ["show ip ospf neighbor"],
+            "verification_commands": [],
+        }
+    ]
+    with pytest.raises(PydanticValidationError):
+        AIAction(**payload)
+
+
+def test_ai_action_rejects_chat_without_operations():
+    """operations stays a required key: the provider schema declares it
+    required, so a chat action sends an explicit empty list rather than
+    omitting the field."""
+    with pytest.raises(PydanticValidationError):
+        AIAction(intent="chat", explanation="hello")
+
+
+@pytest.mark.parametrize("intent", ["monitor", "configure", "troubleshoot"])
+def test_ai_action_still_rejects_an_action_intent_with_no_operations(intent):
+    """Relaxing operations for chat must not relax it for the intents that
+    actually run commands."""
+    with pytest.raises(PydanticValidationError):
+        AIAction(intent=intent, operations=[], explanation="x")
+
+
+def test_provider_schema_offers_the_chat_intent():
+    from network_copilot.ai.schemas import build_ai_action_schema
+
+    schema = build_ai_action_schema(["DIST-SW1"])
+    assert "chat" in schema["properties"]["intent"]["enum"]
