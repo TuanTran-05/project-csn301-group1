@@ -77,6 +77,14 @@ document.addEventListener("alpine:init", () => {
       // (from toISOString()) would get wrong.
       const cutoffTime = Date.parse(this.chatCutoff);
       return this.messages.filter((message) => {
+        // A change/batch action card lives inside the message that first
+        // proposed it, and keeps updating in place (via changesById /
+        // batchesById) as it moves through approve/apply/results - even
+        // long after "New chat" was clicked. Hiding that message would
+        // hide the only place its outcome is shown, so these are exempt
+        // from the cutoff; only plain conversational messages are hidden.
+        const payload = message.payload;
+        if (payload && (payload.change || payload.batch)) return true;
         const timestamp = this._messageTimestamp(message);
         return timestamp === null || timestamp > cutoffTime;
       });
