@@ -161,7 +161,7 @@ def test_chat_endpoint_records_a_rate_limit_failure_once(rate_limited_app):
 def test_chat_endpoint_records_an_unexpected_failure_once(
     client, admin_headers, monkeypatch
 ):
-    def boom(self, message, user_id):
+    def boom(self, message, user_id, session_id=None):
         raise RuntimeError("provider secret")
 
     monkeypatch.setattr(AIService, "handle", boom)
@@ -176,6 +176,39 @@ def test_chat_endpoint_records_an_unexpected_failure_once(
     assert [row.role for row in rows] == ["user", "system"]
     assert rows[1].content == "An internal error occurred."
     assert rows[1].payload["error"] == "internal_error"
+
+
+def test_chat_endpoint_forwards_the_session_history_to_the_model(
+    client, admin_headers, app
+):
+    """Covers the wiring the service-level tests cannot: that the route
+    passes session_id through, and that the message being handled is not
+    sent twice (routes.py records it before calling handle())."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id)
+
+    provider = FakeAIProvider(
+        responses={
+            "intent": "chat",
+            "operations": [],
+            "explanation": "Chao ban!",
+        }
+    )
+    app.config["AI_PROVIDER_INSTANCE"] = provider
+
+    response = client.post(
+        "/api/ai/chat",
+        headers=admin_headers,
+        json={"message": "cau hoi moi", "session_id": session.id},
+    )
+
+    assert response.status_code == 200
+    assert provider.prompts[0]["context"]["conversation"] == [
+        {"role": "user", "content": "cau hoi cu"}
+    ]
 
 
 def test_chat_endpoint_does_not_record_an_unauthenticated_attempt(client):

@@ -19,6 +19,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..audit.service import record_event, redact_sensitive
 from ..auth.model import User
+from ..chat import service as chat_service
 from ..changes import batch_service
 from ..changes.batch_service import BatchOperation
 from ..commands import service as command_service
@@ -135,6 +136,47 @@ class AIService:
             "supported_commands": commands,
         }
 
+    # -- conversation history ---------------------------------------------
+    # How many recent turns the model sees, and how many rows to fetch to
+    # find them: the fetch is wider than the window because system messages
+    # and the duplicate of the current turn are filtered out below.
+    HISTORY_LIMIT = 10
+    _HISTORY_FETCH_LIMIT = 40
+
+    @classmethod
+    def _recent_history(
+        cls, session_id: int | None, current_message: str
+    ) -> list[dict]:
+        """Recent turns of this chat session, for conversational follow-ups.
+
+        Only role and content are returned. A message's payload carries raw
+        command output, which can contain configuration detail, and this
+        module's standing rule is that the model never receives credentials,
+        management IPs or a running-config.
+        """
+        if session_id is None:
+            return []
+
+        rows = chat_service.list_messages(
+            session_id=session_id, limit=cls._HISTORY_FETCH_LIMIT
+        )
+        turns = [
+            {"role": row.role, "content": row.content}
+            for row in rows
+            if row.role in ("user", "assistant")
+        ]
+
+        # ai/routes.py records the incoming message before calling handle(),
+        # so it is already the newest row here.
+        if (
+            turns
+            and turns[-1]["role"] == "user"
+            and turns[-1]["content"] == current_message
+        ):
+            turns.pop()
+
+        return turns[-cls.HISTORY_LIMIT :]
+
     # -- interpret --------------------------------------------------------
     @staticmethod
     def _extract_json(raw: str) -> dict:
@@ -165,9 +207,12 @@ class AIService:
             raise ValidationError("The AI response was not a JSON object.")
         return payload
 
-    def interpret(self, message: str, user_id: int | None) -> AIAction:
+    def interpret(
+        self, message: str, user_id: int | None, session_id: int | None = None
+    ) -> AIAction:
         """Ask the model for a structured action. No side effects."""
         context = self.build_context()
+        context["conversation"] = self._recent_history(session_id, message)
         schema = build_ai_action_schema(
             device["hostname"] for device in context["devices"]
         )
@@ -397,8 +442,10 @@ class AIService:
         }
 
     # -- entry point ------------------------------------------------------
-    def handle(self, message: str, user_id: int | None) -> dict:
-        action = self.interpret(message, user_id)
+    def handle(
+        self, message: str, user_id: int | None, session_id: int | None = None
+    ) -> dict:
+        action = self.interpret(message, user_id, session_id=session_id)
 
         # A conversational turn touches nothing: no device is resolved, no
         # policy is evaluated, no SSH session is opened, and no audit row is

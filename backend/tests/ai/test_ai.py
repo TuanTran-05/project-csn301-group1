@@ -881,3 +881,117 @@ def test_prompt_forbids_inventing_live_device_state_in_chat(app, admin_user):
     service.interpret("alo", admin_user.id)
     prompt = provider.prompts[0]["system_prompt"]
     assert "invent the live state" in prompt
+
+
+def test_recent_history_returns_user_and_assistant_turns_oldest_first(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi 1", session_id=session.id)
+    record_message(1, "g1", "assistant", "tra loi 1", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert history == [
+        {"role": "user", "content": "cau hoi 1"},
+        {"role": "assistant", "content": "tra loi 1"},
+    ]
+
+
+def test_recent_history_excludes_system_messages(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi", session_id=session.id)
+    record_message(None, None, "system", "Request failed.", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert [turn["role"] for turn in history] == ["user"]
+
+
+def test_recent_history_is_scoped_to_one_session(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session_a = create_session()
+    session_b = create_session()
+    record_message(1, "g1", "user", "trong phien A", session_id=session_a.id)
+    record_message(1, "g1", "user", "trong phien B", session_id=session_b.id)
+
+    history = AIService()._recent_history(session_a.id, "cau hoi moi")
+
+    assert [turn["content"] for turn in history] == ["trong phien A"]
+
+
+def test_recent_history_keeps_only_the_last_ten_turns(app):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    for index in range(14):
+        record_message(1, "g1", "user", f"tin {index}", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert len(history) == 10
+    assert history[0]["content"] == "tin 4"
+    assert history[-1]["content"] == "tin 13"
+
+
+def test_recent_history_drops_the_message_being_handled(app):
+    """ai/routes.py records the incoming message before calling handle(), so
+    it is already the newest row: sending it again would duplicate it."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id)
+    record_message(1, "g1", "user", "cau hoi moi", session_id=session.id)
+
+    history = AIService()._recent_history(session.id, "cau hoi moi")
+
+    assert [turn["content"] for turn in history] == ["cau hoi cu"]
+
+
+def test_recent_history_is_empty_without_a_session(app):
+    assert AIService()._recent_history(None, "cau hoi moi") == []
+
+
+def test_conversation_history_reaches_the_model(app, admin_user, ssh_factory):
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "OSPF la gi?", session_id=session.id)
+
+    service, provider = service_with(app, CHAT_ACTION)
+    service.handle("con VLAN thi sao?", admin_user.id, session_id=session.id)
+
+    conversation = provider.prompts[0]["context"]["conversation"]
+    assert conversation == [{"role": "user", "content": "OSPF la gi?"}]
+
+
+def test_conversation_history_never_leaks_message_payloads(
+    app, admin_user, ssh_factory
+):
+    """Payloads carry raw command output. Only role and content may be sent."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(
+        1,
+        "g1",
+        "assistant",
+        "Da chay xong.",
+        {"results": [{"output": "SENTINEL-SECRET-XYZ"}]},
+        session_id=session.id,
+    )
+
+    service, provider = service_with(app, CHAT_ACTION)
+    service.handle("alo", admin_user.id, session_id=session.id)
+
+    assert "SENTINEL-SECRET-XYZ" not in provider.everything_sent()
