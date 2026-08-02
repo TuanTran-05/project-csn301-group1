@@ -62,6 +62,14 @@ def test_ai_action_rejects_a_chat_intent_carrying_operations():
         AIAction(**payload)
 
 
+def test_ai_action_rejects_chat_without_operations():
+    """operations stays a required key: the provider schema declares it
+    required, so a chat action sends an explicit empty list rather than
+    omitting the field."""
+    with pytest.raises(PydanticValidationError):
+        AIAction(intent="chat", explanation="hello")
+
+
 @pytest.mark.parametrize("intent", ["monitor", "configure", "troubleshoot"])
 def test_ai_action_still_rejects_an_action_intent_with_no_operations(intent):
     """Relaxing operations for chat must not relax it for the intents that
@@ -79,8 +87,8 @@ def test_provider_schema_offers_the_chat_intent():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "chat_intent or chat_action or action_intent_with_no_operations or provider_schema_offers"` (from `backend/`)
-Expected: FAIL — `test_ai_action_accepts_a_chat_intent_with_no_operations` raises `PydanticValidationError` because `"chat"` is not in the `intent` Literal, and `test_provider_schema_offers_the_chat_intent` fails its `assert` because the enum has only three values. (`test_ai_action_rejects_a_chat_intent_carrying_operations` and the parametrized one will already pass, for the wrong reason — the Literal rejects `"chat"` outright, and `min_length=1` rejects the empty list. Both must still pass after Step 3, when they start passing for the right reason.)
+Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "chat_intent or chat_without_operations or action_intent_with_no_operations or provider_schema_offers"` (from `backend/`)
+Expected: FAIL — `test_ai_action_accepts_a_chat_intent_with_no_operations` raises `PydanticValidationError` because `"chat"` is not in the `intent` Literal, and `test_provider_schema_offers_the_chat_intent` fails its `assert` because the enum has only three values. (`test_ai_action_rejects_a_chat_intent_carrying_operations`, `test_ai_action_rejects_chat_without_operations` and the parametrized one already pass, for the wrong reason — the Literal rejects `"chat"` outright, and `min_length=1` rejects both the empty list and the missing field. All must still pass after Step 3, when they start passing for the right reason.)
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -121,7 +129,10 @@ class AIAction(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     intent: Literal["monitor", "configure", "troubleshoot", "chat"]
-    operations: list[AIOperation] = Field(default_factory=list)
+    # Still a required key - the provider schema declares it required too.
+    # Only the "at least one entry" part moves into the validator below, so
+    # a chat action must send an explicit empty list, never omit the field.
+    operations: list[AIOperation]
     explanation: str
 
     @model_validator(mode="after")
@@ -156,8 +167,8 @@ Replace with:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "chat_intent or chat_action or action_intent_with_no_operations or provider_schema_offers"`
-Expected: PASS (6 tests — the 3 parametrized cases count separately)
+Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "chat_intent or chat_without_operations or action_intent_with_no_operations or provider_schema_offers"`
+Expected: PASS (7 tests — the 3 parametrized cases count separately)
 
 Then run the whole AI schema/service file to confirm the validator rewrite broke nothing:
 
@@ -388,9 +399,10 @@ git commit -m "feat: answer conversational messages with a chat intent"
 ### Task 3: Conversation history for follow-up questions
 
 **Files:**
-- Modify: `backend/src/network_copilot/ai/service.py` (add `_recent_history`, extend `interpret()` and `handle()` with `session_id`, add the `chat_service` import)
+- Modify: `backend/src/network_copilot/ai/service.py` (add `_recent_history`, extend `interpret()` and `handle()` with `session_id`, add the `chat_service` import, adjust the `build_context()` docstring)
 - Modify: `backend/src/network_copilot/ai/routes.py` (pass `data.session_id` into `handle`)
 - Test: `backend/tests/ai/test_ai.py` (append)
+- Test: `backend/tests/ai/test_chat_history.py` (append one route-level test; fix one existing monkeypatch signature at `:164`)
 
 **Interfaces:**
 - Consumes: `AIService.handle()` returning a chat reply (Task 2); `chat.service.list_messages(session_id: int | None = None, limit: int = 200) -> list[ChatMessage]` (already exists, session-scoped, oldest-first); `chat.service.record_message(user_id, username, role, content, payload=None, session_id=None)` (already exists, used by the tests here); `ChatRequest.session_id: int | None` (already exists on the request schema).
@@ -515,10 +527,49 @@ def test_conversation_history_never_leaks_message_payloads(
     assert "SENTINEL-SECRET-XYZ" not in provider.everything_sent()
 ```
 
+Every test above calls `AIService` directly, so none of them would catch
+`ai/routes.py` failing to forward `session_id`. Append this route-level test
+to `backend/tests/ai/test_chat_history.py`, which exercises the real HTTP
+path end to end:
+
+```python
+def test_chat_endpoint_forwards_the_session_history_to_the_model(
+    client, admin_headers, app
+):
+    """Covers the wiring the service-level tests cannot: that the route
+    passes session_id through, and that the message being handled is not
+    sent twice (routes.py records it before calling handle())."""
+    from network_copilot.chat.service import record_message
+    from network_copilot.chat.session_service import create_session
+
+    session = create_session()
+    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id)
+
+    provider = FakeAIProvider(
+        responses={
+            "intent": "chat",
+            "operations": [],
+            "explanation": "Chao ban!",
+        }
+    )
+    app.config["AI_PROVIDER_INSTANCE"] = provider
+
+    response = client.post(
+        "/api/ai/chat",
+        headers=admin_headers,
+        json={"message": "cau hoi moi", "session_id": session.id},
+    )
+
+    assert response.status_code == 200
+    assert provider.prompts[0]["context"]["conversation"] == [
+        {"role": "user", "content": "cau hoi cu"}
+    ]
+```
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "recent_history or conversation_history"` (from `backend/`)
-Expected: FAIL — `AttributeError: 'AIService' object has no attribute '_recent_history'` for the six `_recent_history` tests, and `TypeError: handle() got an unexpected keyword argument 'session_id'` for the two that call `handle(..., session_id=...)`.
+Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py tests/ai/test_chat_history.py -v -k "recent_history or conversation_history or forwards_the_session_history"` (from `backend/`)
+Expected: FAIL — `AttributeError: 'AIService' object has no attribute '_recent_history'` for the six `_recent_history` tests, `TypeError: handle() got an unexpected keyword argument 'session_id'` for the two that call `handle(..., session_id=...)`, and `KeyError: 'conversation'` for the route-level test (the request succeeds, but the context has no such key yet).
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -635,7 +686,22 @@ Replace with:
         action = self.interpret(message, user_id, session_id=session_id)
 ```
 
-Finally, in `backend/src/network_copilot/ai/routes.py`, find:
+Then adjust the `build_context()` docstring, which is no longer the whole
+story now that `interpret()` adds the conversation separately. Find:
+
+```python
+    def build_context(self) -> dict:
+        """Everything the model is allowed to know. Nothing more."""
+```
+
+Replace with:
+
+```python
+    def build_context(self) -> dict:
+        """Safe lab context; per-session conversation is added by interpret()."""
+```
+
+Then, in `backend/src/network_copilot/ai/routes.py`, find:
 
 ```python
     result = AIService().handle(data.message, user_id)
@@ -647,10 +713,35 @@ Replace with:
     result = AIService().handle(data.message, user_id, session_id=data.session_id)
 ```
 
+Finally, fix an existing monkeypatch that the new signature would silently
+break. In `backend/tests/ai/test_chat_history.py:164`, find:
+
+```python
+    def boom(self, message, user_id):
+        raise RuntimeError("provider secret")
+```
+
+Replace with:
+
+```python
+    def boom(self, message, user_id, session_id=None):
+        raise RuntimeError("provider secret")
+```
+
+Without this, `handle()`'s new keyword argument makes `boom` raise
+`TypeError` instead of the `RuntimeError` it exists to simulate. The test
+would still see a 500 and still pass — but it would no longer be testing
+what its name says, so the bug it guards could return unnoticed.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "recent_history or conversation_history"`
-Expected: PASS (8 tests)
+Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py tests/ai/test_chat_history.py -v -k "recent_history or conversation_history or forwards_the_session_history"`
+Expected: PASS (9 tests)
+
+Then confirm the repaired monkeypatch test still passes for the right reason:
+
+Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_chat_history.py -v -k unexpected_failure`
+Expected: PASS (1 test)
 
 - [ ] **Step 5: Run the full backend test suite to confirm no regression**
 
@@ -671,6 +762,6 @@ Start the backend (from `backend/`): `../.venv/Scripts/python.exe -m flask --app
 - [ ] **Step 7: Commit**
 
 ```bash
-git add backend/src/network_copilot/ai/service.py backend/src/network_copilot/ai/routes.py backend/tests/ai/test_ai.py
+git add backend/src/network_copilot/ai/service.py backend/src/network_copilot/ai/routes.py backend/tests/ai/test_ai.py backend/tests/ai/test_chat_history.py
 git commit -m "feat: give the AI recent session context for follow-up questions"
 ```
