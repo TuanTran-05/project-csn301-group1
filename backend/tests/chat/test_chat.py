@@ -1,16 +1,33 @@
-from network_copilot.chat.model import ChatMessage
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from network_copilot.chat.model import ChatMessage, ChatSession
 from network_copilot.chat.service import list_messages, record_message
 from network_copilot.extensions import db
 
 
-def test_to_dict_includes_every_field(app):
+@pytest.fixture
+def chat_session(app):
+    session = ChatSession()
+    db.session.add(session)
+    db.session.commit()
+    return session
+
+
+def test_to_dict_includes_every_field(app, chat_session):
     message = ChatMessage(
-        user_id=1, username="g1", role="user", content="hello", payload={"a": 1}
+        session_id=chat_session.id,
+        user_id=1,
+        username="g1",
+        role="user",
+        content="hello",
+        payload={"a": 1},
     )
     db.session.add(message)
     db.session.commit()
 
     data = message.to_dict()
+    assert data["session_id"] == chat_session.id
     assert data["username"] == "g1"
     assert data["role"] == "user"
     assert data["content"] == "hello"
@@ -18,11 +35,28 @@ def test_to_dict_includes_every_field(app):
     assert data["created_at"] is not None
 
 
-def test_allows_a_null_user(app):
-    message = ChatMessage(user_id=None, username=None, role="system", content="x")
+def test_allows_a_null_user(app, chat_session):
+    message = ChatMessage(
+        session_id=chat_session.id, user_id=None, username=None, role="system", content="x"
+    )
     db.session.add(message)
     db.session.commit()
     assert message.to_dict()["user_id"] is None
+
+
+def test_chat_session_has_created_at(app):
+    session = ChatSession()
+    db.session.add(session)
+    db.session.commit()
+    assert session.id is not None
+    assert session.created_at is not None
+
+
+def test_chat_message_requires_a_session(app):
+    message = ChatMessage(user_id=1, username="g1", role="user", content="hi")
+    db.session.add(message)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
 
 
 def test_record_message_persists_a_row(app):
