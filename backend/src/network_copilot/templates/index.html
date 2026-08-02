@@ -55,16 +55,21 @@
       </aside>
       <main class="chat-panel">
         <div class="chat-toolbar">
+          <select
+            class="session-select"
+            x-model.number="currentSessionId"
+            @change="switchSession(currentSessionId)"
+          >
+            <template x-for="session in sessions" :key="session.id">
+              <option :value="session.id" x-text="session.title"></option>
+            </template>
+          </select>
           <button type="button" class="new-chat-btn" @click="startNewChat()">
             New chat
           </button>
-          <span class="chat-hidden-banner" x-show="chatCutoff" x-cloak>
-            Đã ẩn <span x-text="hiddenMessageCount"></span> tin nhắn cũ ·
-            <a href="#" @click.prevent="showFullHistory()">Xem toàn bộ lịch sử</a>
-          </span>
         </div>
         <div class="chat-log" x-ref="chatLog">
-          <template x-for="message in visibleMessages" :key="message.id">
+          <template x-for="message in messages" :key="message.id">
             <div class="bubble" :class="'bubble-' + message.role">
               <div class="bubble-meta">
                 <span x-text="message.username || 'AI'"></span>

@@ -941,7 +941,7 @@ a:focus-visible {
   font-size: 10px;
 }
 
-/* -- Chat toolbar (New chat / hidden history) -- */
+/* -- Chat toolbar (session switcher / New chat) -- */
 
 .chat-toolbar {
   display: flex;
@@ -949,6 +949,17 @@ a:focus-visible {
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.session-select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 5px 8px;
   font-size: 12px;
 }
 
@@ -960,17 +971,10 @@ a:focus-visible {
   padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .new-chat-btn:hover {
   border-color: var(--accent);
-  color: var(--accent);
-}
-
-.chat-hidden-banner {
-  color: var(--text-muted);
-}
-
-.chat-hidden-banner a {
   color: var(--accent);
 }

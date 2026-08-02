@@ -49,11 +49,15 @@ document.addEventListener("alpine:init", () => {
     sending: false,
     _messagesRefreshGeneration: 0,
     _clientMessageSequence: 0,
-    // ISO timestamp string, or null. Set by startNewChat(), cleared by
-    // showFullHistory() and by logout(). Persisted to localStorage so it
-    // survives a page refresh, but never sent to the server: this hides
-    // history in this browser only, per the design's explicit scope.
-    chatCutoff: localStorage.getItem("nc_chat_cutoff") || null,
+    sessions: [],
+    // A per-browser bookmark of which shared session this browser was last
+    // looking at (see the design spec: sessions are shared team data, but
+    // which one *you* are currently viewing is a per-browser preference,
+    // same role nc_token/nc_user already play for auth state).
+    currentSessionId: (() => {
+      const stored = localStorage.getItem("nc_session_id");
+      return stored ? Number(stored) : null;
+    })(),
 
     get pendingChanges() {
       return Object.values(this.changesById).filter(
@@ -66,42 +70,6 @@ document.addEventListener("alpine:init", () => {
         (batch) =>
           batch.status === "pending_approval" || batch.status === "approved"
       );
-    },
-
-    get visibleMessages() {
-      if (!this.chatCutoff) return this.messages;
-      // Reuse _messageTimestamp() (defined further down in this component)
-      // rather than comparing created_at strings directly: it normalises
-      // server timestamps that arrive without a timezone suffix, which a
-      // naive string comparison against an always-suffixed chatCutoff
-      // (from toISOString()) would get wrong.
-      const cutoffTime = Date.parse(this.chatCutoff);
-      return this.messages.filter((message) => {
-        // A change/batch action card lives inside the message that first
-        // proposed it, and keeps updating in place (via changesById /
-        // batchesById) as it moves through approve/apply/results - even
-        // long after "New chat" was clicked. Hiding that message would
-        // hide the only place its outcome is shown, so these are exempt
-        // from the cutoff; only plain conversational messages are hidden.
-        const payload = message.payload;
-        if (payload && (payload.change || payload.batch)) return true;
-        const timestamp = this._messageTimestamp(message);
-        return timestamp === null || timestamp > cutoffTime;
-      });
-    },
-
-    get hiddenMessageCount() {
-      return this.messages.length - this.visibleMessages.length;
-    },
-
-    startNewChat() {
-      this.chatCutoff = new Date().toISOString();
-      localStorage.setItem("nc_chat_cutoff", this.chatCutoff);
-    },
-
-    showFullHistory() {
-      this.chatCutoff = null;
-      localStorage.removeItem("nc_chat_cutoff");
     },
 
     init() {
@@ -217,8 +185,9 @@ document.addEventListener("alpine:init", () => {
       this.messages = [];
       this.draftMessage = "";
       this.sending = false;
-      this.chatCutoff = null;
-      localStorage.removeItem("nc_chat_cutoff");
+      this.sessions = [];
+      this.currentSessionId = null;
+      localStorage.removeItem("nc_session_id");
     },
 
     async startApp() {
@@ -226,6 +195,7 @@ document.addEventListener("alpine:init", () => {
       this.changesLoading = true;
       this.batchesLoading = true;
       const bootstrap = [
+        () => this.loadSessions(),
         () => this.hydrateMessages(),
         () => this.refreshDevices(),
         () => this.refreshChanges(),
@@ -685,9 +655,54 @@ document.addEventListener("alpine:init", () => {
       if (el) el.scrollTop = el.scrollHeight;
     },
 
+    async loadSessions() {
+      const data = await this.authFetch("/api/chat/sessions");
+      this.sessions = data.items;
+      if (this.sessions.length === 0) {
+        const session = await this.authFetch("/api/chat/sessions", {
+          method: "POST",
+        });
+        this.sessions = [session];
+      }
+      const stillExists =
+        this.currentSessionId != null &&
+        this.sessions.some((session) => session.id === this.currentSessionId);
+      if (!stillExists) {
+        this.currentSessionId = this.sessions[0].id;
+      }
+      localStorage.setItem("nc_session_id", String(this.currentSessionId));
+    },
+
+    async switchSession(sessionId) {
+      if (sessionId === this.currentSessionId) return;
+      this._messagesRefreshGeneration += 1;
+      this.currentSessionId = sessionId;
+      localStorage.setItem("nc_session_id", String(sessionId));
+      this.messages = [];
+      try {
+        await this.hydrateMessages();
+      } catch {
+        // A later scheduled poll can retry.
+      }
+    },
+
+    async startNewChat() {
+      try {
+        const session = await this.authFetch("/api/chat/sessions", {
+          method: "POST",
+        });
+        this.sessions.unshift(session);
+        await this.switchSession(session.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    },
+
     async hydrateMessages() {
       const generation = this._messagesRefreshGeneration;
-      const data = await this.authFetch("/api/chat/messages");
+      const data = await this.authFetch(
+        `/api/chat/messages?session_id=${this.currentSessionId}`
+      );
       if (generation !== this._messagesRefreshGeneration) return;
       for (const message of data.items) this._ingestMessage(message);
       this.$nextTick(() => {
@@ -700,7 +715,9 @@ document.addEventListener("alpine:init", () => {
     async pollMessages() {
       const generation = this._messagesRefreshGeneration;
       const wasAtBottom = this._isScrolledToBottom();
-      const data = await this.authFetch("/api/chat/messages");
+      const data = await this.authFetch(
+        `/api/chat/messages?session_id=${this.currentSessionId}`
+      );
       if (generation !== this._messagesRefreshGeneration) return;
       const known = new Set(this.messages.map((message) => message.id));
       let appended = false;
@@ -740,7 +757,10 @@ document.addEventListener("alpine:init", () => {
       try {
         const payload = await this.authFetch("/api/ai/chat", {
           method: "POST",
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify({
+            message: text,
+            session_id: this.currentSessionId,
+          }),
         });
         if (generation !== this._messagesRefreshGeneration) return;
         this._ingestMessage(
