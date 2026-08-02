@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 
 from network_copilot.chat.model import ChatMessage, ChatSession
 from network_copilot.chat.service import list_messages, record_message
+from network_copilot.chat.session_service import create_session
 from network_copilot.extensions import db
 
 
@@ -120,3 +121,27 @@ def test_messages_endpoint_returns_recorded_messages(client, admin_headers, app)
     assert len(items) == 2
     assert items[0]["content"] == "hello"
     assert items[1]["content"] == "hi there"
+
+
+def test_record_message_uses_the_given_session(app):
+    session = create_session()
+    record_message(1, "g1", "user", "hello", session_id=session.id)
+    row = db.session.query(ChatMessage).one()
+    assert row.session_id == session.id
+
+
+def test_record_message_resolves_a_session_when_omitted(app):
+    record_message(1, "g1", "user", "hello")
+    row = db.session.query(ChatMessage).one()
+    assert row.session_id is not None
+
+
+def test_list_messages_only_returns_the_given_session(app):
+    session_a = create_session()
+    session_b = create_session()
+    record_message(1, "g1", "user", "in A", session_id=session_a.id)
+    record_message(1, "g1", "user", "in B", session_id=session_b.id)
+
+    rows = list_messages(session_id=session_a.id)
+
+    assert [row.content for row in rows] == ["in A"]
