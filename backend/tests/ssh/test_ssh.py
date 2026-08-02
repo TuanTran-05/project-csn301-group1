@@ -369,6 +369,38 @@ def test_run_exec_rejects_unknown_interactive_prompt():
         client.run_exec(["custom command"], allow_confirm=True)
 
 
+def test_run_exec_retries_draining_when_a_response_arrives_in_two_bursts():
+    """Confirmed against a real device in the CSN301 lab: 'write' (an alias
+    for 'write memory') paused after "Building configuration..." for longer
+    than _drain()'s idle-quiet window while it saved to NVRAM. The single
+    _drain() call inside _respond_to_prompts() returned early with an
+    incomplete response, which had no recognized prompt at its tail, so the
+    command was wrongly reported as failed even though the device was still
+    working and would have returned "[OK]" and its normal prompt shortly
+    after. _respond_to_prompts() must retry draining a few times before
+    giving up, not fail on the first incomplete read."""
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+
+    call_count = {"n": 0}
+
+    def staggered_drain(_shell):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return "CORE-SW1#"  # login banner
+        if call_count["n"] == 2:
+            return "write\r\nBuilding configuration..."  # cut off mid-response
+        return "\r\n[OK]\r\nCORE-SW1#"  # arrives on the next drain attempt
+
+    client._drain = staggered_drain
+
+    result = client.run_exec(["write"])
+
+    assert "Building configuration" in result.output
+    assert "[OK]" in result.output
+    assert call_count["n"] == 3
+
+
 # -- secret hygiene -------------------------------------------------------
 
 

@@ -249,19 +249,31 @@ class SSHClient:
             duration_ms=self._elapsed_ms(started),
         )
 
+    # A device can legitimately pause mid-response longer than _drain()'s
+    # idle-quiet window (_IDLE_SECONDS) - e.g. while it writes to NVRAM.
+    # Confirmed against a real device in the CSN301 lab: 'write' (an alias
+    # for 'write memory') returned only "write\r\nBuilding configuration..."
+    # from a single _drain() call, with "[OK]" and the prompt arriving a
+    # moment later. Retrying a bounded number of times before giving up
+    # lets that finish normally instead of being reported as a failure.
+    _MAX_DRAIN_RETRIES = 3
+
     def _respond_to_prompts(self, shell, command: str, *, allow_confirm: bool) -> str:
         """Drain a command's response, answering known interactive prompts.
 
         Returns everything the shell sent back for this command once it
         settles at its normal prompt. Raises SSHCommandError if the shell is
-        left waiting on a prompt we don't recognise, rather than guessing.
+        still not at a recognised state after _MAX_DRAIN_RETRIES extra
+        drain attempts, rather than guessing.
         """
         segment = self._drain(shell)
         normalized = " ".join(command.split()).lower()
+        retries_left = self._MAX_DRAIN_RETRIES
 
         while not _READY_PROMPT.search(segment.rstrip()):
             tail = segment.rstrip()
 
+            matched_confirm = False
             for pattern, answer in _CONFIRM_PROMPTS:
                 if pattern.search(tail):
                     if not allow_confirm:
@@ -272,19 +284,25 @@ class SSHClient:
                         )
                     shell.send(answer)
                     segment += self._drain(shell)
+                    matched_confirm = True
                     break
-            else:
-                if normalized == _COPY_RUNNING_TO_STARTUP and (
-                    _DESTINATION_FILENAME_PROMPT.search(tail)
-                ):
-                    shell.send("\n")
-                    segment += self._drain(shell)
-                    continue
+            if matched_confirm:
+                continue
 
+            if normalized == _COPY_RUNNING_TO_STARTUP and (
+                _DESTINATION_FILENAME_PROMPT.search(tail)
+            ):
+                shell.send("\n")
+                segment += self._drain(shell)
+                continue
+
+            if retries_left <= 0:
                 raise SSHCommandError(
                     f"Unsupported interactive prompt from {self.target.host} "
                     f"after '{command}': {tail!r}"
                 )
+            retries_left -= 1
+            segment += self._drain(shell)
 
         return segment
 
