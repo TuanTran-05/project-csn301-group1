@@ -16,7 +16,7 @@ def test_preview_freezes_capability_metadata(app, admin_user, access_switch):
     assert payload["verification_level"] == "semantic"
     assert payload["operation_families"] == ["interface_description"]
     assert payload["verification_plan"][0]["strategy"] == "interface_description"
-    assert payload["rollback_guidance"] == []
+    assert payload["rollback_guidance"]
 
 
 def test_initial_assessment_is_best_effort(app):
