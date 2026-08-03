@@ -26,7 +26,7 @@ CORE_FAMILIES = frozenset(
         "save_config",
     }
 )
-ENABLED_SEMANTIC_FAMILIES = frozenset({"vlan"})
+ENABLED_SEMANTIC_FAMILIES = frozenset({"vlan", "access_port", "trunk_port"})
 
 
 @dataclass(frozen=True)

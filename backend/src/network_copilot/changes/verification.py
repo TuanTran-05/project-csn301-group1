@@ -17,6 +17,14 @@ def build_verification_plan(assessment, requested_commands, device):
         if item.family == "vlan":
             commands = ["show vlan brief"]
             return [{"id": "vlan: %s" % item.data["vlan_id"], "label": "VLAN %s" % item.data["vlan_id"], "strategy": "vlan", "commands": commands, "required": True, "sensitive": False, "expectation": item.to_dict()}]
+        if item.family == "access_port":
+            interface = item.data["interface"]
+            commands = [f"show interfaces {interface} switchport", "show vlan brief"]
+            return [{"id": f"access_port:{interface}", "label": f"Access port {interface}", "strategy": "access_port", "commands": commands, "required": True, "sensitive": False, "expectation": item.to_dict()}]
+        if item.family == "trunk_port":
+            interface = item.data["interface"]
+            commands = [f"show interfaces {interface} switchport", "show interfaces trunk"]
+            return [{"id": f"trunk_port:{interface}", "label": f"Trunk port {interface}", "strategy": "trunk_port", "commands": commands, "required": True, "sensitive": False, "expectation": item.to_dict()}]
     commands = requested or ["show running-config"]
     return [{"id": "generic:" + command.casefold().replace(" ", "-"), "label": command, "strategy": "generic", "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command)} for command in commands]
 
@@ -63,6 +71,22 @@ def run_verification(change, client):
             row = rows.get(expected.get("vlan_id"))
             passed = row is not None and (not expected.get("name") or row["name"] == expected["name"])
             details = ["VLAN expectation satisfied."] if passed else ["VLAN expectation was not satisfied."]
+        elif check.get("strategy") in {"access_port", "trunk_port"}:
+            from ..parsers import parse_switchport_detail, parse_interfaces_trunk, parse_vlan_brief
+            expected = check.get("expectation", {}).get("data", {})
+            switch = parse_switchport_detail(outputs[0])
+            interface = expected.get("interface", "")
+            target = next((r for r in switch if r.get("interface", "").casefold() == interface.casefold() or r.get("interface", "").casefold().endswith(interface.casefold())), None)
+            if check.get("strategy") == "access_port":
+                vlan_rows = {r["vlan_id"]: r for r in parse_vlan_brief(outputs[1])}
+                vlan = vlan_rows.get(expected.get("access_vlan"))
+                passed = bool(target and target.get("administrative_mode") == "access" and target.get("access_vlan") == expected.get("access_vlan") and vlan and interface.casefold() in str(vlan.get("ports", "")).casefold())
+            else:
+                trunks = parse_interfaces_trunk(outputs[1])
+                trunk = next((r for r in trunks if r.get("interface", "").casefold().endswith(interface.casefold())), None)
+                expected_vlans = set(expected.get("allowed_vlans", []))
+                passed = bool(target and target.get("administrative_mode") == "trunk" and trunk and trunk.get("status") == "trunking" and set(target.get("allowed_vlans", [])) == expected_vlans and set(trunk.get("allowed_vlans", [])) == expected_vlans)
+            details = ["Switchport expectation satisfied."] if passed else ["Switchport expectation was not satisfied."]
         if check.get("required", True) and not passed:
             all_passed = False
         row = {"label": check.get("label", check["id"]), "passed": passed, "required": check.get("required", True), "semantic": check.get("strategy") != "generic", "redacted": bool(check.get("sensitive")), "output": "" if check.get("sensitive") else output, "details": details}

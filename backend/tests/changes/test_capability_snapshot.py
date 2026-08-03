@@ -146,7 +146,10 @@ def test_only_vlan_is_semantically_enabled_at_this_checkpoint(commands):
     if commands == ["vlan 30"]:
         assert assessment.capability_tier == "level_a_core"
         assert assessment.verification_level == "semantic"
-    else:
+        elif commands == ["interface Gi0/1", "switchport mode access", "switchport access vlan 30"]:
+            assert assessment.capability_tier == "level_a_core"
+            assert assessment.verification_level == "semantic"
+        else:
         assert assessment.capability_tier == "best_effort"
         assert assessment.verification_level == "best_effort"
 
