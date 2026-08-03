@@ -10,3 +10,4 @@ htmlcov/
 *.sqlite3
 instance/
 .superpowers/
+backend/artifacts/
