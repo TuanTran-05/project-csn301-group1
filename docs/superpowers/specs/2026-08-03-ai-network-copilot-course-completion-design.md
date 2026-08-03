@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 
-**Status:** Awaiting written-spec review
+**Status:** Approved for implementation planning
 
 **Target scale:** Course project, 3–4 students, approximately 4–6 weeks
 
