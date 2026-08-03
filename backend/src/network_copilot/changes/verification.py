@@ -36,9 +36,17 @@ def build_verification_plan(assessment, requested_commands, device):
         if item.family == "ipv4_acl":
             data=item.data; return [{"id":"acl:"+str(data["name"]),"label":"IPv4 ACL","strategy":"ipv4_acl","commands":["show access-lists",f"show running-config interface {data['interface']}"],"required":True,"sensitive":True,"expectation":item.to_dict()}]
         if item.family == "ios_dhcp_pool":
-            return [{"id":"dhcp:"+str(item.data["pool"]),"label":"DHCP pool","strategy":"ios_dhcp_pool","commands":["show ip dhcp pool"],"required":True,"sensitive":False,"expectation":item.to_dict()}]
+            return [
+                {"id":"dhcp-config:"+str(item.data["pool"]),"label":"DHCP configuration","strategy":"ios_dhcp_pool_config","commands":["show running-config | section ^ip dhcp"],"required":True,"sensitive":True,"expectation":item.to_dict()},
+                {"id":"dhcp-pool:"+str(item.data["pool"]),"label":"DHCP pool observation","strategy":"ios_dhcp_pool","commands":["show ip dhcp pool"],"required":False,"sensitive":False,"expectation":item.to_dict()},
+            ]
         if item.family == "single_area_ospf":
-            return [{"id":"ospf:"+str(item.data["process_id"]),"label":"OSPF configuration","strategy":"single_area_ospf","commands":["show running-config | section ^router ospf"],"required":True,"sensitive":True,"expectation":item.to_dict()}]
+            process = str(item.data["process_id"])
+            return [
+                {"id":"ospf-config:"+process,"label":"OSPF configuration","strategy":"single_area_ospf","commands":["show running-config | section ^router ospf"],"required":True,"sensitive":True,"expectation":item.to_dict()},
+                {"id":"ospf-neighbors:"+process,"label":"OSPF neighbors","strategy":"generic","commands":["show ip ospf neighbor"],"required":False,"sensitive":False,"expectation":item.to_dict()},
+                {"id":"ospf-routes:"+process,"label":"OSPF routes","strategy":"generic","commands":["show ip route"],"required":False,"sensitive":False,"expectation":item.to_dict()},
+            ]
     commands = requested or ["show running-config"]
     return [{"id": "generic:" + command.casefold().replace(" ", "-"), "label": command, "strategy": "generic", "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command)} for command in commands]
 
@@ -147,6 +155,13 @@ def run_verification(change, client):
             pool = next((row for row in rows if row.get("name", "").casefold() == str(expected.get("pool")).casefold()), None)
             passed = bool(pool and (not pool.get("network") or str(expected.get("network")) in str(pool.get("network"))))
             details = ["DHCP pool was observed."] if passed else ["DHCP pool expectation was not satisfied."]
+        elif check.get("strategy") == "ios_dhcp_pool_config":
+            expected = check["expectation"]["data"]
+            lines = [line.strip().casefold() for line in output.splitlines()]
+            pool_line = f"ip dhcp pool {expected['pool']}".casefold()
+            network_line = f"network {expected['network']}".casefold()
+            passed = pool_line in lines and (network_line in lines or any(expected.get("network", "").split("/")[0].casefold() in line for line in lines))
+            details = ["DHCP configuration expectation satisfied."] if passed else ["DHCP configuration expectation was not satisfied."]
         elif check.get("strategy") == "single_area_ospf":
             expected = check["expectation"]["data"]
             lines = [line.strip().casefold() for line in output.splitlines()]
