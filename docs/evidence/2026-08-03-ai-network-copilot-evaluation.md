@@ -25,9 +25,15 @@
 | Single-area OSPF | Bounded implementation; cần live evidence |
 | Full NAT, advanced routing, ASA config, multi-vendor | Preview-only / ngoài phạm vi |
 
+## Kiểm thử và tái lập
+
+- Automated gate: **671 passed** in 103.19 seconds (`pytest -q`).
+- Migration round-trip: upgrade → downgrade `1d6734caee3b` → upgrade; final head `6f2a1c8d90be`.
+- Fake corpus run: 50 cases, structured validity 1.0, unsafe SSH 0.
+
 ## An toàn và giới hạn
 
-Không tự động rollback; rollback chỉ là hướng dẫn dựa trên backup. Chưa có bằng chứng PNETLab/live-provider trong môi trường hiện tại. Do runtime Python của máy hiện lỗi quyền khi khởi chạy lại interpreter, kết quả test sau các commit cuối cần được chạy lại trong môi trường `.venv` hoạt động.
+Không tự động rollback; rollback chỉ là hướng dẫn dựa trên backup. Chưa có bằng chứng PNETLab/live-provider trong môi trường hiện tại; các extension vì vậy chưa được tuyên bố live-verified.
 
 ## Tái lập
 
