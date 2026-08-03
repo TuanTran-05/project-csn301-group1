@@ -5,6 +5,7 @@ from .ospf import parse_ospf_neighbors
 from .routes import parse_ip_routes
 from .vlans import parse_vlan_brief
 from .switchports import normalize_interface_name, normalize_vlan_set, parse_switchport_detail, parse_interfaces_trunk
+from .config import extract_interface_stanza, normalize_ios_config
 
 # Maps a normalised command to the parser that understands its output.
 PARSERS = {
@@ -46,5 +47,6 @@ __all__ = [
     "parse_ospf_neighbors",
     "parse_vlan_brief",
     "normalize_interface_name", "normalize_vlan_set", "parse_switchport_detail", "parse_interfaces_trunk",
+    "extract_interface_stanza", "normalize_ios_config",
 ]
 import re

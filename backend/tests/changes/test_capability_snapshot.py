@@ -12,11 +12,10 @@ def test_preview_freezes_capability_metadata(app, admin_user, access_switch):
     )
 
     payload = change.to_dict()
-    assert payload["capability_tier"] == "best_effort"
-    assert payload["verification_level"] == "best_effort"
-    assert payload["operation_families"] == []
-    assert payload["operation_expectations"] == []
-    assert payload["verification_plan"][0]["strategy"] == "generic"
+    assert payload["capability_tier"] == "level_a_core"
+    assert payload["verification_level"] == "semantic"
+    assert payload["operation_families"] == ["interface_description"]
+    assert payload["verification_plan"][0]["strategy"] == "interface_description"
     assert payload["rollback_guidance"] == []
 
 
@@ -146,12 +145,12 @@ def test_only_vlan_is_semantically_enabled_at_this_checkpoint(commands):
     if commands == ["vlan 30"]:
         assert assessment.capability_tier == "level_a_core"
         assert assessment.verification_level == "semantic"
-        elif commands == ["interface Gi0/1", "switchport mode access", "switchport access vlan 30"]:
-            assert assessment.capability_tier == "level_a_core"
-            assert assessment.verification_level == "semantic"
-        else:
-        assert assessment.capability_tier == "best_effort"
-        assert assessment.verification_level == "best_effort"
+    elif commands == ["interface Gi0/1", "switchport mode access", "switchport access vlan 30"]:
+        assert assessment.capability_tier == "level_a_core"
+        assert assessment.verification_level == "semantic"
+    else:
+        assert assessment.capability_tier == "level_a_core"
+        assert assessment.verification_level == "semantic"
 
 
 def test_asa_is_never_semantic_even_for_recognized_commands():

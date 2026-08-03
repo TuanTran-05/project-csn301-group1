@@ -25,6 +25,14 @@ def build_verification_plan(assessment, requested_commands, device):
             interface = item.data["interface"]
             commands = [f"show interfaces {interface} switchport", "show interfaces trunk"]
             return [{"id": f"trunk_port:{interface}", "label": f"Trunk port {interface}", "strategy": "trunk_port", "commands": commands, "required": True, "sensitive": False, "expectation": item.to_dict()}]
+        if item.family in {"interface_description", "interface_admin_state", "interface_ipv4"}:
+            interface = item.data["interface"]
+            command = f"show running-config interface {interface}" if item.family == "interface_description" else "show ip interface brief"
+            return [{"id": f"{item.family}:{interface}", "label": f"{item.family} {interface}", "strategy": item.family, "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command), "expectation": item.to_dict()}]
+        if item.family == "static_route":
+            return [{"id": "route:" + str(item.data.get("network")), "label": "Static route", "strategy": "static_route", "commands": ["show ip route"], "required": True, "sensitive": False, "expectation": item.to_dict()}]
+        if item.family == "save_config":
+            return [{"id": "save:startup-config", "label": "Startup configuration", "strategy": "save_config", "commands": ["show startup-config"], "required": True, "sensitive": True, "expectation": item.to_dict()}]
     commands = requested or ["show running-config"]
     return [{"id": "generic:" + command.casefold().replace(" ", "-"), "label": command, "strategy": "generic", "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command)} for command in commands]
 
@@ -87,6 +95,30 @@ def run_verification(change, client):
                 expected_vlans = set(expected.get("allowed_vlans", []))
                 passed = bool(target and target.get("administrative_mode") == "trunk" and trunk and trunk.get("status") == "trunking" and set(target.get("allowed_vlans", [])) == expected_vlans and set(trunk.get("allowed_vlans", [])) == expected_vlans)
             details = ["Switchport expectation satisfied."] if passed else ["Switchport expectation was not satisfied."]
+        elif check.get("strategy") == "interface_description":
+            from ..parsers import extract_interface_stanza
+            expected = check["expectation"]["data"].get("description")
+            stanza = extract_interface_stanza(output, check["expectation"]["data"]["interface"])
+            desired = (f" description {expected}" if expected is not None else " no description")
+            passed = desired in stanza
+            details = ["Interface description expectation satisfied."] if passed else ["Interface description expectation was not satisfied."]
+        elif check.get("strategy") in {"interface_admin_state", "interface_ipv4"}:
+            from ..parsers import parse_ip_interface_brief
+            expected = check["expectation"]["data"]
+            rows = parse_ip_interface_brief(output)
+            target = next((r for r in rows if r.get("interface", "").casefold().endswith(expected.get("interface", "").casefold())), None)
+            if check.get("strategy") == "interface_admin_state":
+                actual_enabled = bool(target) and target.get("status", "").casefold() != "administratively down"
+                passed = actual_enabled == bool(expected.get("enabled"))
+            else:
+                passed = bool(target) and (expected.get("address") in str(target.get("ip_address")))
+            details = ["Interface expectation satisfied."] if passed else ["Interface expectation was not satisfied."]
+        elif check.get("strategy") == "static_route":
+            from ..parsers import parse_ip_routes
+            expected = check["expectation"]["data"]
+            rows = parse_ip_routes(output)
+            passed = any(str(expected.get("network")) == str(row.get("network")) for row in rows)
+            details = ["Route expectation satisfied."] if passed else ["Route expectation was not satisfied."]
         if check.get("required", True) and not passed:
             all_passed = False
         row = {"label": check.get("label", check["id"]), "passed": passed, "required": check.get("required", True), "semantic": check.get("strategy") != "generic", "redacted": bool(check.get("sensitive")), "output": "" if check.get("sensitive") else output, "details": details}

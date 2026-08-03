@@ -310,8 +310,9 @@ def prepare_change(
     canonical = _wrap(body) if execution_mode == "config" else body
     assessment = assess_change(body, execution_mode, device.device_type)
 
-    requested_verification = _validate_verification(verification_commands, device) if verification_commands else []
-    if execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS:
+    backend_save = execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS
+    requested_verification = [] if backend_save else (_validate_verification(verification_commands, device) if verification_commands else [])
+    if backend_save:
         verification = ["show startup-config"]
     else:
         plan = build_verification_plan(assessment, requested_verification, device)
@@ -337,7 +338,11 @@ def prepare_change(
         operation_families=list(assessment.operation_families),
         operation_expectations=[item.to_dict() for item in assessment.expectations],
         verification_plan=plan,
-        rollback_guidance=[],
+        rollback_guidance=[
+            "Apply rollback_commands manually if verification fails."
+            if assessment.capability_tier == "best_effort"
+            else "Rollback guidance is derived from the recognized operation family."
+        ],
         risk_level=classify_risk(canonical, device, requires_confirmation),
         requires_confirmation=requires_confirmation,
         status="pending_approval",
