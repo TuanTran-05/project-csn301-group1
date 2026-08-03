@@ -64,6 +64,13 @@ def _ipv4_command(verb: str) -> Callable[[str], bool]:
 
     return matcher
 
+def _switchport_detail(command: str) -> bool:
+    from ..parsers.switchports import normalize_interface_name
+    match = re.fullmatch(r"show interfaces (\S+) switchport", command, re.I)
+    if not match: return False
+    try: normalize_interface_name(match.group(1)); return True
+    except ValueError: return False
+
 
 @dataclass(frozen=True)
 class CommandRule:
@@ -92,6 +99,9 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         _exact("show interfaces status"),
         description="Switchport status",
     ),
+    CommandRule("show interfaces <interface> switchport", _switchport_detail, SWITCHING_ROLES, "Switchport detail"),
+    CommandRule("show interfaces trunk", _exact("show interfaces trunk"), SWITCHING_ROLES, "Trunk state"),
+    CommandRule("show ip dhcp pool", _exact("show ip dhcp pool"), ROUTING_ROLES, "DHCP pools"),
     CommandRule(
         "show vlan brief",
         _exact("show vlan brief"),

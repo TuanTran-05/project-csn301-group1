@@ -25,6 +25,7 @@ def commands_for_role(role: str) -> list[str]:
         commands.append("show ip ospf neighbor")
     if role in SWITCHING_ROLES:
         commands.append("show vlan brief")
+        commands.append("show interfaces trunk")
     return commands
 
 

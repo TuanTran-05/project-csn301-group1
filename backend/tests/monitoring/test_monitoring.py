@@ -52,6 +52,7 @@ def test_distribution_polls_both_ospf_and_vlans():
         "show ip route",
         "show ip ospf neighbor",
         "show vlan brief",
+        "show interfaces trunk",
     ]
 
 
@@ -125,6 +126,7 @@ def test_poll_runs_the_commands_for_the_device_role(app, access_switch, ssh_fact
         "show ip interface brief",
         "show ip route",
         "show vlan brief",
+        "show interfaces trunk",
     ]
 
 
