@@ -27,7 +27,7 @@
 
 ## Kiểm thử và tái lập
 
-- Automated gate: **671 passed** in 103.19 seconds (`pytest -q`).
+- Automated gate: **674 passed** in 122.22 seconds (`pytest -q`).
 - Migration round-trip: upgrade → downgrade `1d6734caee3b` → upgrade; final head `6f2a1c8d90be`.
 - Fake corpus run: 50 cases, structured validity 1.0, unsafe SSH 0.
 
