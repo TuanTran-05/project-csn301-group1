@@ -27,6 +27,7 @@ CORE_FAMILIES = frozenset(
     }
 )
 ENABLED_SEMANTIC_FAMILIES = frozenset({"vlan", "access_port", "trunk_port", "interface_description", "interface_admin_state", "interface_ipv4", "static_route", "save_config"})
+EXTENDED_FAMILIES = frozenset({"ipv4_acl", "ios_dhcp_pool", "single_area_ospf"})
 
 
 @dataclass(frozen=True)
@@ -251,6 +252,40 @@ def _parse_save(commands: list[str], execution_mode: str) -> OperationExpectatio
         "save_config", canonical_command="copy running-config startup-config"
     )
 
+def _parse_acl(commands):
+    if len(commands) < 4: return None
+    m=_fullmatch(r"ip access-list standard (\S+)",commands[0])
+    attach=_fullmatch(r"interface (\S+)",commands[-2]); group=_fullmatch(r"ip access-group (\S+) (in|out)",commands[-1])
+    if not (m and attach and group and group.group(1).casefold()==m.group(1).casefold()): return None
+    rules=[]
+    for cmd in commands[1:-2]:
+        r=_fullmatch(r"(permit|deny) (any|host \S+|\S+ \S+)",cmd)
+        if not r: return None
+        rules.append(cmd)
+    return _expectation("ipv4_acl",name=m.group(1),rules=rules,interface=attach.group(1),direction=group.group(2))
+
+def _parse_dhcp(commands):
+    if len(commands)<3: return None
+    pool=_fullmatch(r"ip dhcp pool (\S+)",commands[1]); net=_fullmatch(r"network (\S+) (\S+)",commands[2]); router=next((x for x in commands if _fullmatch(r"default-router \S+",x)),None)
+    if not (pool and net and router): return None
+    return _expectation("ios_dhcp_pool",pool=pool.group(1),network=net.group(1),default_routers=router.split()[1:])
+
+def _parse_ospf(commands):
+    if len(commands)<2: return None
+    proc=_fullmatch(r"router ospf (\d+)",commands[0]);
+    if not proc or any(_keyword(c).startswith(("redistribute","authentication","default-information")) for c in commands): return None
+    networks=[]; passive=[]
+    for cmd in commands[1:]:
+        m=_fullmatch(r"network (\S+) (\S+) area 0",cmd)
+        if m: networks.append({"address":m.group(1),"wildcard":m.group(2),"area":0}); continue
+        m=_fullmatch(r"passive-interface (\S+)",cmd)
+        if m: passive.append(m.group(1)); continue
+        m=_fullmatch(r"router-id (\S+)",cmd)
+        if m: continue
+        return None
+    if not networks and not passive and not any(_keyword(c).startswith("router-id") for c in commands[1:]): return None
+    return _expectation("single_area_ospf",process_id=int(proc.group(1)),networks=networks,passive_interfaces=passive)
+
 
 def _strip_wrappers(commands: list[str]) -> list[str] | None:
     normalized = [_normalized(command) for command in commands]
@@ -273,6 +308,9 @@ def recognize_change(
 
     parsers = (
         lambda values: _parse_save(values, execution_mode),
+        _parse_acl,
+        _parse_dhcp,
+        _parse_ospf,
         _parse_vlan,
         _parse_access_port,
         _parse_trunk_port,
@@ -297,7 +335,9 @@ def assess_change(
         device_type != "cisco_ios"
         or not expectations
         or unmatched
-        or not families.issubset(ENABLED_SEMANTIC_FAMILIES)
+        or not families.issubset(ENABLED_SEMANTIC_FAMILIES | EXTENDED_FAMILIES)
     ):
         return CapabilityAssessment("best_effort", "best_effort", ())
+    if families.issubset(EXTENDED_FAMILIES):
+        return CapabilityAssessment("level_a_extended", "semantic", expectations)
     return CapabilityAssessment("level_a_core", "semantic", expectations)

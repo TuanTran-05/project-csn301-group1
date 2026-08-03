@@ -33,6 +33,12 @@ def build_verification_plan(assessment, requested_commands, device):
             return [{"id": "route:" + str(item.data.get("network")), "label": "Static route", "strategy": "static_route", "commands": ["show ip route"], "required": True, "sensitive": False, "expectation": item.to_dict()}]
         if item.family == "save_config":
             return [{"id": "save:startup-config", "label": "Startup configuration", "strategy": "save_config", "commands": ["show startup-config"], "required": True, "sensitive": True, "expectation": item.to_dict()}]
+        if item.family == "ipv4_acl":
+            data=item.data; return [{"id":"acl:"+str(data["name"]),"label":"IPv4 ACL","strategy":"ipv4_acl","commands":["show access-lists",f"show running-config interface {data['interface']}"],"required":True,"sensitive":True,"expectation":item.to_dict()}]
+        if item.family == "ios_dhcp_pool":
+            return [{"id":"dhcp:"+str(item.data["pool"]),"label":"DHCP pool","strategy":"ios_dhcp_pool","commands":["show ip dhcp pool"],"required":True,"sensitive":False,"expectation":item.to_dict()}]
+        if item.family == "single_area_ospf":
+            return [{"id":"ospf:"+str(item.data["process_id"]),"label":"OSPF configuration","strategy":"single_area_ospf","commands":["show running-config | section ^router ospf"],"required":True,"sensitive":True,"expectation":item.to_dict()}]
     commands = requested or ["show running-config"]
     return [{"id": "generic:" + command.casefold().replace(" ", "-"), "label": command, "strategy": "generic", "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command)} for command in commands]
 

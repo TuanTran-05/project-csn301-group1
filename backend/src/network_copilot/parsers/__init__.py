@@ -6,6 +6,8 @@ from .routes import parse_ip_routes
 from .vlans import parse_vlan_brief
 from .switchports import normalize_interface_name, normalize_vlan_set, parse_switchport_detail, parse_interfaces_trunk
 from .config import extract_interface_stanza, normalize_ios_config
+from .acls import parse_access_lists
+from .dhcp import parse_ip_dhcp_pool
 
 # Maps a normalised command to the parser that understands its output.
 PARSERS = {
@@ -14,6 +16,8 @@ PARSERS = {
     "show ip route": parse_ip_routes,
     "show ip ospf neighbor": parse_ospf_neighbors,
     "show interfaces trunk": parse_interfaces_trunk,
+    "show access-lists": parse_access_lists,
+    "show ip dhcp pool": parse_ip_dhcp_pool,
 }
 
 PARAMETERIZED_PARSERS = ((re.compile(r"^show interfaces [A-Za-z][A-Za-z-]*\d[\d/.:]* switchport$", re.I), parse_switchport_detail),)
@@ -48,5 +52,6 @@ __all__ = [
     "parse_vlan_brief",
     "normalize_interface_name", "normalize_vlan_set", "parse_switchport_detail", "parse_interfaces_trunk",
     "extract_interface_stanza", "normalize_ios_config",
+    "parse_access_lists", "parse_ip_dhcp_pool",
 ]
 import re
