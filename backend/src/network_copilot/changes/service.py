@@ -29,6 +29,7 @@ from ..errors import (
     ValidationError,
 )
 from ..extensions import db
+from .capabilities import assess_change
 from .model import ChangeBatch, ChangeRequest
 
 logger = logging.getLogger(__name__)
@@ -300,6 +301,7 @@ def prepare_change(
         )
 
     canonical = _wrap(body) if execution_mode == "config" else body
+    assessment = assess_change(body, execution_mode, device.device_type)
 
     # The backend-only "show startup-config" verifier is derived internally
     # and never appears on the AI-advertised read-only allowlist, so a
@@ -327,6 +329,12 @@ def prepare_change(
         verification_commands=verification,
         rollback_commands=derive_rollback_commands(canonical),
         warnings=build_warnings(canonical, device, requires_confirmation),
+        capability_tier=assessment.capability_tier,
+        verification_level=assessment.verification_level,
+        operation_families=list(assessment.operation_families),
+        operation_expectations=[item.to_dict() for item in assessment.expectations],
+        verification_plan=[],
+        rollback_guidance=[],
         risk_level=classify_risk(canonical, device, requires_confirmation),
         requires_confirmation=requires_confirmation,
         status="pending_approval",

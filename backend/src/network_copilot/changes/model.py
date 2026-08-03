@@ -124,6 +124,17 @@ class ChangeRequest(db.Model):
     rollback_commands = db.Column(db.JSON, nullable=False, default=list)
     warnings = db.Column(db.JSON, nullable=False, default=list)
 
+    capability_tier = db.Column(
+        db.String(32), nullable=False, default="best_effort", server_default="best_effort"
+    )
+    verification_level = db.Column(
+        db.String(32), nullable=False, default="best_effort", server_default="best_effort"
+    )
+    operation_families = db.Column(db.JSON, nullable=False, default=list)
+    operation_expectations = db.Column(db.JSON, nullable=False, default=list)
+    verification_plan = db.Column(db.JSON, nullable=False, default=list)
+    rollback_guidance = db.Column(db.JSON, nullable=False, default=list)
+
     risk_level = db.Column(db.String(16), nullable=False, default="low")
     status = db.Column(db.String(32), nullable=False, default="pending_approval")
     source = db.Column(db.String(16), nullable=False, default="api")
@@ -178,6 +189,12 @@ class ChangeRequest(db.Model):
             "verification_commands": self.verification_commands or [],
             "rollback_commands": self.rollback_commands or [],
             "warnings": self.warnings or [],
+            "capability_tier": self.capability_tier,
+            "verification_level": self.verification_level,
+            "operation_families": self.operation_families or [],
+            "operation_expectations": self.operation_expectations or [],
+            "verification_plan": self.verification_plan or [],
+            "rollback_guidance": self.rollback_guidance or [],
             "requested_by_id": self.requested_by_id,
             "approved_by_id": self.approved_by_id,
             "batch_id": self.batch_id,

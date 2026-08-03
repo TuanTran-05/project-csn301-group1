@@ -89,6 +89,21 @@ def test_ai_has_full_authority_over_commands_not_previously_supported(
     assert change.requires_confirmation is False
 
 
+def test_existing_preview_payload_keeps_legacy_fields_and_new_snapshot_defaults(
+    client, admin_headers, access_switch
+):
+    response = client.post(
+        "/api/changes/preview",
+        headers=admin_headers,
+        json={"device_id": access_switch.id, "commands": ["hostname LAB-SW"]},
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["commands"] == ["configure terminal", "hostname LAB-SW", "end"]
+    assert body["capability_tier"] == "best_effort"
+    assert body["verification_level"] == "best_effort"
+
+
 # -- dangerous commands require confirmation, they are not blocked --------
 
 
