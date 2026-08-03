@@ -55,7 +55,7 @@ def serialize_verification_evidence(plan, legacy_commands, evidence):
     safe = {}
     for key, value in data.items():
         row = dict(value) if isinstance(value, dict) else {"output": value}
-        sensitive = key in sensitive_ids or bool(row.get("redacted")) or is_sensitive_verification_command(row.get("label", key))
+        sensitive = (not plan and bool(sensitive_ids)) or key in sensitive_ids or bool(row.get("redacted")) or is_sensitive_verification_command(row.get("label", key))
         if sensitive:
             row["output"] = ""
             row["redacted"] = True

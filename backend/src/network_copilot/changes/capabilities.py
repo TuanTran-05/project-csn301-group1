@@ -253,7 +253,12 @@ def _parse_save(commands: list[str], execution_mode: str) -> OperationExpectatio
     )
 
 def _parse_acl(commands):
-    if len(commands) < 4: return None
+    if len(commands) < 3: return None
+    numbered = _fullmatch(r"access-list (\d+) (permit|deny) (.+)", commands[0])
+    if numbered and len(commands) == 3:
+        attach=_fullmatch(r"interface (\S+)",commands[1]); group=_fullmatch(r"ip access-group (\d+) (in|out)",commands[2])
+        if attach and group and group.group(1)==numbered.group(1):
+            return _expectation("ipv4_acl",name=numbered.group(1),rules=[" ".join(numbered.groups()[1:])],interface=attach.group(1),direction=group.group(2))
     m=_fullmatch(r"ip access-list standard (\S+)",commands[0])
     attach=_fullmatch(r"interface (\S+)",commands[-2]); group=_fullmatch(r"ip access-group (\S+) (in|out)",commands[-1])
     if not (m and attach and group and group.group(1).casefold()==m.group(1).casefold()): return None
