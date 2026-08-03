@@ -39,7 +39,7 @@ def parse_interfaces_trunk(raw: str) -> list[dict]:
     rows=[]
     for line in raw.splitlines():
         parts=line.split()
-        if len(parts) >= 5 and parts[1] == "on":
-            try: rows.append({"interface": normalize_interface_name(parts[0]), "status": parts[2].casefold(), "allowed_vlans": normalize_vlan_set(parts[-1])})
+        if len(parts) >= 6 and parts[1] == "on":
+            try: rows.append({"interface": normalize_interface_name(parts[0]), "status": parts[3].casefold(), "allowed_vlans": normalize_vlan_set(" ".join(parts[5:]))})
             except ValueError: pass
     return rows
