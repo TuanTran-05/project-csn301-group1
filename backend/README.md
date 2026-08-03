@@ -379,3 +379,17 @@ distribution devices, and VLANs on access and distribution ones.
 
 The workflow and credential-redaction surfaces are covered end to end by
 `tests/e2e/test_complete_flow.py`.
+
+## AI configuration capability status
+
+The current course scope provides frozen semantic verification for VLAN,
+access/trunk switchports, interface description/admin/IPv4, static routes and
+configuration save operations. Bounded standard ACL, IOS DHCP-pool and
+single-area OSPF recognizers are available as extended capabilities and still
+require reviewed live-lab evidence before being claimed as production-ready.
+Full NAT, advanced dynamic routing, ASA configuration, multi-vendor support,
+auto-discovery, automatic rollback and production orchestration remain
+Preview-only/out of scope.
+
+See [`docs/evidence/2026-08-03-ai-network-copilot-evaluation.md`](../docs/evidence/2026-08-03-ai-network-copilot-evaluation.md)
+for the evidence-based status and reproducible commands.
