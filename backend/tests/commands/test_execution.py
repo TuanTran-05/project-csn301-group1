@@ -1,4 +1,9 @@
+import pytest
+
 from network_copilot.commands.model import CommandExecution
+from network_copilot.extensions import db
+from network_copilot.commands.service import execute_readonly
+from network_copilot.errors import PolicyViolationError
 from network_copilot.extensions import db
 
 IFACE_OUTPUT = """Interface              IP-Address      OK? Method Status                Protocol
@@ -65,6 +70,21 @@ def test_blocked_command_is_recorded(client, admin_headers, device, ssh_factory)
     record = db.session.query(CommandExecution).one()
     assert record.status == "blocked"
     assert record.command == "reload"
+
+
+def test_ai_source_blocks_running_config_before_ssh(app, device, ssh_factory):
+    with app.app_context():
+        with pytest.raises(PolicyViolationError):
+            execute_readonly(
+                device_id=device.id,
+                command="show running-config",
+                source="ai",
+            )
+
+        record = db.session.query(CommandExecution).one()
+        assert record.status == "blocked"
+        assert record.source == "ai"
+        assert ssh_factory.clients == {}
 
 
 def test_execution_is_persisted_with_context(

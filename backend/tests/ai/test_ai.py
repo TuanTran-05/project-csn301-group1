@@ -645,6 +645,31 @@ def test_full_running_config_is_never_sent_to_the_model(
     assert "show running-config" not in provider.everything_sent()
 
 
+def test_ai_generated_running_config_is_blocked_before_ssh_and_explanation(
+    app, dist_switch, admin_user, ssh_factory
+):
+    service, provider = service_with(
+        app,
+        {
+            "intent": "troubleshoot",
+            "operations": [{
+                "device_hostnames": ["DIST-SW1"],
+                "execution_mode": "exec",
+                "commands": ["show running-config"],
+                "verification_commands": [],
+            }],
+            "explanation": "Inspecting the full configuration.",
+        },
+    )
+
+    with pytest.raises(PolicyViolationError):
+        service.handle("Kiem tra toan bo cau hinh", admin_user.id)
+
+    assert ssh_factory.clients == {}
+    assert provider.calls == 1
+    assert all(prompt.get("mode") != "explain" for prompt in provider.prompts)
+
+
 # -- troubleshooting ------------------------------------------------------
 
 

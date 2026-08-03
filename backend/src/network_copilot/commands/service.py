@@ -13,7 +13,7 @@ from ..extensions import db
 from ..ssh.client import build_client_for_device
 from ..ssh.exceptions import SSHError
 from .model import CommandExecution
-from .policy import CommandDecision, default_policy
+from .policy import CommandDecision, default_policy, policy_for_source
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def execute_readonly(
     # Raises NotFoundError when the device does not exist.
     device = device_service.get_device(device_id)
 
-    decision = default_policy.evaluate(command, device.role)
+    decision = policy_for_source(source).evaluate(command, device.role)
     if not decision.allowed:
         _record(
             device_id=device.id,

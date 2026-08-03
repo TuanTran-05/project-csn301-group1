@@ -203,3 +203,39 @@ class CommandPolicy:
 
 
 default_policy = CommandPolicy()
+
+AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config"})
+AI_SAFE_READ_ONLY_RULES = tuple(
+    rule for rule in READ_ONLY_RULES if rule.name not in AI_EXCLUDED_RULE_NAMES
+)
+
+
+class AIAwareCommandPolicy(CommandPolicy):
+    """Read-only policy with explicit protection for configuration dumps.
+
+    The operator/API policy intentionally keeps ``show running-config`` for
+    trusted backup and verification paths. AI-originated reads use this
+    separate policy so hiding a command from prompt context is not mistaken
+    for enforcement.
+    """
+
+    def evaluate(self, command, device_role: str) -> CommandDecision:
+        if isinstance(command, str):
+            normalized = self.normalize(command)
+            if normalized in AI_EXCLUDED_RULE_NAMES:
+                return CommandDecision(
+                    allowed=False,
+                    normalized_command=normalized,
+                    reason=(
+                        "Command is blocked by the AI-safe read-only policy: "
+                        "full configuration output cannot be sent to the model."
+                    ),
+                )
+        return super().evaluate(command, device_role)
+
+
+ai_policy = AIAwareCommandPolicy(AI_SAFE_READ_ONLY_RULES)
+
+
+def policy_for_source(source: str) -> CommandPolicy:
+    return ai_policy if source == "ai" else default_policy

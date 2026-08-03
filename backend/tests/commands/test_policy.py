@@ -1,6 +1,11 @@
 import pytest
 
-from network_copilot.commands.policy import CommandDecision, CommandPolicy
+from network_copilot.commands.policy import (
+    CommandDecision,
+    CommandPolicy,
+    ai_policy,
+    default_policy,
+)
 
 policy = CommandPolicy()
 
@@ -93,6 +98,24 @@ def test_traceroute_requires_a_valid_ipv4_address():
 
 def test_show_running_config_is_allowed_for_backups():
     assert policy.evaluate("show running-config", "core").allowed is True
+
+
+def test_running_config_is_operator_allowed_but_ai_denied():
+    assert default_policy.evaluate("show running-config", "access").allowed is True
+    decision = ai_policy.evaluate("show running-config", "access")
+    assert decision.allowed is False
+    assert "AI-safe" in decision.reason
+
+
+def test_startup_config_is_never_ai_safe():
+    assert ai_policy.evaluate("show startup-config", "access").allowed is False
+
+
+def test_every_ai_advertised_rule_is_ai_executable():
+    for rule in ai_policy.rules:
+        assert ai_policy.evaluate(rule.name, "core").allowed or (
+            "<ipv4>" in rule.name or "<interface>" in rule.name
+        )
 
 
 def test_chained_commands_are_blocked():

@@ -23,7 +23,7 @@ from ..chat import service as chat_service
 from ..changes import batch_service
 from ..changes.batch_service import BatchOperation
 from ..commands import service as command_service
-from ..commands.policy import default_policy
+from ..commands.policy import ai_policy
 from ..devices import service as device_service
 from ..devices.model import Device
 from ..errors import ForbiddenError, PolicyViolationError, ValidationError
@@ -33,10 +33,6 @@ from .provider import build_provider
 from .schemas import AIAction, AIOperation, build_ai_action_schema
 
 logger = logging.getLogger(__name__)
-
-# Never advertise this to the model: a full config dump is exactly the kind of
-# sensitive payload that must not leave the backend.
-CONTEXT_EXCLUDED_COMMANDS = {"show running-config"}
 
 SYSTEM_PROMPT = """You are a network operations assistant for a Cisco lab.
 
@@ -117,11 +113,7 @@ class AIService:
         """Safe lab context; per-session conversation is added by interpret()."""
         devices = db.session.query(Device).order_by(Device.hostname).all()
         commands = sorted(
-            {
-                rule.name
-                for rule in default_policy.rules
-                if rule.name not in CONTEXT_EXCLUDED_COMMANDS
-            }
+            rule.name for rule in ai_policy.rules
         )
         return {
             "devices": [
@@ -290,7 +282,7 @@ class AIService:
         user_id: int | None,
     ) -> None:
         for command in operation.commands:
-            decision = default_policy.evaluate(command, device.role)
+            decision = ai_policy.evaluate(command, device.role)
             if not decision.allowed:
                 self._block(decision.reason, action, operation, device, user_id)
 
