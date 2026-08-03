@@ -53,6 +53,7 @@ def test_distribution_polls_both_ospf_and_vlans():
         "show ip ospf neighbor",
         "show vlan brief",
         "show interfaces trunk",
+        "show ip dhcp pool",
     ]
 
 

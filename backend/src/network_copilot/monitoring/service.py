@@ -23,6 +23,7 @@ def commands_for_role(role: str) -> list[str]:
     commands = list(BASE_COMMANDS)
     if role in ROUTING_ROLES:
         commands.append("show ip ospf neighbor")
+        commands.append("show ip dhcp pool")
     if role in SWITCHING_ROLES:
         commands.append("show vlan brief")
         commands.append("show interfaces trunk")
