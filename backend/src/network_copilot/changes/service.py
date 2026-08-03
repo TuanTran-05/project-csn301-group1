@@ -38,6 +38,7 @@ from .verification import (
     serialize_verification_evidence,
 )
 from .model import ChangeBatch, ChangeRequest
+from .rollback import build_rollback_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,8 @@ def validate_commands(commands: list[str], device: Device) -> tuple[list[str], b
             if _dangerous_reason(command) is not None:
                 requires_confirmation = True
             if _touches_system_vlan(command) is not None:
+                requires_confirmation = True
+            if re.match(r"^ip\s+access-group\s+\S+\s+(?:in|out)$", command, re.I):
                 requires_confirmation = True
 
         canonical.append(command)
@@ -338,11 +341,7 @@ def prepare_change(
         operation_families=list(assessment.operation_families),
         operation_expectations=[item.to_dict() for item in assessment.expectations],
         verification_plan=plan,
-        rollback_guidance=[
-            "Apply rollback_commands manually if verification fails."
-            if assessment.capability_tier == "best_effort"
-            else "Rollback guidance is derived from the recognized operation family."
-        ],
+        rollback_guidance=build_rollback_guidance(assessment, canonical),
         risk_level=classify_risk(canonical, device, requires_confirmation),
         requires_confirmation=requires_confirmation,
         status="pending_approval",
