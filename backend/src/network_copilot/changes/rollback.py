@@ -7,7 +7,7 @@ def build_rollback_guidance(assessment, commands):
     if family == "ios_dhcp_pool":
         return ["Compare the pre-change backup DHCP section before considering no ip dhcp pool."]
     if family == "single_area_ospf":
-        return ["Restore the saved router ospf section; do not infer prior process state."]
+        return ["Restore the saved router ospf section from the pre-change backup; do not infer prior process state."]
     if assessment.capability_tier == "best_effort":
         return ["Apply rollback_commands manually only after reviewing the pre-change backup."]
     return ["Review rollback_commands and the pre-change backup before manual recovery."]

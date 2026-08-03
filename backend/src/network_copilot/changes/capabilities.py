@@ -272,7 +272,9 @@ def _parse_acl(commands):
 
 def _parse_dhcp(commands):
     if len(commands)<3: return None
-    pool=_fullmatch(r"ip dhcp pool (\S+)",commands[1]); net=_fullmatch(r"network (\S+) (\S+)",commands[2]); router=next((x for x in commands if _fullmatch(r"default-router \S+",x)),None)
+    pool=next((m for m in (_fullmatch(r"ip dhcp pool (\S+)", c) for c in commands) if m),None)
+    net=next((m for m in (_fullmatch(r"network (\S+) (\S+)", c) for c in commands) if m),None)
+    router=next((x for x in commands if _fullmatch(r"default-router(?:\s+\S+)+",x)),None)
     if not (pool and net and router): return None
     return _expectation("ios_dhcp_pool",pool=pool.group(1),network=net.group(1),default_routers=router.split()[1:])
 
