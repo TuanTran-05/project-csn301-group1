@@ -131,7 +131,8 @@ def run_verification(change, client):
             from ..parsers import parse_ip_routes
             expected = check["expectation"]["data"]
             rows = parse_ip_routes(output)
-            passed = any(str(expected.get("network")) == str(row.get("network")) for row in rows)
+            expected_network = f"{expected.get('network')}/{expected.get('prefix_length')}"
+            passed = any(str(expected_network) == str(row.get("network")) and (not expected.get("next_hop") or expected.get("next_hop") == row.get("next_hop")) for row in rows)
             details = ["Route expectation satisfied."] if passed else ["Route expectation was not satisfied."]
         elif check.get("strategy") == "ipv4_acl":
             from ..parsers import parse_access_lists, extract_interface_stanza

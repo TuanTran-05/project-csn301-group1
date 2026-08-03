@@ -238,6 +238,7 @@ def _parse_static_route(commands: list[str]) -> OperationExpectation | None:
     return _expectation(
         "static_route",
         network=str(network.network_address),
+        prefix_length=prefix_length,
         next_hop=str(next_hop),
         present=not bool(match.group(1)),
     )
