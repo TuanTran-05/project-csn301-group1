@@ -1,0 +1,1 @@
+{"type":"object","required":["name","devices","extension_mode"],"properties":{"name":{"type":"string"},"devices":{"type":"array","items":{"type":"string"}},"extension_mode":{"enum":["none","dhcp","acl","ospf"]}}}
