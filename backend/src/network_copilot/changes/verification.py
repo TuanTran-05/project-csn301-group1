@@ -125,6 +125,36 @@ def run_verification(change, client):
             rows = parse_ip_routes(output)
             passed = any(str(expected.get("network")) == str(row.get("network")) for row in rows)
             details = ["Route expectation satisfied."] if passed else ["Route expectation was not satisfied."]
+        elif check.get("strategy") == "ipv4_acl":
+            from ..parsers import parse_access_lists, extract_interface_stanza
+            expected = check["expectation"]["data"]
+            lists = parse_access_lists(outputs[0])
+            acl = next((row for row in lists if row.get("name", "").casefold() == str(expected.get("name")).casefold()), None)
+            stanza = extract_interface_stanza(outputs[1], expected["interface"])
+            attachment = f" ip access-group {expected['name']} {expected['direction']}"
+            actual_rules = []
+            if acl:
+                for rule in acl.get("rules", []):
+                    source = rule["source"] if rule["wildcard"] is None else f"{rule['source']} {rule['wildcard']}"
+                    actual_rules.append(f"{rule['action']} {source}".casefold())
+            expected_rules = [str(rule).casefold() for rule in expected.get("rules", [])]
+            passed = bool(acl and actual_rules == expected_rules and attachment.casefold() in [line.casefold() for line in stanza])
+            details = ["Standard ACL definition and attachment satisfied."] if passed else ["ACL definition or interface attachment was not satisfied."]
+        elif check.get("strategy") == "ios_dhcp_pool":
+            from ..parsers import parse_ip_dhcp_pool
+            expected = check["expectation"]["data"]
+            rows = parse_ip_dhcp_pool(output)
+            pool = next((row for row in rows if row.get("name", "").casefold() == str(expected.get("pool")).casefold()), None)
+            passed = bool(pool and (not pool.get("network") or str(expected.get("network")) in str(pool.get("network"))))
+            details = ["DHCP pool was observed."] if passed else ["DHCP pool expectation was not satisfied."]
+        elif check.get("strategy") == "single_area_ospf":
+            expected = check["expectation"]["data"]
+            lines = [line.strip().casefold() for line in output.splitlines()]
+            process = f"router ospf {expected['process_id']}".casefold()
+            networks_ok = all(f"network {item['address']} {item['wildcard']} area 0".casefold() in lines for item in expected.get("networks", []))
+            passive_ok = all(f"passive-interface {interface}".casefold() in lines for interface in expected.get("passive_interfaces", []))
+            passed = process in lines and networks_ok and passive_ok
+            details = ["Single-area OSPF configuration satisfied."] if passed else ["OSPF configuration expectation was not satisfied."]
         if check.get("required", True) and not passed:
             all_passed = False
         row = {"label": check.get("label", check["id"]), "passed": passed, "required": check.get("required", True), "semantic": check.get("strategy") != "generic", "redacted": bool(check.get("sensitive")), "output": "" if check.get("sensitive") else output, "details": details}
