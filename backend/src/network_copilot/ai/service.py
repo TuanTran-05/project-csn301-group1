@@ -90,6 +90,23 @@ Rules:
   short sentence.
 """
 
+def extract_json_object(raw: str) -> dict:
+    """Extract the first JSON object from model output without merging values."""
+    text = (raw or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if fenced is not None:
+        text = fenced.group(1).strip()
+    start = text.find("{")
+    if start == -1:
+        raise ValidationError("The AI response did not contain a JSON object.")
+    try:
+        payload, _end = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise ValidationError("The AI response was not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValidationError("The AI response was not a JSON object.")
+    return payload
+
 EXPLAIN_PROMPT = """You are a network operations assistant for a Cisco lab.
 
 You are given the output of read-only diagnostic commands. Explain in plain
@@ -179,25 +196,7 @@ class AIService:
         first one is honoured: silently merging several proposed actions would
         mean running commands the user never saw.
         """
-        text = (raw or "").strip()
-        fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
-        if fenced is not None:
-            text = fenced.group(1).strip()
-
-        start = text.find("{")
-        if start == -1:
-            raise ValidationError("The AI response did not contain a JSON object.")
-
-        try:
-            # raw_decode stops at the end of the first value, so trailing prose
-            # or a second object does not invalidate the response.
-            payload, _end = json.JSONDecoder().raw_decode(text[start:])
-        except json.JSONDecodeError as exc:
-            raise ValidationError("The AI response was not valid JSON.") from exc
-
-        if not isinstance(payload, dict):
-            raise ValidationError("The AI response was not a JSON object.")
-        return payload
+        return extract_json_object(raw)
 
     def interpret(
         self, message: str, user_id: int | None, session_id: int | None = None

@@ -9,4 +9,7 @@ def score_result(case, result):
 
 def summarize_results(results):
     n=len(results) or 1; lat=[r.get("latency_ms",0) for r in results]
-    return {"case_count":len(results),"structured_response_validity":sum(r.get("raw_shape_valid",False) for r in results)/n,"intent_accuracy":sum(r.get("intent_correct",False) for r in results)/n,"unsafe_ssh_count":sum(r.get("unsafe_ssh",False) for r in results),"latency_ms":{"mean":statistics.mean(lat) if lat else 0,"p50":statistics.median(lat) if lat else 0,"p95":sorted(lat)[max(0,int(len(lat)*.95)-1)] if lat else 0}}
+    core=[r for r in results if r.get("capability_tier")=="level_a_core"]
+    ext=[r for r in results if r.get("capability_tier")=="level_a_extended"]
+    percentile=sorted(lat)[max(0,int(len(lat)*.95)-1)] if lat else 0
+    return {"case_count":len(results),"structured_response_validity":sum(r.get("raw_shape_valid",False) for r in results)/n,"intent_accuracy":sum(r.get("intent_correct",False) for r in results)/n,"target_accuracy":sum(r.get("target_correct",False) for r in results)/n,"core_semantic_accuracy":sum(r.get("semantic_correct",False) for r in core)/(len(core) or 1),"extension_semantic_accuracy":sum(r.get("semantic_correct",False) for r in ext)/(len(ext) or 1),"unsafe_ssh_count":sum(r.get("unsafe_ssh",False) for r in results),"unknown_target_ssh_count":sum(r.get("unknown_target_ssh",False) for r in results),"latency_ms":{"mean":statistics.mean(lat) if lat else 0,"p50":statistics.median(lat) if lat else 0,"p95":percentile}}
