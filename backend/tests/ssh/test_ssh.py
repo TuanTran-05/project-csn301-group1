@@ -363,8 +363,12 @@ def test_run_exec_only_answers_confirm_prompt_when_authorized():
 
 
 def test_run_exec_rejects_unknown_interactive_prompt():
+    """A genuinely stuck prompt must still fail, just on the command_timeout
+    budget rather than a fixed retry count. The short timeout here keeps the
+    test fast; production uses DEFAULT_COMMAND_TIMEOUT."""
     shell = PromptingFakeShell({"custom command": "Enter arbitrary value:"})
-    client, _ = make_client(shell=shell)
+    fake = FakeParamikoClient(shell=shell)
+    client = SSHClient(TARGET, command_timeout=1, client_factory=lambda: fake)
     with pytest.raises(SSHCommandError, match="Unsupported interactive prompt"):
         client.run_exec(["custom command"], allow_confirm=True)
 
@@ -399,6 +403,38 @@ def test_run_exec_retries_draining_when_a_response_arrives_in_two_bursts():
     assert "Building configuration" in result.output
     assert "[OK]" in result.output
     assert call_count["n"] == 3
+
+
+def test_run_exec_waits_out_a_slow_nvram_write():
+    """The wait budget must be a *time* budget, not a fixed drain count.
+
+    Confirmed against IOSv in the CSN301 lab: a batch 'write memory' failed
+    on all 8 IOSv devices with "write memory\\r\\nBuilding configuration..."
+    while the ASA, which answers promptly, succeeded. _drain() returns after
+    _IDLE_SECONDS (0.2s) of quiet, so a budget of three retries gave the
+    device only ~0.6s to finish writing NVRAM - orders of magnitude short of
+    a real write. This device needs ten quiet drains before it answers.
+    """
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+
+    call_count = {"n": 0}
+
+    def slow_drain(_shell):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return "CORE-SW1#"  # login banner
+        if call_count["n"] == 2:
+            return "write memory\r\nBuilding configuration..."
+        if call_count["n"] < 12:
+            return ""  # still writing, device silent
+        return "\r\n[OK]\r\nCORE-SW1#"
+
+    client._drain = slow_drain
+
+    result = client.run_exec(["write memory"])
+
+    assert "[OK]" in result.output
 
 
 # -- secret hygiene -------------------------------------------------------
