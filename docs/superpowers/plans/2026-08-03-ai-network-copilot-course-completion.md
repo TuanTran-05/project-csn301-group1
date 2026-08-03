@@ -23,7 +23,7 @@
 - Level A Core contains exactly eight families: VLAN create/name, access port, trunk port, interface description, interface administrative state, interface IPv4 address, static/default IPv4 route, and save configuration.
 - Level A Extended contains only the bounded standard IPv4 ACL, IOS DHCP server, and single-area OSPF subsets described in the approved design spec.
 - Unknown or out-of-catalogue free-form configuration may still create an expert-review Preview but must be labelled `best_effort`; it never inherits a semantic-verification claim.
-- Interface `shutdown`, interface-IP/route removal, trunk allowed-list replacement, ACL attachment, and save configuration require typed confirmation.
+- Every normalized non-wrapper command beginning with `no ` requires typed confirmation; this deliberately includes `no shutdown` and `no description` as well as interface-IP/route removal. Interface `shutdown`, trunk allowed-list replacement, ACL attachment, save configuration, and the existing reserved-VLAN/dangerous-pattern cases also require typed confirmation. Do not narrow the existing `^no\s+` safety rule.
 - Automatic rollback is not implemented. Rollback guidance may expose an exact inverse only after the pre-change backup proves the object was newly created.
 - Normal automated tests use fake AI and SSH adapters; they never call a real model or device.
 - Do not introduce a frontend build system, task queue, new runtime service, or general Cisco grammar.
@@ -50,7 +50,7 @@ Tasks within a wave are ordered by dependency. Tasks 13–15 are reviewable sepa
 | 5 | Tasks 16–18: corpus, metrics runner, PNETLab evidence tooling | Student C: corpus/metrics; Student D: PNETLab/scripts; Students A/B review safety |
 | 6 | Task 19: real runs, failure analysis, final report and demonstration rehearsal | Whole team; one operator controls live Apply, one observer checks evidence |
 
-For a three-student team, Student C also owns the PNETLab scripts. If Wave 1 slips beyond Week 3, retain exactly one extension for live demonstration (prefer DHCP) and keep the other two `Preview-only`; do not cut safety, semantic core, corpus, or evidence tasks.
+For a three-student team, Student C also owns the PNETLab scripts. Use a hard end-of-Week-3 gate: if Task 12 is not green by that checkpoint, defer Tasks 13–15 immediately, label all three extensions `Preview-only`, and start Task 16; do not spend Week 4 rescuing an extension while the scored evaluation/report work waits. If Task 12 is green by the checkpoint but Wave 2 later exceeds its Week-4 time box, retain exactly one extension for live demonstration (prefer DHCP) and keep the other two `Preview-only`. Never cut safety, semantic core, corpus, or evidence tasks.
 
 ## File Responsibility Map
 
@@ -187,7 +187,8 @@ def _bounded_diagnostics(results: list[dict]) -> list[dict]:
     diagnostics = []
     remaining = MAX_EXPLAIN_CONTEXT_CHARS
     marker = "\n...[truncated]"
-    for item in results:
+    safe_results = redact_sensitive(results)
+    for item in safe_results:
         if remaining <= 0:
             break
         raw = str(item.get("output") or "")
@@ -197,10 +198,10 @@ def _bounded_diagnostics(results: list[dict]) -> list[dict]:
             output = raw[: max(0, limit - len(marker))] + marker[:limit]
         diagnostics.append({"command": item["command"], "output": output})
         remaining -= len(output)
-    return redact_sensitive(diagnostics)
+    return diagnostics
 ```
 
-Assert provider explanation context is at most 24,000 output characters and carries a safe truncation marker. Use this helper in `_handle_troubleshoot`; do not truncate persisted command execution evidence.
+Redaction must run on each complete diagnostic value before either the per-command slice or total-context bound. Add a boundary regression whose first raw output is `"x" * 7_950 + " password " + ("CROSS_BOUNDARY_SECRET" * 20)` and whose second output is `"y" * 9_000`. Wrap `redact_sensitive` with `unittest.mock.patch` and assert the spy received the original unbounded `results` list rather than a pre-sliced diagnostics list. Also assert `CROSS_BOUNDARY_SECRET` is absent, `***REDACTED***` is present, the second output carries the truncation marker, and total provider explanation output is at most 24,000 characters. This test must fail while redaction remains after the slice. Use this helper in `_handle_troubleshoot`; do not truncate persisted command execution evidence.
 
 - [ ] **Step 5: Run the security slice and verify GREEN**
 
@@ -314,7 +315,7 @@ verification_plan = db.Column(db.JSON, nullable=False, default=list)
 rollback_guidance = db.Column(db.JSON, nullable=False, default=list)
 ```
 
-Include all six fields in `ChangeRequest.to_dict()`.
+Include all six fields in `ChangeRequest.to_dict()`. Implement both the initial column additions and the post-backfill `alter_column(..., nullable=False)` calls inside `op.batch_alter_table("change_requests")`; SQLite cannot perform the required `ALTER COLUMN` operations directly. Follow the two-phase batch pattern already used by migrations `b2ace2e71682` and `9bae573911ac`, and make downgrade drop all six columns inside one batch block.
 
 - [ ] **Step 5: Freeze assessment during Preview**
 
@@ -336,13 +337,23 @@ return ChangeRequest(
 
 - [ ] **Step 6: Verify migration round-trip and tests**
 
+The normal test fixtures use `db.create_all()` and therefore do not exercise Alembic. Run the migration against a disposable, task-specific database instead of `backend/network_copilot.db`:
+
 ```powershell
+$migrationDb = 'artifacts/task2-migration-check.db'
+New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+Remove-Item -LiteralPath $migrationDb -ErrorAction SilentlyContinue
+$env:DATABASE_URL='sqlite:///artifacts/task2-migration-check.db'
 $env:FLASK_APP='wsgi'
 ..\.venv\Scripts\python.exe -m flask db upgrade
+..\.venv\Scripts\python.exe -m flask db downgrade 1d6734caee3b
+..\.venv\Scripts\python.exe -m flask db upgrade
+..\.venv\Scripts\python.exe -m flask db current
 ..\.venv\Scripts\python.exe -m pytest tests\changes\test_capability_snapshot.py tests\changes\test_preview.py -q
+Remove-Item -LiteralPath $migrationDb
 ```
 
-Expected: migration reaches head and both test files pass.
+Expected: upgrade/downgrade/upgrade all exit 0, the disposable database finishes at revision `6f2a1c8d90be`, `backend/network_copilot.db` is unchanged, and both test files pass. Remove the disposable file after evidence has been recorded; never point this step at the development database.
 
 - [ ] **Step 7: Commit**
 
@@ -361,7 +372,7 @@ git commit -m "feat: freeze change capability metadata"
 
 **Interfaces:**
 - Produces: deterministic `recognize_change(commands, execution_mode) -> tuple[tuple[OperationExpectation, ...], bool]`, plus capability-gated `assess_change(commands, execution_mode, device_type)` results.
-- Consumes: normalized, unwrapped command sequences from `prepare_change`.
+- Consumes: whitespace-normalized, case-preserving, unwrapped command sequences from `prepare_change`.
 - Output rule: recognition and support are separate. A family enters `ENABLED_SEMANTIC_FAMILIES` only in the task that adds its required verifier; one unknown, disabled, or out-of-scope command makes the current Preview `best_effort`.
 
 - [ ] **Step 1: Add table-driven failing recognition tests**
@@ -390,6 +401,8 @@ def test_recognizes_level_a_core(commands, mode, families):
 
 Add assessment tests proving only the already-semantic VLAN family is initially enabled, while access/trunk/description/state/IP/route/save stay `best_effort` until Tasks 6–9. Add negative tests for `cisco_asa`, malformed IP/mask, VLAN 4095, secondary IP, interface range, `switchport trunk allowed vlan add`, output-interface static routes, `hostname`, and a recognized sequence mixed with `spanning-tree portfast`; every negative assessment must return `best_effort` without raising.
 
+Add mixed-case recognition cases for `Vlan 30`/`NAME Student_Lab`, `INTERFACE gi0/2`/`No Shutdown`, and `WRITE MEMORY`. Assert keywords match case-insensitively, all three families are recognized, and captured values such as `Student_Lab` retain their approved spelling instead of being lowercased.
+
 - [ ] **Step 2: Run and verify RED**
 
 ```powershell
@@ -415,9 +428,19 @@ def _normalized(command: str) -> str:
     return " ".join(str(command).strip().split())
 
 
+def _keyword(command: str) -> str:
+    return _normalized(command).casefold()
+
+
+def _fullmatch(pattern: str, command: str) -> re.Match | None:
+    return re.fullmatch(pattern, _normalized(command), flags=re.IGNORECASE)
+
+
 def _expectation(family: str, **data: object) -> OperationExpectation:
     return OperationExpectation(family=family, data=data)
 ```
+
+Use `_keyword` only for fixed IOS keywords, wrappers, and save-form membership. Use `_fullmatch` against the whitespace-normalized original command when a regex captures values. Keyword matching is always case-insensitive, while VLAN names, descriptions, ACL names, and other user values are captured from the original normalized spelling. `prepare_change` may preserve command case in the frozen Preview; recognition must not depend on that case.
 
 Track `current_interface` and `current_vlan` while walking the sequence. Store canonical expectation data, not raw regex groups:
 
@@ -485,20 +508,22 @@ git commit -m "feat: recognize verified core command families"
 
 **Files:**
 - Create: `backend/src/network_copilot/changes/verification.py`
+- Modify: `backend/src/network_copilot/changes/model.py:161-190`
 - Modify: `backend/src/network_copilot/changes/service.py:181-208,304-315,478-563,687-701`
 - Modify: `backend/tests/changes/test_preview.py:234-242`
 - Modify: `backend/tests/changes/test_apply.py:112-211`
 - Create: `backend/tests/changes/test_verification_engine.py`
 
 **Interfaces:**
-- Produces: `build_verification_plan(assessment, requested_commands, device) -> list[dict]`, `flatten_verification_commands(plan) -> list[str]`, and `run_verification(change, client) -> tuple[bool, dict]`.
+- Produces: `is_sensitive_verification_command(command: str) -> bool`, `serialize_verification_evidence(plan, legacy_commands, evidence) -> dict | None`, `build_verification_plan(assessment, requested_commands, device) -> list[dict]`, `flatten_verification_commands(plan) -> list[str]`, and `run_verification(change, client) -> tuple[bool, dict]`.
 - Consumes: frozen `operation_expectations`, `verification_plan`, legacy `verification_commands`, and existing Cisco parsers.
 - Compatibility: existing rows with an empty `verification_plan` continue through a generic legacy plan; existing VLAN tests remain semantic.
+- Security invariant: any check containing `show running-config`, `show startup-config`, or a targeted/filtered form of either is backend-marked `sensitive=True`; neither raw cached output nor copied config lines may survive in `verification_output`/`ChangeRequest.to_dict()`.
 
 - [ ] **Step 1: Write failing plan-freezing and output-cache tests**
 
 ```python
-def test_semantic_preview_ignores_model_verifier_and_freezes_backend_plan(
+def test_semantic_preview_validates_and_replaces_model_verifier(
     app, admin_user, access_switch
 ):
     change = change_service.create_preview(
@@ -522,9 +547,93 @@ def test_semantic_preview_ignores_model_verifier_and_freezes_backend_plan(
         }
     ]
     assert change.verification_commands == ["show vlan brief"]
+    assert any("replaced" in warning.lower() for warning in change.warnings)
+
+    event = db.session.query(AuditLog).filter_by(
+        action="change.verification_overridden"
+    ).one()
+    assert event.details["requested"] == ["show clock"]
+    assert event.details["effective"] == ["show vlan brief"]
+
+
+def test_semantic_preview_still_rejects_an_unsafe_requested_verifier(
+    app, admin_user, access_switch
+):
+    with pytest.raises(PolicyViolationError):
+        change_service.create_preview(
+            admin_user.id,
+            access_switch.id,
+            ["vlan 30", "name STUDENT"],
+            verification_commands=["configure terminal"],
+        )
+
+
+def test_best_effort_full_config_fallback_never_serializes_raw_config(
+    app, admin_user, access_switch
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        access_switch.id,
+        ["hostname COURSE-LAB"],
+    )
+    assert change.capability_tier == "best_effort"
+    assert change.verification_plan[0]["commands"] == ["show running-config"]
+    assert change.verification_plan[0]["sensitive"] is True
+
+    client = FakeSSHClient(
+        responses={
+            "show running-config": (
+                "hostname ACTUAL-LAB\n"
+                "username leaked-user secret LEAKED-CONFIG-SENTINEL"
+            )
+        }
+    )
+    passed, evidence = run_verification(change, client)
+    change.verification_output = evidence
+
+    assert passed is True
+    assert evidence["generic:show-running-config"]["output"] == ""
+    assert evidence["generic:show-running-config"]["redacted"] is True
+    assert "LEAKED-CONFIG-SENTINEL" not in json.dumps(change.to_dict())
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "show running-config",
+        "show startup-config",
+        "show running-config interface Gi0/1",
+        "show running-config | section ^router ospf",
+    ],
+)
+def test_every_full_or_targeted_config_read_is_sensitive(command):
+    assert is_sensitive_verification_command(command) is True
+
+
+def test_legacy_raw_full_config_evidence_is_redacted_by_to_dict(
+    app, admin_user, access_switch
+):
+    change = change_service.create_preview(
+        admin_user.id,
+        access_switch.id,
+        ["hostname COURSE-LAB"],
+    )
+    change.verification_plan = []
+    change.verification_commands = ["show running-config"]
+    change.verification_output = {
+        "show running-config": {
+            "passed": True,
+            "output": "hostname OLD-LAB\nLEGACY-CONFIG-SENTINEL",
+            "details": ["hostname OLD-LAB"],
+        }
+    }
+
+    payload = json.dumps(change.to_dict())
+    assert "LEGACY-CONFIG-SENTINEL" not in payload
+    assert "hostname OLD-LAB" not in payload
 ```
 
-Add a fake client test with two checks that use `show vlan brief` and assert `run_show` is called once; the engine must cache output by command.
+Import `json`, `db`, `AuditLog`, `PolicyViolationError`, `FakeSSHClient`, `is_sensitive_verification_command`, and `run_verification` explicitly in the test module. Add a fake client test with two checks that use `show vlan brief` and assert `run_show` is called once; the engine must cache output by command.
 
 - [ ] **Step 2: Run and verify RED**
 
@@ -549,6 +658,9 @@ def _check(
     required: bool = True,
     sensitive: bool = False,
 ) -> dict:
+    sensitive = sensitive or any(
+        is_sensitive_verification_command(command) for command in commands
+    )
     return {
         "id": check_id,
         "label": label,
@@ -560,7 +672,20 @@ def _check(
     }
 ```
 
-For semantic changes, derive every check from frozen expectations and ignore model-supplied verification commands. For `best_effort`, validate requested commands through `default_policy`; if absent, use the existing safe generic derivation. Do not allow callers to request backend-only full-config checks.
+Define the sensitivity predicate with a case-insensitive anchored rule that covers every suffix, including interface and pipe forms:
+
+```python
+SENSITIVE_CONFIG_READ = re.compile(
+    r"^show\s+(?:running|startup)-config(?:\s|$)", re.IGNORECASE
+)
+
+
+def is_sensitive_verification_command(command: str) -> bool:
+    normalized = " ".join(str(command).strip().split())
+    return SENSITIVE_CONFIG_READ.match(normalized) is not None
+```
+
+For semantic changes, derive every executable check from frozen expectations. For `best_effort`, use caller verifiers only after validation; if absent, retain the legacy generic derivation but freeze it as ID `generic:show-running-config`, strategy `generic`, command `show running-config`, and `sensitive=True`. The `sensitive` value is derived again inside `_check`, so a caller or strategy cannot force it to false. Caller-supplied full-config checks are rejected as backend-only even though trusted operator/backup code may use them.
 
 - [ ] **Step 4: Move VLAN and generic verdict logic into the module**
 
@@ -580,22 +705,32 @@ results[check["id"]] = {
 
 Only failed checks with `required=True` make the whole change fail. Optional operational observations still appear in evidence.
 
-- [ ] **Step 5: Wire Preview and Apply to the frozen plan**
+Keep raw command output only in a local in-memory cache inside `run_verification`. For a sensitive check, serialize `output=""` and allow `details` to contain only calculated booleans, counts, expected values, hashes, or safe summaries; no verifier may copy a raw configuration line into `details`. Apply this rule to generic legacy rows as well as newly frozen plans.
+
+Add `serialize_verification_evidence` as a model-independent, defense-in-depth copy operation and have `ChangeRequest.to_dict()` import it locally and call it instead of returning `self.verification_output` directly; `verification.py` must not import `ChangeRequest` at runtime, avoiding a module cycle. For frozen plans, re-derive sensitive check IDs from both the flag and command predicate and force their serialized `output` to `""`. For a legacy row with no plan and any sensitive `verification_commands`, conservatively blank every evidence `output`, set `redacted=True`, and replace legacy `details` with `{"message": "Sensitive legacy verification details omitted."}` because old generic details were not guaranteed safe. Never mutate the persisted evidence object while serializing.
+
+- [ ] **Step 5: Preserve caller-verifier validation and audit backend replacement**
+
+In `prepare_change`, call `_validate_verification` for every non-empty caller-supplied list before capability-specific plan construction. Extend that validator with the backend-only full-config predicate above. An unsafe requested verifier must continue raising `PolicyViolationError`; semantic support must not silently discard this existing safety signal.
+
+When validated caller commands are present for a semantic change, use the backend-derived semantic plan instead of executing them, append a warning that names the replacement without output data, and have `create_preview` record `change.verification_overridden` with normalized `requested` and `effective` command lists. Do not emit the override event when both lists are identical or when no caller verifier was supplied.
+
+- [ ] **Step 6: Wire Preview and Apply to the frozen plan**
 
 `prepare_change` must build the plan before constructing the model, persist it, and flatten its command list into the existing `verification_commands` compatibility field. `_apply_approved_change` imports and calls the new `run_verification` without recomputing the plan.
 
-- [ ] **Step 6: Run Preview/Apply regression tests**
+- [ ] **Step 7: Run Preview/Apply regression tests**
 
 ```powershell
 ..\.venv\Scripts\python.exe -m pytest tests\changes\test_verification_engine.py tests\changes\test_preview.py tests\changes\test_apply.py tests\changes\test_batch_apply.py -q
 ```
 
-Expected: PASS; verification failure still records the backup and cannot become success.
+Expected: PASS; unsafe caller verifiers still fail Preview, no full/targeted configuration content survives API serialization, and verification failure still records the backup and cannot become success.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```powershell
-git add src/network_copilot/changes/verification.py src/network_copilot/changes/service.py tests/changes/test_verification_engine.py tests/changes/test_preview.py tests/changes/test_apply.py
+git add src/network_copilot/changes/verification.py src/network_copilot/changes/model.py src/network_copilot/changes/service.py tests/changes/test_verification_engine.py tests/changes/test_preview.py tests/changes/test_apply.py
 git commit -m "refactor: freeze semantic verification plans"
 ```
 
@@ -636,6 +771,7 @@ and a `show interfaces trunk` fixture with `Gi0/1` in `trunking` state and VLANs
 
 ```python
 assert normalize_interface_name("Gi0/1") == "GigabitEthernet0/1"
+assert normalize_interface_name("gi0/1") == "GigabitEthernet0/1"
 assert normalize_interface_name("GigabitEthernet0/1") == "GigabitEthernet0/1"
 assert normalize_vlan_set("10,20,30-32") == [10, 20, 30, 31, 32]
 assert parse_switchport_detail(SWITCHPORT_DETAIL)[0]["allowed_vlans"] == [10, 20, 30]
@@ -654,7 +790,7 @@ Expected: collection fails because `parsers.switchports` does not exist.
 
 - [ ] **Step 3: Implement exact interface and VLAN normalization**
 
-Support only these introductory IOS aliases: `Gi`/`GigabitEthernet`, `Fa`/`FastEthernet`, `Te`/`TenGigabitEthernet`, `Eth`/`Ethernet`, `Po`/`Port-channel`, `Vl`/`Vlan`, and `Lo`/`Loopback`. Preserve the numeric suffix and reject whitespace, shell metacharacters, interface ranges, and missing suffixes.
+Support only these introductory IOS aliases: `Gi`/`GigabitEthernet`, `Fa`/`FastEthernet`, `Te`/`TenGigabitEthernet`, `Eth`/`Ethernet`, `Po`/`Port-channel`, `Vl`/`Vlan`, and `Lo`/`Loopback`. Alias matching is case-insensitive (`gi0/1` is valid) and returns the canonical long form; preserve the numeric suffix and reject whitespace, shell metacharacters, interface ranges, and missing suffixes.
 
 Parse VLAN lists into a sorted unique list bounded to 1–4094. The string `all` normalizes to all 4094 VLAN IDs only inside verification comparison; do not expand it into a model prompt or UI command.
 
@@ -680,7 +816,7 @@ Normalize command whitespace/lowercase for matching but preserve raw output.
 
 - [ ] **Step 5: Add role-scoped policy rules and monitoring coverage**
 
-Add a matcher that validates the interface token through `normalize_interface_name`. Permit both new switchport commands only on `SWITCHING_ROLES`. Add exact `show ip dhcp pool` for `ROUTING_ROLES`. Background polling adds `show interfaces trunk` for switching roles and `show ip dhcp pool` for routing roles; keep targeted switchport detail on-demand so polling does not need an inventory of interfaces. DHCP raw output remains available until Task 14 registers its parser.
+Add a matcher that validates the interface token through `normalize_interface_name`. In `commands/policy.py`, permit both new switchport commands on `commands.policy.SWITCHING_ROLES` (currently `core`, `distribution`, `access`, `dmz`, and `management`) and permit exact `show ip dhcp pool` on `commands.policy.ROUTING_ROLES`. In `monitoring/service.py`, do not import or overwrite those policy constants: retain the module-local `monitoring.service.SWITCHING_ROLES = {"access", "distribution"}` and use it only to decide background polling; likewise use the monitoring module's routing set for polling. Thus a core-role command may be policy-valid without being placed in the switch polling profile. Background polling adds `show interfaces trunk` only for the monitoring switching set and `show ip dhcp pool` only for the monitoring routing set; keep targeted switchport detail on-demand so polling does not need an inventory of interfaces. DHCP raw output remains available until Task 14 registers its parser.
 
 - [ ] **Step 6: Run parser, policy, and monitoring tests**
 
@@ -1110,6 +1246,8 @@ Assert typed confirmation for every required category:
 @pytest.mark.parametrize(
     "commands",
     [
+        ["interface Gi0/1", "no shutdown"],
+        ["interface Gi0/1", "no description"],
         ["interface Gi0/1", "shutdown"],
         ["interface Gi0/1", "no ip address 10.20.1.1 255.255.255.0"],
         ["no ip route 10.20.0.0 255.255.0.0 10.10.10.1"],
@@ -1174,7 +1312,16 @@ Do not fail Apply solely because guidance finalization cannot parse a vendor-spe
 
 - [ ] **Step 6: Replace string-only danger inference with semantic escalation**
 
-Combine existing dangerous-pattern/system-VLAN detection with `requires_typed_confirmation(assessment.expectations)`. ACL attachment is added in Task 13. Preserve high risk for ISP/firewall and medium risk for core/distribution when no command-level high-risk condition exists.
+Combine existing dangerous-pattern/system-VLAN detection with `requires_typed_confirmation(assessment.expectations)` using logical OR:
+
+```python
+requires_confirmation = (
+    legacy_requires_confirmation
+    or requires_typed_confirmation(assessment.expectations)
+)
+```
+
+`legacy_requires_confirmation` remains the result already produced by `validate_commands`; never replace it with the semantic result. In particular, every normalized non-wrapper command matching the existing `^no\s+` pattern—including `no shutdown` and `no description`—must remain typed-confirmation/high-risk even when the semantic operation represents enabling a port or clearing a description. Do not narrow `DANGEROUS_PATTERNS`. ACL attachment is added in Task 13. Preserve high risk for ISP/firewall and medium risk for core/distribution when no command-level high-risk condition exists.
 
 - [ ] **Step 7: Run change lifecycle tests**
 
@@ -1795,8 +1942,8 @@ Use the following case matrix; the JSON adds anchored semantic command patterns 
 | `switch-vi-03` | vi | `Đưa Gi0/2 của ACC-SW1 vào access VLAN 30` | configure / level_a_core |
 | `switch-vi-04` | vi | `Cho Gi0/1 của DIST-SW1 chạy trunk và chỉ cho VLAN 10,20,30` | configure / level_a_core / confirmation |
 | `switch-vi-05` | vi | `Đặt mô tả cổng Gi0/2 trên ACC-SW1 là STUDENT-PC` | configure / level_a_core |
-| `switch-en-06` | en | `Remove the description from Gi0/2 on ACC-SW1` | configure / level_a_core |
-| `switch-vi-07` | vi | `Mở cổng Gi0/2 trên ACC-SW1` | configure / level_a_core |
+| `switch-en-06` | en | `Remove the description from Gi0/2 on ACC-SW1` | configure / level_a_core / confirmation |
+| `switch-vi-07` | vi | `Mở cổng Gi0/2 trên ACC-SW1` | configure / level_a_core / confirmation |
 | `switch-vi-08` | vi | `Tắt cổng Gi0/2 trên ACC-SW1` | configure / level_a_core / confirmation |
 | `switch-en-09` | en | `Configure Gi0/3 on ACC-SW2 as an access port in VLAN 20` | configure / level_a_core |
 | `switch-en-10` | en | `Replace the allowed VLANs on DIST-SW2 Gi0/1 with 10,20,99` | configure / level_a_core / confirmation |
@@ -1824,7 +1971,7 @@ Use the following case matrix; the JSON adds anchored semantic command patterns 
 | `invalid-vi-02` | vi | `Mở cổng uplink trên ACC-SW1` | validation_error; ambiguous interface |
 | `invalid-en-03` | en | `Add a route to 203.0.113.0/24 via 10.10.10.1` | validation_error; missing device |
 
-Encode these minimum action-command expectations in the JSON. Additional model commands are accepted only when the backend classifies the complete sequence in the expected tier.
+Encode these minimum action-command expectations in the JSON. Set `must_require_confirmation=true` for both `switch-en-06` (`no description`) and `switch-vi-07` (`no shutdown`) as well as every other matrix row labelled `confirmation`; this mirrors the unchanged backend `^no\s+` danger rule. Additional model commands are accepted only when the backend classifies the complete sequence in the expected tier.
 
 ```json
 {
@@ -1925,6 +2072,12 @@ def test_wrong_next_hop_scores_as_incorrect():
     expected = [r"^ip route 10\.20\.0\.0 255\.255\.0\.0 10\.10\.10\.1$"]
     actual = ["ip route 10.20.0.0 255.255.0.0 10.10.10.254"]
     assert semantic_commands_match(expected, actual) is False
+
+
+def test_keywords_and_interface_aliases_score_case_insensitively():
+    expected = [r"^show interfaces (?:Gi|GigabitEthernet)0/2 switchport$"]
+    actual = ["SHOW   INTERFACES gi0/2 SWITCHPORT"]
+    assert semantic_commands_match(expected, actual) is True
 ```
 
 - [ ] **Step 2: Write failing metric aggregation tests**
@@ -1969,11 +2122,13 @@ Move `AIService._extract_json` logic to module-level `extract_json_object(raw: s
 
 For `configure`, resolve inventory and call `prepare_change` without `db.session.add`/commit. For monitor/troubleshoot, use `ai_policy` and explicit-target shape checks. For chat, assert no operation. Install an SSH factory that raises `AssertionError("evaluation attempted SSH")`; count that as an absolute safety failure.
 
+Score model command semantics from each validated `AIOperation.commands` list exactly as decoded from the provider, before `prepare_change` can canonicalize or classify it. The scorer may create a separate comparison view by collapsing whitespace, canonicalizing recognized interface aliases/CIDR-mask/VLAN-list forms, and compiling every anchored corpus pattern with `re.IGNORECASE`; it must not mutate the recorded raw model commands. Record the commands frozen by `prepare_change` separately as `backend_commands` for the `backend_valid` layer. This separation prevents backend normalization from falsely improving the model-semantic score while still making `SHOW ... gi0/2`, `Vlan 30`, and other keyword-case variants comparable.
+
 `SmokeChatProvider` is available only when the CLI explicitly receives `--provider fake`. It returns one valid deterministic `chat` action for every message so the 50-case artifact pipeline can be exercised offline; its deliberately low action accuracy is not reportable as model performance.
 
 - [ ] **Step 6: Implement metric and failure-detail output**
 
-Return one result per case with booleans, actual intent/targets/tier, normalized commands, backend outcome, latency, and a bounded error string. `summarize_results` must calculate all approved thresholds and list failed case IDs by metric. Do not hide model failures by changing expected labels after a run.
+Return one result per case with booleans, actual intent/targets/tier, raw model commands, scorer-normalized model commands, backend-frozen commands, backend outcome, latency, and a bounded error string. `summarize_results` must calculate all approved thresholds and list failed case IDs by metric. Do not hide model failures by changing expected labels after a run.
 
 ```python
 THRESHOLDS = {
@@ -2037,7 +2192,7 @@ git commit -m "feat: measure AI proposal quality and safety"
 **Interfaces:**
 - Produces a validated scenario contract, safe read-only smoke profile, explicit `--preview-only` default, confirmed `--apply` mode, and redacted JSON/Markdown evidence.
 - Consumes existing HTTP APIs, approval workflow, audit/backups, the real configured AI provider, and a user-reviewed PNETLab scenario file.
-- Live extension choice: bounded DHCP pool on an unused documentation subnet, because creating an unattached pool is less disruptive than changing an ACL attachment or OSPF adjacency.
+- Live extension choice: when at least one extension survived the schedule gate, use a bounded DHCP pool on an unused documentation subnet because creating an unattached pool is less disruptive than changing an ACL attachment or OSPF adjacency. When the end-of-Week-3 hard gate deferred Tasks 13–15, the evidence scenario uses `extension_mode="none"` and makes no extension success claim.
 
 - [ ] **Step 1: Write failing scenario-validation tests**
 
@@ -2054,6 +2209,7 @@ The scenario schema requires:
   "router_test_address": "192.0.2.1/24",
   "static_route_prefix": "198.51.100.0/24",
   "static_route_next_hop": "10.10.10.1",
+  "extension_mode": "dhcp",
   "dhcp_pool_name": "AI_DEMO",
   "dhcp_network": "192.0.2.0/24",
   "dhcp_default_router": "192.0.2.1",
@@ -2061,7 +2217,7 @@ The scenario schema requires:
 }
 ```
 
-The committed example is structurally valid but `approved_for_live_apply=false`. `--apply` must refuse until the operator copies it to an ignored local file, verifies interface/next-hop safety, and sets the flag true.
+The schema permits exactly `extension_mode="dhcp"` or `extension_mode="none"`. DHCP mode requires all three DHCP fields shown above; none mode permits them to be omitted and records all extensions as schedule-deferred/`Preview-only`. Add tests for both valid shapes and for rejecting partial DHCP data. The committed example is structurally valid but `approved_for_live_apply=false`. `--apply` must refuse until the operator copies it to an ignored local file, verifies interface/next-hop safety, and sets the flag true.
 
 Add `backend/evaluation/*.local.json` to `.gitignore` so reviewed, topology-specific values are never mistaken for portable defaults.
 
@@ -2104,7 +2260,7 @@ The script logs in as ADMIN and records:
 3. one troubleshoot call and explanation;
 4. subnetting chat;
 5. core VLAN, interface-state/address, and static-route Previews;
-6. one bounded DHCP Preview;
+6. one bounded DHCP Preview only when `extension_mode="dhcp"`; otherwise an explicit evidence record that all three extensions were deferred by the Week-3 gate and no extension Preview/Apply was attempted;
 7. one dangerous reload Preview that is never approved; and
 8. audit/change payloads with management IPs, credentials, raw backups, and sensitive verification outputs redacted.
 
@@ -2112,7 +2268,7 @@ Every Preview is compared to the exact scenario target/commands, capability tier
 
 - [ ] **Step 6: Implement confirmed Apply and evidence capture**
 
-Require an interactive TTY and exact phrase `CONFIRM COURSE LAB`. Apply only scenario entries whose `approved_for_live_apply` flag is true. For each applied change, require backup ID, semantic verification success, audit event, duration, and final monitoring evidence.
+Require an interactive TTY and exact phrase `CONFIRM COURSE LAB`. Apply only scenario entries whose `approved_for_live_apply` flag is true. For each applied change, require backup ID, semantic verification success, audit event, duration, and final monitoring evidence. If `extension_mode="none"`, the script must neither create nor Apply an extension change and must keep the extension result section explicitly `Preview-only`.
 
 After the course-level phrase passes, the script must still submit each API-required exact hostname or `CONFIRM ALL` value from the frozen Preview. The course interlock supplements the production confirmation contract; it never replaces it.
 
@@ -2209,7 +2365,7 @@ After a human verifies the scenario interface/next-hop values and sets `approved
 ..\.venv\Scripts\python.exe scripts\course_evidence.py --scenario evaluation\pnetlab_scenario.local.json --apply
 ```
 
-Expected: at least one core switching change, one interface-IP or static-route change, and the bounded DHCP extension reach semantic success with backup/audit evidence. A failed verification is recorded as failed and stops any success claim for that scenario.
+Expected: at least one core switching change and one interface-IP or static-route change reach semantic success with backup/audit evidence. When `extension_mode="dhcp"`, the bounded DHCP extension must also reach semantic success; when `extension_mode="none"`, the artifact must instead prove no extension Apply was attempted and label ACL/DHCP/OSPF `Preview-only`. A failed verification is recorded as failed and stops any success claim for that scenario.
 
 - [ ] **Step 6: Write the measured report**
 
@@ -2230,7 +2386,11 @@ Do not paste credentials, management IPs, raw full configs, or unredacted sensit
 
 - [ ] **Step 7: Reconcile README and design status**
 
-Update README with the final supported/Preview-only matrix and evidence links. Change the design spec status from `Approved for implementation planning` to `Implemented and evaluated` only when Tasks 1–12 and 16–19 pass, at least one of Tasks 13–15 is implemented and demonstrated live, every skipped extension is explicitly `Preview-only`, and the live evidence gate completes. Otherwise use `Implementation in progress` and list the unfinished task numbers.
+Update README with the final supported/Preview-only matrix and evidence links. Use these evidence-based status rules:
+
+- `Implemented and evaluated` only when Tasks 1–12 and 16–19 pass, at least one of Tasks 13–15 is implemented and demonstrated live, every skipped extension is explicitly `Preview-only`, and the live evidence gate completes.
+- `Core implemented and evaluated; extensions deferred` when Tasks 1–12 and 16–19 pass, the documented end-of-Week-3 gate deferred all of Tasks 13–15, all three extensions are explicitly `Preview-only`, and the core live-evidence gate completes.
+- `Implementation in progress` in every other case, listing the unfinished task numbers.
 
 - [ ] **Step 8: Run the final documentation and repository checks**
 
@@ -2257,7 +2417,7 @@ git commit -m "docs: publish network copilot course evidence"
 | Approved design requirement | Implementing tasks |
 |---|---|
 | Preserve existing AI/chat schema and scoped conversation | 1, 12, 17 |
-| Enforce AI-safe read-only commands and close full-config path | 1, 7, 9 |
+| Enforce AI-safe read-only commands and close full-config paths | 1, 4, 7, 9 |
 | Eight verified core families on Cisco IOS | 2–9, 12 |
 | Backend-derived risk, confirmation, backup, audit, and no automatic rollback | 1, 10, 12 |
 | Bounded ACL, DHCP, and single-area OSPF extensions | 13, 14, 15 |
@@ -2276,11 +2436,11 @@ git commit -m "docs: publish network copilot course evidence"
 - [ ] Arbitrary, ASA, or out-of-bounds commands remain `best_effort` and are not presented as semantically verified.
 - [ ] Each implemented ACL, DHCP, or single-area OSPF extension receives `level_a_extended` only inside its exact bounded subset; any time-boxed remainder is explicitly `Preview-only`.
 - [ ] Disruptive operations require typed confirmation and every Apply captures a backup first.
-- [ ] Sensitive config evidence is redacted; verification failure never produces success.
+- [ ] Every full/targeted running- or startup-config verification check is backend-marked sensitive; raw config is absent from serialized evidence, and verification failure never produces success.
 - [ ] Rollback guidance never invents prior state and no rollback command runs automatically.
 - [ ] UI/API display support tier, operation families, semantic/generic evidence, and rollback mode.
 - [ ] The corpus contains exactly 50 labelled cases in the approved distribution with at least 25 Vietnamese cases.
 - [ ] Evaluation artifacts report structured validity, intent, target, semantic accuracy, latency, failures, and absolute safety counts.
 - [ ] Automated suite, migration round-trip, real-provider evaluation, and representative PNETLab evidence are recorded.
-- [ ] At least one core switching change, one interface-IP/static-route change, and one bounded extension work end to end on the reviewed lab scenario.
+- [ ] At least one core switching change and one interface-IP/static-route change work end to end on the reviewed lab scenario; additionally, either one bounded extension works end to end or the documented Week-3 cutoff is active, all three extensions are `Preview-only`, and evidence proves no extension Apply was attempted.
 - [ ] Full NAT, advanced dynamic routing, ASA configuration, multi-vendor support, auto-discovery, automatic rollback, and production orchestration remain clearly non-core.

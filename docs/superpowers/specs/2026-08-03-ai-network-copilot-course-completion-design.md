@@ -206,13 +206,17 @@ general Cisco CLI coverage:
 These extensions are implemented only after every Level A Core acceptance test
 passes. They use the same Preview/Approve/Apply path and must not introduce a
 second execution mechanism. Each extension may be labelled **verified** only
-after its semantic validator and automated tests pass. At least one extension
-must also be demonstrated end to end on PNETLab; any extension without live-lab
+after its semantic validator and automated tests pass. When the verified core
+gate finishes by the end-of-Week-3 checkpoint, the target is to demonstrate at
+least one extension end to end on PNETLab; any extension without live-lab
 evidence remains clearly labelled “automated-test verified” or “Preview-only.”
 
 The extension phase is time-boxed and may not delay the safety, evaluation, and
-reporting requirements. The detailed implementation plan will order these
-families by reuse of existing parsers and the available PNETLab topology.
+reporting requirements. If the verified core gate is not green by the
+end-of-Week-3 checkpoint, all three extensions are deferred as `Preview-only`
+and the team moves directly to evaluation/evidence work. The detailed
+implementation plan orders these families by reuse of existing parsers and the
+available PNETLab topology.
 
 Commands that change inventory identity or management-plane access remain
 outside the upgrade even though they appear in introductory labs. This includes
@@ -315,12 +319,14 @@ The following controls remain mandatory:
 - backup succeeds before any configuration command is sent; and
 - verification failure never reports success.
 
-The expanded catalogue does not make disruptive commands low risk. Interface
-`shutdown`, interface-IP or route removal, trunk allowed-list replacement, ACL
-attachment, and saving running state are always elevated to typed confirmation.
-If the backend cannot determine whether an interface or route carries the
-management path, it treats the change as high risk rather than assuming it is
-safe.
+The expanded catalogue does not make disruptive commands low risk. Every
+normalized non-wrapper command beginning with `no ` remains elevated to typed
+confirmation, including `no shutdown` and `no description`; the existing
+dangerous-pattern rule is not narrowed. Interface `shutdown`, trunk allowed-list
+replacement, ACL attachment, saving running state, and interface-IP or route
+removal are also always elevated. If the backend cannot determine whether an
+interface or route carries the management path, it treats the change as high
+risk rather than assuming it is safe.
 
 For Level A Core and verified Level A Extended operations, semantic validators
 add stronger guarantees. Other free-form commands remain available for expert
@@ -538,8 +544,9 @@ high-value coverage:
    extension;
 7. corpus-runner tests for equivalent command normalization, support-tier
    labelling, and metric calculation;
-8. end-to-end tests for one switching change, one static-route or interface-IP
-   change, and one selected extension; and
+8. end-to-end tests for one switching change and one static-route or
+   interface-IP change, plus one selected extension when the extension phase is
+   enabled by the schedule gate; and
 9. documented PNETLab smoke and demonstration runs.
 
 No tests call a real provider or device during the normal unit test suite.
@@ -579,8 +586,9 @@ subsequent implementation plan.
    validators and tests pass.
 4. **Evaluation tooling** — execute the labelled corpus, calculate metrics, and
    produce machine-readable and report-ready summaries.
-5. **PNETLab integration** — run representative core scenarios and one selected
-   extension, then resolve device-specific SSH/CLI differences.
+5. **PNETLab integration** — run representative core scenarios and, when the
+   extension phase survives the schedule gate, one selected extension; then
+   resolve device-specific SSH/CLI differences.
 6. **Demonstration and report** — finalize the reproducible demo, diagrams,
    measurements, limitations, and future work.
 
@@ -597,8 +605,10 @@ The course project is complete when all of the following are true:
   operation-specific semantic verification;
 - static route and interface-IP scenarios work end to end on the lab;
 - ACL, DHCP, and single-area OSPF support is reported per capability as
-  `verified`, `automated-test verified`, or `Preview-only`, and at least one of
-  these extensions works end to end on the lab;
+  `verified`, `automated-test verified`, or `Preview-only`; either at least one
+  enabled extension works end to end on the lab, or the documented Week-3
+  cutoff deferred all three as `Preview-only` and evidence proves no extension
+  Apply was attempted;
 - dangerous operations never apply without authorization and exact
   confirmation;
 - every Apply takes a backup first and records an audit trail;
