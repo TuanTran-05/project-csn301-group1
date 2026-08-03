@@ -20,14 +20,14 @@
 | Interface description/admin/IPv4 | Automated-test verified |
 | Static/default route | Automated-test verified |
 | Save configuration | Automated-test verified, evidence nhạy cảm được che |
-| Standard IPv4 ACL | Bounded implementation; cần live evidence |
-| IOS DHCP pool | Bounded implementation; cần live evidence |
-| Single-area OSPF | Bounded implementation; cần live evidence |
+| Standard IPv4 ACL | Automated-test verified; cần live evidence |
+| IOS DHCP pool | Automated-test verified; cần live evidence |
+| Single-area OSPF | Automated-test verified; cần live evidence |
 | Full NAT, advanced routing, ASA config, multi-vendor | Preview-only / ngoài phạm vi |
 
 ## Kiểm thử và tái lập
 
-- Automated gate: **674 passed** in 122.22 seconds (`pytest -q`).
+- Automated gate: **681 passed** in 104.32 seconds (`pytest -q`).
 - Migration round-trip: upgrade → downgrade `1d6734caee3b` → upgrade; final head `6f2a1c8d90be`.
 - Fake corpus run: 50 cases, structured validity 1.0, unsafe SSH 0.
 
