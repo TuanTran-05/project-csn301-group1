@@ -65,6 +65,8 @@ class ChangeBatch(db.Model):
         return "CONFIRM ALL"
 
     def to_dict(self) -> dict:
+        from .verification import serialize_verification_evidence
+
         sorted_changes = sorted(self.changes, key=lambda c: c.target_hostname or "")
         return {
             "id": self.id,
@@ -170,6 +172,8 @@ class ChangeRequest(db.Model):
     batch = db.relationship("ChangeBatch", back_populates="changes")
 
     def to_dict(self) -> dict:
+        from .verification import serialize_verification_evidence
+
         return {
             "id": self.id,
             "status": self.status,
@@ -201,7 +205,9 @@ class ChangeRequest(db.Model):
             "execution_mode": self.execution_mode,
             "backup_id": self.backup_id,
             "apply_output": self.apply_output,
-            "verification_output": self.verification_output,
+            "verification_output": serialize_verification_evidence(
+                self.verification_plan or [], self.verification_commands or [], self.verification_output
+            ),
             "error_message": self.error_message,
             "source": self.source,
             "created_at": self.created_at.isoformat() if self.created_at else None,

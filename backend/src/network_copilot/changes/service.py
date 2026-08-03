@@ -30,6 +30,13 @@ from ..errors import (
 )
 from ..extensions import db
 from .capabilities import assess_change
+from .verification import (
+    build_verification_plan,
+    flatten_verification_commands,
+    is_sensitive_verification_command,
+    run_verification,
+    serialize_verification_evidence,
+)
 from .model import ChangeBatch, ChangeRequest
 
 logger = logging.getLogger(__name__)
@@ -303,20 +310,16 @@ def prepare_change(
     canonical = _wrap(body) if execution_mode == "config" else body
     assessment = assess_change(body, execution_mode, device.device_type)
 
-    # The backend-only "show startup-config" verifier is derived internally
-    # and never appears on the AI-advertised read-only allowlist, so a
-    # caller-supplied verification_commands can never pass policy for it.
-    # For this exact shape it is always the correct (and only trustworthy)
-    # verifier, so it wins over anything the caller asked for instead of
-    # being rejected by _validate_verification.
+    requested_verification = _validate_verification(verification_commands, device) if verification_commands else []
     if execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS:
         verification = ["show startup-config"]
-    elif verification_commands:
-        verification = _validate_verification(verification_commands, device)
     else:
-        verification = derive_verification_commands(canonical, device, execution_mode)
+        plan = build_verification_plan(assessment, requested_verification, device)
+        verification = flatten_verification_commands(plan)
+    plan = build_verification_plan(assessment, requested_verification, device)
+    replaced = bool(requested_verification) and requested_verification != flatten_verification_commands(plan)
 
-    return ChangeRequest(
+    change = ChangeRequest(
         device_id=device.id,
         requested_by_id=user_id,
         description=description,
@@ -333,13 +336,19 @@ def prepare_change(
         verification_level=assessment.verification_level,
         operation_families=list(assessment.operation_families),
         operation_expectations=[item.to_dict() for item in assessment.expectations],
-        verification_plan=[],
+        verification_plan=plan,
         rollback_guidance=[],
         risk_level=classify_risk(canonical, device, requires_confirmation),
         requires_confirmation=requires_confirmation,
         status="pending_approval",
         source=source,
     )
+
+    if replaced:
+        change.warnings = list(change.warnings or []) + [
+            "The requested verification commands were replaced by the backend's frozen semantic plan."
+        ]
+    return change
 
 
 def create_preview(
@@ -366,6 +375,15 @@ def create_preview(
     db.session.add(change)
     db.session.commit()
 
+    if any("replaced by the backend" in warning for warning in (change.warnings or [])):
+        record_event(
+            action="change.verification_overridden",
+            result="success",
+            user_id=user_id,
+            device_id=device.id,
+            details={"change_id": change.id, "requested": verification_commands or [], "effective": change.verification_commands or []},
+        )
+
     record_event(
         action="change.preview",
         result="success",
@@ -388,6 +406,11 @@ def _validate_verification(commands: list[str], device: Device) -> list[str]:
 
     verified: list[str] = []
     for raw in commands:
+        if is_sensitive_verification_command(raw):
+            raise PolicyViolationError(
+                "Full configuration verification is backend-only and cannot be requested.",
+                {"command": _normalise(raw)},
+            )
         decision = default_policy.evaluate(raw, device.role)
         if not decision.allowed:
             raise PolicyViolationError(
@@ -548,7 +571,7 @@ def _verify_generic(output: str) -> tuple[bool, list[str]]:
     return True, ["Command returned output."]
 
 
-def run_verification(change: ChangeRequest, client) -> tuple[bool, dict]:
+def _legacy_run_verification(change: ChangeRequest, client) -> tuple[bool, dict]:
     """Run each verification command and judge the result."""
     expected_vlans = _expected_vlans(change.commands or [])
     results: dict[str, dict] = {}
