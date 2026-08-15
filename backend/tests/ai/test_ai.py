@@ -1043,3 +1043,107 @@ def test_prompt_tells_the_model_to_use_asa_syntax_on_asa_devices(app, admin_user
     assert "cisco_asa" in prompt
     assert "asa_command_equivalents" in prompt
 
+
+
+def _topology_snapshot(device, parsed_data):
+    from network_copilot.extensions import db as _db
+    from network_copilot.monitoring.model import DeviceSnapshot
+
+    _db.session.add(
+        DeviceSnapshot(
+            device_id=device.id,
+            status="online",
+            raw_output={},
+            parsed_data=parsed_data,
+        )
+    )
+    _db.session.commit()
+
+
+def _guest_vlan_snapshot(device):
+    _topology_snapshot(
+        device,
+        {
+            "show ip interface brief": [
+                {
+                    "interface": "Vlan60",
+                    "ip_address": "10.10.60.1",
+                    "status": "up",
+                    "protocol": "up",
+                }
+            ],
+            "show vlan brief": [
+                {"vlan_id": 60, "name": "GUEST", "status": "active", "ports": []}
+            ],
+            "show ip route": [
+                {
+                    "network": "10.10.60.0/24",
+                    "protocol": "C",
+                    "next_hop": None,
+                    "interface": "Vlan60",
+                    "distance": None,
+                    "metric": None,
+                }
+            ],
+        },
+    )
+
+
+def test_context_carries_the_network_topology(app, admin_user, make_device):
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    _guest_vlan_snapshot(switch)
+
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+
+    topology = provider.prompts[0]["context"]["topology"]
+    assert topology["networks"][0]["subnet"] == "10.10.60.0/24"
+    assert topology["networks"][0]["name"] == "GUEST"
+
+
+def test_topology_never_leaks_a_management_ip_to_the_model(app, admin_user, make_device):
+    """The narrowed rule in ai/service.py's docstring, asserted end to end:
+    user subnets go to the model, management addresses never do."""
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    _topology_snapshot(
+        switch,
+        {
+            "show ip interface brief": [
+                {
+                    "interface": "Vlan10",
+                    "ip_address": "10.10.10.22",
+                    "status": "up",
+                    "protocol": "up",
+                }
+            ],
+            "show vlan brief": [
+                {"vlan_id": 10, "name": "MGMT", "status": "active", "ports": []}
+            ],
+            "show ip route": [
+                {
+                    "network": "10.10.10.0/24",
+                    "protocol": "C",
+                    "next_hop": None,
+                    "interface": "Vlan10",
+                    "distance": None,
+                    "metric": None,
+                }
+            ],
+        },
+    )
+
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+
+    assert "10.10.10.0/24" not in provider.everything_sent()
+    assert "10.10.10.22" not in provider.everything_sent()
+
+
+def test_context_topology_is_empty_without_snapshots(app, admin_user):
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+
+    assert provider.prompts[0]["context"]["topology"] == {
+        "networks": [],
+        "routing": [],
+    }

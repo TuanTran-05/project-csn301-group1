@@ -3,6 +3,10 @@
 Design rules, enforced by tests:
 
 * The model never receives credentials, management IPs or a full running-config.
+  It does receive user network subnets and their gateways (see ai/topology.py):
+  those are what policy reasoning is *about*, whereas a management IP is how you
+  *reach* a device. The split is enforced by dropping any network that contains
+  a Device.management_ip, so no address is hardcoded anywhere.
 * The model never executes anything. It returns a structured AIAction which the
   backend validates and freezes into the change workflow.
 * A `configure` intent can only ever produce a Preview. Applying stays a manual,
@@ -31,6 +35,7 @@ from ..extensions import db
 from ..parsers import parse_command_output
 from .provider import build_provider
 from .schemas import AIAction, AIOperation, build_ai_action_schema
+from .topology import build_topology
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +164,7 @@ class AIService:
             ],
             "supported_commands": commands,
             "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
+            "topology": build_topology(),
         }
 
     # -- conversation history ---------------------------------------------
