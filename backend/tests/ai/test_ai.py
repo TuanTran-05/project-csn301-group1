@@ -1020,3 +1020,26 @@ def test_conversation_history_never_leaks_message_payloads(
     service.handle("alo", admin_user.id, session_id=session.id)
 
     assert "SENTINEL-SECRET-XYZ" not in provider.everything_sent()
+
+
+def test_context_carries_the_asa_command_equivalents(app, admin_user):
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+
+    equivalents = provider.prompts[0]["context"]["asa_command_equivalents"]
+    assert equivalents["show ip interface brief"] == "show interface ip brief"
+    assert equivalents["show ip route"] == "show route"
+    assert equivalents["show access-lists"] == "show access-list"
+
+
+def test_prompt_tells_the_model_to_use_asa_syntax_on_asa_devices(app, admin_user):
+    """FW-01 answered "kiem tra ket noi fw01" with
+    "ERROR: % Invalid input detected" because the model sent IOS syntax to an
+    ASA. The rule must stay in the prompt or that returns."""
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+
+    prompt = provider.prompts[0]["system_prompt"]
+    assert "cisco_asa" in prompt
+    assert "asa_command_equivalents" in prompt
+

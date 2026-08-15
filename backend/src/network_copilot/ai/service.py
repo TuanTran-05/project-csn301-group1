@@ -62,6 +62,10 @@ Rules:
   The backend derives and enforces all of them independently.
 - For "monitor" and "troubleshoot", return exactly one operation for one explicit
   hostname in "exec" mode. Use only read-only entries from supported_commands.
+- A device whose "device_type" is "cisco_asa" does not understand IOS syntax.
+  For those devices, replace the IOS command with its ASA spelling from
+  "asa_command_equivalents" in the context. Sending the IOS form to an ASA
+  returns a syntax error, not data.
 - Use "monitor" when the user wants to read state. Put the read-only commands in
   "commands" and leave "verification_commands" empty.
 - Use "troubleshoot" when the user reports a problem. Put read-only diagnostic
@@ -115,6 +119,17 @@ engineer should check next. Do not claim to have changed anything: you cannot.
 """
 
 
+# Cisco ASA answers the same questions with different words. The model is
+# told each device's device_type already; this is the vocabulary it needs to
+# act on that. Measured against FW-01 (ASA 9.5): sending the IOS spelling
+# returns "ERROR: % Invalid input detected".
+ASA_COMMAND_EQUIVALENTS = {
+    "show ip interface brief": "show interface ip brief",
+    "show ip route": "show route",
+    "show access-lists": "show access-list",
+}
+
+
 class AIService:
     def __init__(self, provider=None):
         self._provider = provider
@@ -143,6 +158,7 @@ class AIService:
                 for device in devices
             ],
             "supported_commands": commands,
+            "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
         }
 
     # -- conversation history ---------------------------------------------
