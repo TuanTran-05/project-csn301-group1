@@ -213,12 +213,19 @@ def test_verification_failure_still_records_the_backup(
 def test_backup_ssh_failure_keeps_the_stage_specific_error_message(
     app, admin_user, pending_change, ssh_factory, access_switch
 ):
-    ssh_factory.set_failing(access_switch.hostname, SSHConnectionError("link down"))
+    ssh_factory.set_failing(
+        access_switch.hostname,
+        SSHConnectionError("Could not connect to g1lab@10.0.0.9:22."),
+    )
     change_service.approve(pending_change.id, admin_user.id)
     change = change_service.apply(pending_change.id, admin_user.id)
 
     assert change.status == "failed"
-    assert change.error_message == "Pre-change backup failed: link down"
+    assert change.error_message.startswith("Pre-change backup failed: ")
+    assert access_switch.hostname in change.error_message
+    # The reason an apply stopped is read by whoever asked for it, so it
+    # gets the same treatment as chat: the device, not the SSH account.
+    assert "g1lab" not in change.error_message
 
 
 def test_configuration_ssh_failure_keeps_the_stage_specific_error_message(
@@ -232,9 +239,8 @@ def test_configuration_ssh_failure_keeps_the_stage_specific_error_message(
     change = change_service.apply(pending_change.id, admin_user.id)
 
     assert change.status == "failed"
-    assert change.error_message == (
-        "Applying configuration failed: write channel closed"
-    )
+    assert change.error_message.startswith("Applying configuration failed: ")
+    assert "không kết nối được" in change.error_message.lower()
 
 
 def test_verification_ssh_failure_keeps_the_stage_specific_error_message(
@@ -252,9 +258,8 @@ def test_verification_ssh_failure_keeps_the_stage_specific_error_message(
     change = change_service.apply(pending_change.id, admin_user.id)
 
     assert change.status == "failed"
-    assert change.error_message == (
-        "Verification could not run: verification channel closed"
-    )
+    assert change.error_message.startswith("Verification could not run: ")
+    assert "không kết nối được" in change.error_message.lower()
 
 
 def test_client_construction_failure_marks_standalone_change_failed(

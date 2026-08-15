@@ -660,6 +660,7 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
     from ..backups.service import capture_backup
     from ..ssh.client import build_client_for_device
     from ..ssh.exceptions import SSHError
+    from ..ssh.messages import friendly_error
 
     if change.status != "approved":
         raise InvalidStateError(
@@ -704,7 +705,11 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
         change.backup_id = backup.id
         db.session.commit()
     except SSHError as exc:
-        return _fail(change, f"Pre-change backup failed: {exc.message}", user_id)
+        return _fail(
+            change,
+            f"Pre-change backup failed: {friendly_error(exc, device.hostname)}",
+            user_id,
+        )
 
     # 2. Push the configuration (or run the EXEC commands directly).
     try:
@@ -717,14 +722,22 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
         change.apply_output = result.output
         db.session.commit()
     except SSHError as exc:
-        return _fail(change, f"Applying configuration failed: {exc.message}", user_id)
+        return _fail(
+            change,
+            f"Applying configuration failed: {friendly_error(exc, device.hostname)}",
+            user_id,
+        )
 
     # 3. Verify on the device itself.
     try:
         passed, results = run_verification(change, client)
     except SSHError as exc:
         change.verification_output = None
-        return _fail(change, f"Verification could not run: {exc.message}", user_id)
+        return _fail(
+            change,
+            f"Verification could not run: {friendly_error(exc, device.hostname)}",
+            user_id,
+        )
 
     change.verification_output = results
     if not passed:
