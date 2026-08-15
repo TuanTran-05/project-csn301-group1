@@ -265,3 +265,103 @@ def test_no_snapshots_yields_empty_maps(app, make_device):
     topology = build_topology()
 
     assert topology == {"networks": [], "routing": []}
+
+
+# -- routing -----------------------------------------------------------------
+
+
+def _router_snapshot(device, routes):
+    return _snapshot(device, {"show ip route": routes})
+
+
+def _route(network, interface, protocol="O"):
+    return {
+        "network": network,
+        "protocol": protocol,
+        "next_hop": "10.255.1.6",
+        "interface": interface,
+        "distance": 110,
+        "metric": 2,
+    }
+
+
+def _routes_of(routing, hostname):
+    return next(
+        (entry["routes"] for entry in routing if entry["device"] == hostname), None
+    )
+
+
+def test_routing_reports_how_a_router_reaches_a_known_network(app, make_device):
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    _dist_snapshot(switch)
+    _router_snapshot(router, [_route("10.10.60.0/24", "GigabitEthernet0/2")])
+
+    routing = build_topology()["routing"]
+
+    assert _routes_of(routing, "INTERNAL-RTR") == [
+        {
+            "network": "10.10.60.0/24",
+            "interface": "GigabitEthernet0/2",
+            "protocol": "O",
+        }
+    ]
+
+
+def test_the_gateway_switch_also_reports_its_connected_route(app, make_device):
+    """DIST-SW2 is itself a routing role, and its connected route is how the
+    model learns where the network physically attaches. It belongs in the
+    map alongside the upstream router, not instead of it."""
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    _dist_snapshot(switch)
+
+    routing = build_topology()["routing"]
+
+    assert _routes_of(routing, "DIST-SW2") == [
+        {"network": "10.10.60.0/24", "interface": "Vlan60", "protocol": "C"}
+    ]
+
+
+def test_routing_skips_networks_that_are_not_in_the_map(app, make_device):
+    """Transit /30 links and the default route are noise, and the management
+    network was already filtered out of "networks" - it must not reappear here."""
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    _dist_snapshot(switch)
+    _router_snapshot(
+        router,
+        [
+            _route("10.10.60.0/24", "GigabitEthernet0/2"),
+            _route("10.255.1.4/30", "GigabitEthernet0/2", protocol="C"),
+            _route("0.0.0.0/0", "GigabitEthernet0/0", protocol="S"),
+            _route("10.10.10.0/24", "GigabitEthernet0/3", protocol="C"),
+        ],
+    )
+
+    networks = [row["network"] for row in build_topology()["routing"][0]["routes"]]
+    assert networks == ["10.10.60.0/24"]
+
+
+def test_routing_only_covers_routing_roles(app, make_device):
+    """An access switch has no routing table worth showing, even when it
+    reports a route to a network that is in the map."""
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    access = make_device("ACC-SW1", "10.10.10.31", "access")
+    _dist_snapshot(switch)
+    _router_snapshot(access, [_route("10.10.60.0/24", "Vlan60")])
+
+    devices = [entry["device"] for entry in build_topology()["routing"]]
+    assert "ACC-SW1" not in devices
+    assert "DIST-SW2" in devices
+
+
+def test_a_router_with_no_relevant_routes_is_omitted(app, make_device):
+    """INTERNAL-RTR knows only a transit /30 here, which is not in the map,
+    so it contributes nothing and is left out entirely."""
+    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    _dist_snapshot(switch)
+    _router_snapshot(router, [_route("10.255.1.4/30", "GigabitEthernet0/2")])
+
+    devices = [entry["device"] for entry in build_topology()["routing"]]
+    assert "INTERNAL-RTR" not in devices

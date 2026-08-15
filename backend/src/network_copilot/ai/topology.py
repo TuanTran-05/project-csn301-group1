@@ -109,6 +109,34 @@ def _networks_for(device, snapshot) -> list[dict]:
     return entries
 
 
+def _routing_for(devices, snapshots, networks) -> list[dict]:
+    """How each router reaches the networks in the map.
+
+    Restricted to networks already in "networks", which means the
+    management filter applied there covers this too: a route to a filtered
+    network cannot reappear through this door. Transit links and the
+    default route are dropped as noise.
+    """
+    known = {entry["subnet"] for entry in networks}
+
+    routing = []
+    for device in devices:
+        if device.role not in ROUTING_ROLES:
+            continue
+        routes = [
+            {
+                "network": row["network"],
+                "interface": row.get("interface"),
+                "protocol": row.get("protocol"),
+            }
+            for row in _parsed(snapshots[device.id], ROUTE_COMMAND)
+            if row.get("network") in known
+        ]
+        if routes:
+            routing.append({"device": device.hostname, "routes": routes})
+    return routing
+
+
 def build_topology() -> dict:
     """The network as the model is allowed to see it."""
     devices = device_service.list_devices()
@@ -124,4 +152,7 @@ def build_topology() -> dict:
 
     networks.sort(key=lambda entry: (entry["vlan_id"], entry["gateway_device"]))
 
-    return {"networks": networks, "routing": []}
+    return {
+        "networks": networks,
+        "routing": _routing_for(devices, snapshots, networks),
+    }
