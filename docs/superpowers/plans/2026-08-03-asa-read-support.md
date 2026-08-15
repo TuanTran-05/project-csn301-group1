@@ -32,7 +32,7 @@
 - Consumes: nothing from other tasks.
 - Produces: `parse_asa_routes(raw: str | None) -> list[dict]`, each dict `{network, protocol, next_hop, interface, distance, metric}` — the same shape `parse_ip_routes` already returns, so every existing consumer (chat result tables, monitoring snapshots) works unchanged. Registered in `PARSERS` under `"show route"`; `"show interface ip brief"` is registered to the existing `parse_ip_interface_brief`. Task 3 relies on both registrations.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `backend/tests/parsers/test_asa_routes.py`:
 
@@ -161,12 +161,12 @@ def test_asa_interface_command_is_routed_to_the_shared_parser():
     assert rows[1]["ip_address"] == "10.10.100.1"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/parsers/test_asa_routes.py -v` (from `backend/`)
 Expected: FAIL at import — `ModuleNotFoundError: No module named 'network_copilot.parsers.asa_routes'`.
 
-- [ ] **Step 3: Write the parser**
+- [x] **Step 3: Write the parser**
 
 Create `backend/src/network_copilot/parsers/asa_routes.py`:
 
@@ -248,7 +248,7 @@ def parse_asa_routes(raw: str | None) -> list[dict]:
     return rows
 ```
 
-- [ ] **Step 4: Register both ASA commands**
+- [x] **Step 4: Register both ASA commands**
 
 Replace the whole of `backend/src/network_copilot/parsers/__init__.py`:
 
@@ -299,12 +299,12 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/parsers/ -v`
 Expected: PASS — the 11 new tests, plus every pre-existing parser test unchanged (the IOS parsers were not modified).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/src/network_copilot/parsers/asa_routes.py backend/src/network_copilot/parsers/__init__.py backend/tests/parsers/test_asa_routes.py
@@ -323,7 +323,7 @@ git commit -m "feat: parse Cisco ASA route and interface output"
 - Consumes: nothing from other tasks.
 - Produces: `default_policy.evaluate()` returning `allowed=True` for `show interface ip brief`, `show route` and `show access-list` on any role. Task 3 relies on the first two being allowed, since monitoring runs them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `backend/tests/commands/test_policy.py`:
 
@@ -345,12 +345,12 @@ def test_asa_read_commands_are_allowed_on_any_role(command, role):
 No import change is needed: `tests/commands/test_policy.py` already imports
 `pytest` and `default_policy` at the top of the file.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/commands/test_policy.py -v -k asa_read_commands` (from `backend/`)
 Expected: FAIL — `assert False is True` for all 9 parameter combinations, because the allowlist denies anything it does not explicitly recognise.
 
-- [ ] **Step 3: Add the rules**
+- [x] **Step 3: Add the rules**
 
 In `backend/src/network_copilot/commands/policy.py`, find this entry inside `READ_ONLY_RULES`:
 
@@ -386,12 +386,12 @@ Insert the three ASA rules immediately after it:
     ),
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/commands/test_policy.py -v`
 Expected: PASS — the 9 new parameter combinations, plus every pre-existing policy test unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/network_copilot/commands/policy.py backend/tests/commands/test_policy.py
@@ -410,7 +410,7 @@ git commit -m "feat: allow the ASA read-only command spellings"
 - Consumes: the parser registrations from Task 1 (so ASA poll output becomes structured data) and the allowlist entries from Task 2.
 - Produces: `commands_for_device(device) -> list[str]`, choosing the ASA base commands when `device.device_type == "cisco_asa"`. `commands_for_role(role) -> list[str]` keeps its exact current signature and output, so the six existing tests that call it stay valid.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `backend/tests/monitoring/test_monitoring.py`:
 
@@ -465,12 +465,12 @@ def test_poll_runs_the_asa_commands_on_an_asa_device(app, ssh_factory, make_devi
 
 The `make_device` fixture in `tests/conftest.py` already accepts `device_type` as its fourth parameter, defaulting to `"cisco_ios"`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/monitoring/test_monitoring.py -v -k "asa or unaffected"` (from `backend/`)
 Expected: FAIL — `ImportError: cannot import name 'commands_for_device'` for all four.
 
-- [ ] **Step 3: Split base commands and add the device-aware selector**
+- [x] **Step 3: Split base commands and add the device-aware selector**
 
 In `backend/src/network_copilot/monitoring/service.py`, find:
 
@@ -553,12 +553,12 @@ Replace with:
         for command in commands_for_device(device):
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/monitoring/test_monitoring.py -v`
 Expected: PASS — the 4 new tests, plus the 6 pre-existing `commands_for_role` tests unchanged (the refactor preserves its exact output and ordering).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/network_copilot/monitoring/service.py backend/tests/monitoring/test_monitoring.py
@@ -577,7 +577,7 @@ git commit -m "feat: poll ASA devices with ASA command spellings"
 - Consumes: nothing from earlier tasks at runtime — this task is independent of them, though the feature only works end to end once all four land.
 - Produces: `build_context()` returning an additional `"asa_command_equivalents"` key (a `dict[str, str]` mapping IOS spelling to ASA spelling). Nothing later depends on it — this is the last task.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `backend/tests/ai/test_ai.py`:
 
@@ -604,12 +604,12 @@ def test_prompt_tells_the_model_to_use_asa_syntax_on_asa_devices(app, admin_user
     assert "asa_command_equivalents" in prompt
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "asa"` (from `backend/`)
 Expected: FAIL — `KeyError: 'asa_command_equivalents'` on the first, and `assert 'cisco_asa' in prompt` on the second.
 
-- [ ] **Step 3: Add the context mapping**
+- [x] **Step 3: Add the context mapping**
 
 In `backend/src/network_copilot/ai/service.py`, find the constant block near the top:
 
@@ -668,7 +668,7 @@ Replace with:
         }
 ```
 
-- [ ] **Step 4: Add the prompt rule**
+- [x] **Step 4: Add the prompt rule**
 
 In the same file, find this rule inside `SYSTEM_PROMPT`:
 
@@ -688,17 +688,17 @@ Replace with:
   returns a syntax error, not data.
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests/ai/test_ai.py -v -k "asa"`
 Expected: PASS (2 tests)
 
-- [ ] **Step 6: Run the full backend test suite**
+- [x] **Step 6: Run the full backend test suite**
 
 Run: `../.venv/Scripts/python.exe -m pytest tests -q` (from `backend/`)
 Expected: all tests pass — 698 as of this plan plus the tests added across Tasks 1-4; none should fail. This specifically confirms that adding a context key and three allowlist entries broke no existing AI, policy, monitoring or E2E test.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/src/network_copilot/ai/service.py backend/tests/ai/test_ai.py
