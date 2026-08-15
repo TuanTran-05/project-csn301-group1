@@ -1147,3 +1147,21 @@ def test_context_topology_is_empty_without_snapshots(app, admin_user):
         "networks": [],
         "routing": [],
     }
+
+
+def test_prompt_carries_the_acl_domain_rules(app, admin_user):
+    """Batch #17 emitted "deny ip any any" with no ip access-group, from the
+    request "chan guest ping toi it nhung it co the ping toi guest". Each
+    assertion below pins the rule that prevents one part of that failure."""
+    service, provider = service_with(app, MONITOR_ACTION)
+    service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
+    prompt = provider.prompts[0]["system_prompt"]
+
+    # Resolve names to real subnets instead of guessing.
+    assert "topology.networks" in prompt
+    # An unapplied access list does nothing - the Batch #17 defect.
+    assert "ip access-group" in prompt
+    # Without this the implicit deny kills OSPF and DHCP relay.
+    assert "permit ip any any" in prompt
+    # Blocking all icmp also blocks the reply of the allowed direction.
+    assert "echo" in prompt

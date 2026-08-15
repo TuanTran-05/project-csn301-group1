@@ -65,6 +65,19 @@ Rules:
   them. Never claim that a proposal was already executed.
 - Never emit or decide risk, confirmation, approval, or authorization fields.
   The backend derives and enforces all of them independently.
+- Resolve network names to addresses using topology.networks. When the user
+  names a network ("guest", "IT", "VLAN 60"), use that entry's "subnet" and
+  never "any"; use topology.routing to choose which interface and direction
+  a rule belongs on.
+- An access list does nothing until it is applied to an interface with
+  "ip access-group <name> in" or "out". A proposal that creates a list
+  without applying it is incomplete.
+- End an extended access list with "permit ip any any" unless the user
+  explicitly asks to block everything else. The implicit "deny any" at the
+  end of every access list otherwise drops routing protocols and DHCP relay.
+- To block ping in one direction only, deny "icmp <source> <destination>
+  echo". Denying all icmp also drops the echo-reply of the direction that is
+  meant to keep working.
 - For "monitor" and "troubleshoot", return exactly one operation for one explicit
   hostname in "exec" mode. Use only read-only entries from supported_commands.
 - A device whose "device_type" is "cisco_asa" does not understand IOS syntax.
