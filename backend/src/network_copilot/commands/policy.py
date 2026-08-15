@@ -111,6 +111,24 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
     CommandRule(
         "show ip route", _exact("show ip route"), description="IPv4 routing table"
     ),
+    # Cisco ASA spellings. Deliberately ungated by role or device type: the
+    # policy engine's question is "is this read-only and safe", which is the
+    # same answer everywhere. An IOS device asked for "show route" simply
+    # returns its own syntax error, which is the symmetric case of what an
+    # ASA does with IOS syntax today and is no worse.
+    CommandRule(
+        "show interface ip brief",
+        _exact("show interface ip brief"),
+        description="ASA interface addressing and line state",
+    ),
+    CommandRule(
+        "show route", _exact("show route"), description="ASA IPv4 routing table"
+    ),
+    CommandRule(
+        "show access-list",
+        _exact("show access-list"),
+        description="ASA ACL definitions",
+    ),
     CommandRule(
         "show ip ospf neighbor",
         _exact("show ip ospf neighbor"),

@@ -150,3 +150,18 @@ def test_decision_reports_the_matched_rule():
 
 def test_evaluate_rejects_non_string_input():
     assert policy.evaluate(None, "core").allowed is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["show interface ip brief", "show route", "show access-list"],
+)
+@pytest.mark.parametrize("role", ["firewall", "core", "access"])
+def test_asa_read_commands_are_allowed_on_any_role(command, role):
+    """The policy engine answers "is this read-only and safe", which does not
+    depend on the device type. Whether a device understands the syntax is a
+    correctness question handled by the AI context and prompt, so these rules
+    are deliberately ungated."""
+    decision = default_policy.evaluate(command, role)
+    assert decision.allowed is True
+
