@@ -13,22 +13,49 @@ from .model import DeviceSnapshot
 
 logger = logging.getLogger(__name__)
 
-BASE_COMMANDS = ["show ip interface brief", "show ip route"]
+IOS_BASE_COMMANDS = ["show ip interface brief", "show ip route"]
+# Cisco ASA uses a different vocabulary for the same two questions.
+ASA_BASE_COMMANDS = ["show interface ip brief", "show route"]
+ASA_DEVICE_TYPES = {"cisco_asa"}
+
+# Kept as the IOS base so existing callers and tests are unaffected.
+BASE_COMMANDS = IOS_BASE_COMMANDS
+
 ROUTING_ROLES = {"core", "distribution"}
 SWITCHING_ROLES = {"access", "distribution"}
 
 
-def commands_for_role(role: str) -> list[str]:
-    """Read-only commands to poll for a device in the given role."""
-    commands = list(BASE_COMMANDS)
+def _role_extras(role: str) -> list[str]:
+    """Role-driven additions, identical for every device type."""
+    extras: list[str] = []
     if role in ROUTING_ROLES:
-        commands.append("show ip ospf neighbor")
+        extras.append("show ip ospf neighbor")
     if role in SWITCHING_ROLES:
-        commands.append("show vlan brief")
-        commands.append("show interfaces trunk")
+        extras.append("show vlan brief")
+        extras.append("show interfaces trunk")
     if role in ROUTING_ROLES:
-        commands.append("show ip dhcp pool")
-    return commands
+        extras.append("show ip dhcp pool")
+    return extras
+
+
+def commands_for_role(role: str) -> list[str]:
+    """Read-only IOS commands to poll for a device in the given role."""
+    return list(IOS_BASE_COMMANDS) + _role_extras(role)
+
+
+def commands_for_device(device: Device) -> list[str]:
+    """Read-only commands to poll for one device, honouring its type.
+
+    This is the one place that genuinely needs device_type: it chooses
+    commands with no model in the loop, so nothing else can catch a
+    wrong-vendor spelling before it reaches the device.
+    """
+    base = (
+        ASA_BASE_COMMANDS
+        if device.device_type in ASA_DEVICE_TYPES
+        else IOS_BASE_COMMANDS
+    )
+    return list(base) + _role_extras(device.role)
 
 
 def _save(
@@ -63,7 +90,7 @@ def poll_device(device_id: int) -> DeviceSnapshot:
 
     try:
         client = build_client_for_device(device)
-        for command in commands_for_role(device.role):
+        for command in commands_for_device(device):
             result = client.run_show(command)
             raw_output[command] = result.output
             parsed = parse_command_output(command, result.output)

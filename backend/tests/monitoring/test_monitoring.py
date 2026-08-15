@@ -220,3 +220,52 @@ def test_refresh_endpoint_404s_for_unknown_device(client, admin_headers):
     assert (
         client.post("/api/devices/999/refresh", headers=admin_headers).status_code == 404
     )
+
+
+def test_asa_devices_poll_the_asa_command_spellings(app, make_device):
+    from network_copilot.monitoring.service import commands_for_device
+
+    firewall = make_device("FW-TEST", "10.0.0.99", "firewall", device_type="cisco_asa")
+
+    assert commands_for_device(firewall) == [
+        "show interface ip brief",
+        "show route",
+    ]
+
+
+def test_ios_devices_are_unaffected_by_the_asa_branch(app, make_device):
+    from network_copilot.monitoring.service import commands_for_device
+
+    switch = make_device("DIST-TEST", "10.0.0.98", "distribution")
+
+    assert commands_for_device(switch) == [
+        "show ip interface brief",
+        "show ip route",
+        "show ip ospf neighbor",
+        "show vlan brief",
+        "show interfaces trunk",
+        "show ip dhcp pool",
+    ]
+
+
+def test_asa_gets_no_role_extras(app, make_device):
+    """"firewall" is in neither ROUTING_ROLES nor SWITCHING_ROLES, so an ASA
+    is never asked for OSPF neighbours or a VLAN database it does not have."""
+    from network_copilot.monitoring.service import commands_for_device
+
+    firewall = make_device("FW-TEST2", "10.0.0.97", "firewall", device_type="cisco_asa")
+
+    assert "show vlan brief" not in commands_for_device(firewall)
+    assert "show ip ospf neighbor" not in commands_for_device(firewall)
+
+
+def test_poll_runs_the_asa_commands_on_an_asa_device(app, ssh_factory, make_device):
+    from network_copilot.monitoring.service import poll_device
+
+    firewall = make_device("FW-TEST3", "10.0.0.96", "firewall", device_type="cisco_asa")
+    fake = ssh_factory.set_client(firewall.hostname, default_output="ok")
+
+    poll_device(firewall.id)
+
+    assert fake.show_commands == ["show interface ip brief", "show route"]
+
