@@ -12,6 +12,7 @@ from ..errors import PolicyViolationError, ValidationError
 from ..extensions import db
 from ..ssh.client import build_client_for_device
 from ..ssh.exceptions import SSHError
+from ..ssh.messages import friendly_error
 from .model import CommandExecution
 from .policy import CommandDecision, default_policy, policy_for_source
 
@@ -110,7 +111,11 @@ def execute_readonly(
             message=exc.message,
             details={"command": decision.normalized_command, "source": source},
         )
-        raise
+        # The audit entry and the execution record above already hold the raw
+        # transport detail. What leaves here goes to a chat bubble, so restate
+        # it around the device rather than the SSH target. Same class, so the
+        # HTTP status and error code are unchanged.
+        raise type(exc)(friendly_error(exc, device.hostname)) from exc
 
     device_service.set_device_status(device, "online")
     execution = _record(

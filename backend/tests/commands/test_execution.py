@@ -120,6 +120,73 @@ def test_ssh_failure_is_recorded_as_failed(client, admin_headers, device, ssh_fa
     assert record.status == "failed"
 
 
+def test_ssh_failure_names_the_device_not_the_ssh_account(
+    client, admin_headers, device, ssh_factory
+):
+    """What comes back to chat must identify the device and say what to
+    check, without the "user@host:port" the SSH layer words its errors with."""
+    from network_copilot.ssh.exceptions import SSHConnectionError
+
+    ssh_factory.set_failing(
+        device.hostname, SSHConnectionError("Could not connect to g1lab@10.0.0.9:22.")
+    )
+    response = client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "show ip route"},
+    )
+
+    message = response.get_json()["message"]
+    assert device.hostname in message
+    assert "kiểm tra" in message.lower()
+    assert "g1lab" not in message
+    assert "@" not in message
+
+
+def test_ssh_failure_keeps_the_raw_detail_in_the_audit_trail(
+    client, admin_headers, device, ssh_factory
+):
+    """An admin diagnosing the failure still needs the transport detail.
+    Friendlier wording in chat must not cost the audit trail its evidence."""
+    from network_copilot.audit.model import AuditLog
+    from network_copilot.ssh.exceptions import SSHConnectionError
+
+    raw = "Could not connect to g1lab@10.0.0.9:22."
+    ssh_factory.set_failing(device.hostname, SSHConnectionError(raw))
+    client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "show ip route"},
+    )
+
+    event = (
+        db.session.query(AuditLog)
+        .filter_by(action="command.readonly", result="failure")
+        .one()
+    )
+    assert event.message == raw
+
+
+def test_an_authentication_failure_does_not_claim_the_device_is_offline(
+    client, admin_headers, device, ssh_factory
+):
+    from network_copilot.ssh.exceptions import SSHAuthenticationError
+
+    ssh_factory.set_failing(
+        device.hostname,
+        SSHAuthenticationError("Authentication failed for g1lab@10.0.0.9:22."),
+    )
+    response = client.post(
+        "/api/commands/execute-readonly",
+        headers=admin_headers,
+        json={"device_id": device.id, "command": "show ip route"},
+    )
+
+    message = response.get_json()["message"].lower()
+    assert "đăng nhập" in message
+    assert "không kết nối được" not in message
+
+
 def test_unknown_device_returns_404(client, admin_headers):
     response = client.post(
         "/api/commands/execute-readonly",
