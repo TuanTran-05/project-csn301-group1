@@ -29,7 +29,7 @@ Not in this MVP: zero-touch provisioning, auto-discovery, automatic rollback
 ## Requirements
 
 - Python 3.11+
-- Network reachability to the management network `10.10.10.0/24`
+- Network reachability to the management network `172.16.3.0/24`
 
 ## Setup
 
@@ -146,42 +146,30 @@ this first and refuses to continue rather than failing later in a confusing way.
 
 ### 2. Interfaces
 
-| NIC | Network | Address | Gateway |
+| Interface | Network | Address | Gateway |
 |---|---|---|---|
-| 1 | management (`MGMT-NET` bridge) | `10.10.10.10/24` | **none** |
-| 2 | production | `10.10.70.20/24` | `10.10.70.1` |
-| 3 | temporary: `Cloud0`/`pnet0` for package installs | DHCP | — |
+| `enp6s18` | management | `172.16.3.28/24` | `172.16.3.1` |
 
-The management NIC has no gateway on purpose: every device sits in the same
-broadcast domain, so nothing needs routing.
+The installed systemd service binds Gunicorn to `172.16.3.28:5000`.
+This migration does not change the node netplan.
 
-Check the real interface names with `ip link` — they are often `ens3/ens4/ens5`,
-not `eth0`. Then, on Ubuntu, `/etc/netplan/01-lab.yaml`:
+Check the real interface names with `ip link` — it is typically `enp6s18` on this host. Then, on Ubuntu, `/etc/netplan/01-lab.yaml` should include:
 
 ```yaml
 network:
   version: 2
   ethernets:
-    ens3:
-      dhcp4: true          # temporary, for installing packages
-    ens4:
+    enp6s18:
       dhcp4: false
-      addresses: [10.10.10.10/24]
-    ens5:
-      dhcp4: false
-      addresses: [10.10.70.20/24]
+      addresses: [172.16.3.28/24]
       routes:
         - to: default
-          via: 10.10.70.1
+          via: 172.16.3.1
 ```
 
 ```bash
 sudo netplan apply
 ```
-
-Detach NIC 3 once setup is done. Leaving it attached gives the node two default
-routes — the DHCP one and the production one — and traffic then follows
-whichever won, which is not something you want to debug mid-demo.
 
 ### 3. Copy the code
 
@@ -221,14 +209,13 @@ is usually simpler.
 
 ## Verifying against the real lab
 
-Run this on the AI Server (management NIC `10.10.10.10/24`):
+Run this on the AI Server (management NIC `172.16.3.28/24`):
 
 ```bash
-python scripts/smoke_test_lab.py
+./.venv/bin/python scripts/smoke_test_lab.py
 ```
 
-It checks TCP/22, opens an SSH session and runs `show clock` on all nine devices,
-exiting non-zero if any of them fails.
+The command verifies exact inventory matching (`R1`, `SW1`, `SW2`) before any TCP or SSH checks, then opens SSH and runs `show clock` on all three devices.
 
 ## Tests
 
@@ -291,7 +278,7 @@ matched to a server log line:
 {
   "error": "policy_violation",
   "message": "Command is blocked: write commands modify or erase device configuration.",
-  "details": {"command": "write erase", "device": "ACC-SW1"},
+  "details": {"command": "write erase", "device": "SW1"},
   "request_id": "0f0a2f9c-..."
 }
 ```
@@ -343,30 +330,23 @@ src/network_copilot/
 
 ## Lab inventory
 
-`scripts/seed_lab.py` seeds these nine devices. **The hostnames must match the
+`scripts/seed_lab.py` seeds these three devices. **The hostnames must match the
 device hostnames in PNETLab exactly** — the copilot resolves a device by
 hostname, so a mismatch fails the request.
 
-| Hostname | Management IP | Role |
-|---|---|---|
-| `ISP-RTR` | 10.10.10.4 | isp |
-| `FW-01` | 10.10.10.3 | firewall |
-| `INTERNAL-RTR` | 10.10.10.11 | core |
-| `DIST-SW1` | 10.10.10.21 | distribution |
-| `DIST-SW2` | 10.10.10.22 | distribution |
-| `ACC-SW1` | 10.10.10.31 | access |
-| `ACC-SW2` | 10.10.10.32 | access |
-| `ACC-SW3` | 10.10.10.33 | access |
-| `DMZ-SW` | 10.10.10.34 | dmz |
+| Hostname | Management IP | Device type | Role |
+|---|---:|---|---|
+| `R1` | `172.16.3.111` | `cisco_ios` | `core` |
+| `SW1` | `172.16.3.121` | `cisco_ios` | `access` |
+| `SW2` | `172.16.3.122` | `cisco_ios` | `access` |
 
-`INTERNAL-RTR` is a router that fills the `core` role in this topology. Role
-drives behaviour, not the device type: monitoring polls OSPF on core and
-distribution devices, and VLANs on access and distribution ones.
+`R1` is a router that fills the `core` role in this topology. `R1` receives
+routing checks while VLAN checks target `SW1` and `SW2`.
 
 ## Demo script
 
 1. The backend logs in an ADMIN, lists inventory, and checks the live lab.
-2. `show ip interface brief` and the OSPF monitor request exercise read-only
+2. `show ip interface brief` and the VLAN monitor request for `SW1` exercise read-only
    paths.
 3. `thuc hien lenh write tren toan bo thiet bi` creates a frozen batch preview;
    no SSH write occurs during the AI request.
