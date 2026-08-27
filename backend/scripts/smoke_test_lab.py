@@ -1,6 +1,6 @@
 """Verify real SSH reachability against every seeded lab device.
 
-Run this on the AI Server, which sits on the 10.10.10.0/24 management network:
+Run this on the AI Server, which sits on the 172.16.3.0/24 management network:
 
     python scripts/smoke_test_lab.py
 
@@ -30,8 +30,20 @@ from network_copilot.extensions import db  # noqa: E402
 from network_copilot.ssh.client import SSHClient  # noqa: E402
 from network_copilot.ssh.types import SSHTarget  # noqa: E402
 
+EXPECTED_HOSTNAMES = ("R1", "SW1", "SW2")
 TCP_TIMEOUT = 5
 PROBE_COMMAND = "show clock"
+
+
+def inventory_error(devices: list[Device]) -> str | None:
+    expected = set(EXPECTED_HOSTNAMES)
+    actual = {device.hostname for device in devices}
+    if actual == expected and len(devices) == len(expected):
+        return None
+    return (
+        f"inventory mismatch: missing={sorted(expected - actual)}, "
+        f"unexpected={sorted(actual - expected)}"
+    )
 
 
 def tcp_open(host: str, port: int) -> bool:
@@ -86,6 +98,11 @@ def main() -> int:
     app = create_app()
     with app.app_context():
         devices = db.session.query(Device).order_by(Device.hostname).all()
+
+        mismatch = inventory_error(devices)
+        if mismatch is not None:
+            print(mismatch, file=sys.stderr)
+            return 1
 
         if not devices:
             print("No devices found. Run scripts/seed_lab.py first.", file=sys.stderr)

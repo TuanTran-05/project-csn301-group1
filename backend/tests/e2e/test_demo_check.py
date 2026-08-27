@@ -22,9 +22,9 @@ class TerminalInput(io.StringIO):
 
 
 DEVICES = [
-    {"id": 1, "hostname": "INTERNAL-RTR"},
-    {"id": 2, "hostname": "DIST-SW1"},
-    {"id": 3, "hostname": "ACC-SW1"},
+    {"id": 1, "hostname": "R1"},
+    {"id": 2, "hostname": "SW1"},
+    {"id": 3, "hostname": "SW2"},
 ]
 
 
@@ -88,6 +88,13 @@ def _run_demo(
         ["demo_check.py", "--username", "operator", "--password", "operator-password"],
     )
     return demo_check.main(), calls
+
+
+def test_demo_targets_exact_current_inventory():
+    assert demo_check.EXPECTED_HOSTNAMES == ("R1", "SW1", "SW2")
+    assert [device["hostname"] for device in DEVICES] == list(
+        demo_check.EXPECTED_HOSTNAMES
+    )
 
 
 def _approval_or_apply_calls(calls: list[tuple[str, str, object]]) -> list[str]:

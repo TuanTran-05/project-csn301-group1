@@ -6,9 +6,9 @@ Exercises, in order, against real devices over SSH:
 
   1. login
   2. list devices
-  3. run a read-only show command on INTERNAL-RTR
-  4. refresh (poll) INTERNAL-RTR
-  5. ask the AI copilot about OSPF on DIST-SW1          (skipped if no AI key)
+  3. run a read-only show command on R1
+  4. refresh (poll) R1
+  5. ask the AI copilot about VLAN on SW1               (skipped if no AI key)
   6. ask the AI copilot to write memory on every device
   7. inspect the frozen targets, execution mode, commands, risk, and confirmation
   8. type CONFIRM ALL at an interactive terminal, then approve and apply it
@@ -24,9 +24,9 @@ import sys
 import urllib.error
 import urllib.request
 
-CORE_HOSTNAME = "INTERNAL-RTR"
-DIST_HOSTNAME = "DIST-SW1"
-ACCESS_HOSTNAME = "ACC-SW1"
+ROUTER_HOSTNAME = "R1"
+SWITCH_HOSTNAMES = ("SW1", "SW2")
+EXPECTED_HOSTNAMES = (ROUTER_HOSTNAME, *SWITCH_HOSTNAMES)
 WRITE_ALL_REQUEST = "thuc hien lenh write tren toan bo thiet bi"
 
 
@@ -116,14 +116,22 @@ def main() -> int:
     # 2. List devices.
     status, body = call(args.base_url, "/api/devices", token=token)
     devices = {d["hostname"]: d for d in json.loads(body).get("items", [])} if status == 200 else {}
-    step.check("list devices", status == 200 and len(devices) > 0, f"({len(devices)} devices)")
+    actual = set(devices)
+    expected = set(EXPECTED_HOSTNAMES)
+    inventory_ok = status == 200 and actual == expected
+    step.check(
+        "list exact current inventory",
+        inventory_ok,
+        f"({len(devices)} devices)",
+    )
+    if not inventory_ok:
+        print(
+            f"\nERROR: inventory mismatch: missing={sorted(expected - actual)}, "
+            f"unexpected={sorted(actual - expected)}"
+        )
+        return 1
 
-    for hostname in (CORE_HOSTNAME, DIST_HOSTNAME, ACCESS_HOSTNAME):
-        if hostname not in devices:
-            print(f"\nERROR: device '{hostname}' not found. Check scripts/seed_lab.py ran.")
-            return 1
-
-    core_id = devices[CORE_HOSTNAME]["id"]
+    core_id = devices[ROUTER_HOSTNAME]["id"]
     # 3. Read-only command on the core device.
     status, body = call(
         args.base_url,
@@ -133,21 +141,21 @@ def main() -> int:
         token=token,
     )
     ok = status == 200 and "GigabitEthernet" in json.loads(body).get("output", "")
-    step.check(f"read-only command on {CORE_HOSTNAME}", ok, f"(status={status})")
+    step.check(f"read-only command on {ROUTER_HOSTNAME}", ok, f"(status={status})")
 
     # 4. Refresh / poll.
     status, body = call(
         args.base_url, f"/api/devices/{core_id}/refresh", "POST", token=token
     )
     ok = status == 200 and json.loads(body).get("status") == "online"
-    step.check(f"refresh {CORE_HOSTNAME}", ok, f"(status={status})")
+    step.check(f"refresh {ROUTER_HOSTNAME}", ok, f"(status={status})")
 
     # 5. AI: monitor intent.
     status, body = call(
         args.base_url,
         "/api/ai/chat",
         "POST",
-        {"message": f"Kiem tra OSPF cua {DIST_HOSTNAME}"},
+        {"message": f"Kiem tra VLAN cua {SWITCH_HOSTNAMES[0]}"},
         token=token,
     )
     if status == 503:
