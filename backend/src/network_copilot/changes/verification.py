@@ -91,7 +91,10 @@ def run_verification(change, client):
             rows = {row["vlan_id"]: row for row in parse_vlan_brief(output)}
             expected = check.get("expectation", {}).get("data", {})
             row = rows.get(expected.get("vlan_id"))
-            passed = row is not None and (not expected.get("name") or row["name"] == expected["name"])
+            if expected.get("present", True):
+                passed = row is not None and (not expected.get("name") or row["name"] == expected["name"])
+            else:
+                passed = row is None
             details = ["VLAN expectation satisfied."] if passed else ["VLAN expectation was not satisfied."]
         elif check.get("strategy") in {"access_port", "trunk_port"}:
             from ..parsers import parse_switchport_detail, parse_interfaces_trunk, parse_vlan_brief
