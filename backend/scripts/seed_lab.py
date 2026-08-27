@@ -33,17 +33,10 @@ from network_copilot.extensions import db  # noqa: E402
 
 # Names must match the device hostnames in PNETLab exactly: the AI copilot
 # resolves a device by hostname, so a mismatch is a hard failure.
-# INTERNAL-RTR is a router that fills the core role in this topology.
 LAB_DEVICES = [
-    ("ISP-RTR", "10.10.10.4", "cisco_ios", "isp"),
-    ("FW-01", "10.10.10.3", "cisco_asa", "firewall"),
-    ("INTERNAL-RTR", "10.10.10.11", "cisco_ios", "core"),
-    ("DIST-SW1", "10.10.10.21", "cisco_ios", "distribution"),
-    ("DIST-SW2", "10.10.10.22", "cisco_ios", "distribution"),
-    ("ACC-SW1", "10.10.10.31", "cisco_ios", "access"),
-    ("ACC-SW2", "10.10.10.32", "cisco_ios", "access"),
-    ("ACC-SW3", "10.10.10.33", "cisco_ios", "access"),
-    ("DMZ-SW", "10.10.10.34", "cisco_ios", "dmz"),
+    ("R1", "172.16.3.111", "cisco_ios", "core"),
+    ("SW1", "172.16.3.121", "cisco_ios", "access"),
+    ("SW2", "172.16.3.122", "cisco_ios", "access"),
 ]
 
 
