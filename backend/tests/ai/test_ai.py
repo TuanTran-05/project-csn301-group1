@@ -12,6 +12,13 @@ from network_copilot.credentials.service import store_device_credential
 from network_copilot.errors import PolicyViolationError, ValidationError
 from network_copilot.extensions import db
 
+MANAGEMENT_NETWORK = "172.16.3.0/24"
+ROUTER_MANAGEMENT_IP = "172.16.3.111"
+DIST_SW1_MANAGEMENT_IP = "172.16.3.121"
+DIST_SW2_MANAGEMENT_IP = "172.16.3.122"
+ACCESS_SW_MANAGEMENT_IP = "172.16.3.131"
+
+
 MONITOR_ACTION = {
     "intent": "monitor",
     "operations": [{
@@ -633,7 +640,7 @@ def test_management_ip_is_not_sent_to_the_model(
     ssh_factory.set_client(dist_switch.hostname, default_output="ok")
     service, provider = service_with(app, MONITOR_ACTION)
     service.handle("Check OSPF on DIST-SW1", admin_user.id)
-    assert "10.10.10.21" not in provider.everything_sent()
+    assert DIST_SW1_MANAGEMENT_IP not in provider.everything_sent()
 
 
 def test_full_running_config_is_never_sent_to_the_model(
@@ -1090,7 +1097,7 @@ def _guest_vlan_snapshot(device):
 
 
 def test_context_carries_the_network_topology(app, admin_user, make_device):
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _guest_vlan_snapshot(switch)
 
     service, provider = service_with(app, MONITOR_ACTION)
@@ -1104,14 +1111,14 @@ def test_context_carries_the_network_topology(app, admin_user, make_device):
 def test_topology_never_leaks_a_management_ip_to_the_model(app, admin_user, make_device):
     """The narrowed rule in ai/service.py's docstring, asserted end to end:
     user subnets go to the model, management addresses never do."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _topology_snapshot(
         switch,
         {
             "show ip interface brief": [
                 {
                     "interface": "Vlan10",
-                    "ip_address": "10.10.10.22",
+                    "ip_address": DIST_SW2_MANAGEMENT_IP,
                     "status": "up",
                     "protocol": "up",
                 }
@@ -1121,7 +1128,7 @@ def test_topology_never_leaks_a_management_ip_to_the_model(app, admin_user, make
             ],
             "show ip route": [
                 {
-                    "network": "10.10.10.0/24",
+                    "network": MANAGEMENT_NETWORK,
                     "protocol": "C",
                     "next_hop": None,
                     "interface": "Vlan10",
@@ -1135,8 +1142,8 @@ def test_topology_never_leaks_a_management_ip_to_the_model(app, admin_user, make
     service, provider = service_with(app, MONITOR_ACTION)
     service.interpret("Kiem tra OSPF cua DIST-SW1", admin_user.id)
 
-    assert "10.10.10.0/24" not in provider.everything_sent()
-    assert "10.10.10.22" not in provider.everything_sent()
+    assert MANAGEMENT_NETWORK not in provider.everything_sent()
+    assert DIST_SW2_MANAGEMENT_IP not in provider.everything_sent()
 
 
 def test_context_topology_is_empty_without_snapshots(app, admin_user):

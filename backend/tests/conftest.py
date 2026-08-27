@@ -112,7 +112,7 @@ def _create_device(hostname: str, ip: str, role: str, device_type="cisco_ios") -
 @pytest.fixture
 def device(app):
     """Default lab device: the core switch."""
-    return _create_device("CORE-SW1", "10.10.10.11", "core")
+    return _create_device("CORE-SW1", "172.16.3.111", "core")
 
 
 @pytest.fixture
@@ -122,12 +122,12 @@ def core_switch(device):
 
 @pytest.fixture
 def access_switch(app):
-    return _create_device("ACC-SW1", "10.10.10.31", "access")
+    return _create_device("ACC-SW1", "172.16.3.131", "access")
 
 
 @pytest.fixture
 def dist_switch(app):
-    return _create_device("DIST-SW1", "10.10.10.21", "distribution")
+    return _create_device("DIST-SW1", "172.16.3.121", "distribution")
 
 
 @pytest.fixture

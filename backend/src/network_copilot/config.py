@@ -52,7 +52,7 @@ class Config:
     CREDENTIAL_ENCRYPTION_KEY = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
 
     # Management network every device must live in.
-    MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "10.10.10.0/24")
+    MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "172.16.3.0/24")
 
     SSH_CONNECT_TIMEOUT = int(os.environ.get("SSH_CONNECT_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT = int(os.environ.get("SSH_COMMAND_TIMEOUT", "30"))

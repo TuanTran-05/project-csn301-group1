@@ -2,7 +2,7 @@ import pytest
 
 VALID_DEVICE = {
     "hostname": "CORE-SW1",
-    "management_ip": "10.10.10.11",
+    "management_ip": "172.16.3.111",
     "device_type": "cisco_ios",
     "role": "core",
     "ssh_port": 22,
@@ -15,7 +15,7 @@ def test_admin_creates_device(client, admin_headers):
         headers=admin_headers,
         json={
             "hostname": "CORE-SW1",
-            "management_ip": "10.10.10.11",
+            "management_ip": "172.16.3.111",
             "device_type": "cisco_ios",
             "role": "core",
             "ssh_port": 22,
@@ -101,7 +101,7 @@ def test_viewer_cannot_delete_device(client, admin_headers, viewer_headers):
 
 def test_duplicate_hostname_rejected(client, admin_headers):
     client.post("/api/devices", headers=admin_headers, json=VALID_DEVICE)
-    duplicate = dict(VALID_DEVICE, management_ip="10.10.10.12")
+    duplicate = dict(VALID_DEVICE, management_ip="172.16.3.112")
     response = client.post("/api/devices", headers=admin_headers, json=duplicate)
     assert response.status_code == 409
 
@@ -126,7 +126,7 @@ def test_invalid_hostname_rejected(client, admin_headers, hostname):
 
 @pytest.mark.parametrize(
     "management_ip",
-    ["10.10.70.20", "192.168.1.1", "10.10.11.1", "not-an-ip", "10.10.10.0/24"],
+    ["172.16.4.20", "192.168.1.1", "172.16.2.1", "not-an-ip", "172.16.3.0/24"],
 )
 def test_management_ip_must_be_in_management_network(
     client, admin_headers, management_ip
@@ -143,7 +143,7 @@ def test_management_ip_inside_subnet_accepted(client, admin_headers):
     response = client.post(
         "/api/devices",
         headers=admin_headers,
-        json=dict(VALID_DEVICE, management_ip="10.10.10.254"),
+        json=dict(VALID_DEVICE, management_ip="172.16.3.254"),
     )
     assert response.status_code == 201
 
@@ -164,7 +164,7 @@ def test_cisco_asa_device_type_accepted(client, admin_headers):
         headers=admin_headers,
         json={
             "hostname": "FW-01",
-            "management_ip": "10.10.10.3",
+            "management_ip": "172.16.3.103",
             "device_type": "cisco_asa",
             "role": "firewall",
         },

@@ -3,6 +3,13 @@ from network_copilot.extensions import db
 from network_copilot.monitoring.model import DeviceSnapshot
 
 
+MANAGEMENT_NETWORK = "172.16.3.0/24"
+ROUTER_MANAGEMENT_IP = "172.16.3.111"
+DIST_SW1_MANAGEMENT_IP = "172.16.3.121"
+DIST_SW2_MANAGEMENT_IP = "172.16.3.122"
+ACCESS_SW_MANAGEMENT_IP = "172.16.3.131"
+
+
 def _snapshot(device, parsed_data):
     snapshot = DeviceSnapshot(
         device_id=device.id,
@@ -46,7 +53,7 @@ def _dist_snapshot(device, vlan_id=60, name="GUEST", gateway="10.10.60.1",
 
 
 def test_joins_vlan_name_subnet_and_gateway(app, make_device):
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _dist_snapshot(switch)
 
     networks = build_topology()["networks"]
@@ -64,7 +71,7 @@ def test_joins_vlan_name_subnet_and_gateway(app, make_device):
 
 
 def test_an_svi_without_an_address_is_skipped(app, make_device):
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _snapshot(
         switch,
         {
@@ -89,7 +96,7 @@ def test_an_svi_without_an_address_is_skipped(app, make_device):
 def test_an_svi_without_a_connected_route_is_skipped(app, make_device):
     """No route means no prefix length, and a half-populated entry would
     mislead the model about the size of the network."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _snapshot(
         switch,
         {
@@ -114,7 +121,7 @@ def test_an_svi_without_a_connected_route_is_skipped(app, make_device):
 def test_local_host_routes_are_not_used_as_subnets(app, make_device):
     """A /32 "L" route must never become the subnet: that would make the
     network look 1 address wide and defeat the management filter."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _snapshot(
         switch,
         {
@@ -146,7 +153,7 @@ def test_local_host_routes_are_not_used_as_subnets(app, make_device):
 def test_a_device_without_vlan_data_still_yields_an_entry(app, make_device):
     """A core router is not polled for VLANs. The entry keeps its subnet and
     gateway and simply has no name, rather than being dropped."""
-    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    router = make_device("INTERNAL-RTR", ROUTER_MANAGEMENT_IP, "core")
     _snapshot(
         router,
         {
@@ -177,16 +184,16 @@ def test_a_device_without_vlan_data_still_yields_an_entry(app, make_device):
 
 
 def test_a_network_holding_a_management_ip_is_dropped(app, make_device):
-    """THE security test. 10.10.10.22 is DIST-SW2's own management address,
-    so 10.10.10.0/24 must never reach the model."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    """THE security test. 172.16.3.122 is DIST-SW2's own management address,
+    so 172.16.3.0/24 must never reach the model."""
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _snapshot(
         switch,
         {
             "show ip interface brief": [
                 {
                     "interface": "Vlan10",
-                    "ip_address": "10.10.10.22",
+                    "ip_address": DIST_SW2_MANAGEMENT_IP,
                     "status": "up",
                     "protocol": "up",
                 },
@@ -203,7 +210,7 @@ def test_a_network_holding_a_management_ip_is_dropped(app, make_device):
             ],
             "show ip route": [
                 {
-                    "network": "10.10.10.0/24",
+                    "network": MANAGEMENT_NETWORK,
                     "protocol": "C",
                     "next_hop": None,
                     "interface": "Vlan10",
@@ -229,25 +236,25 @@ def test_a_network_holding_a_management_ip_is_dropped(app, make_device):
 def test_another_devices_management_ip_also_filters(app, make_device):
     """The filter uses the whole inventory, not just the device that owns the
     SVI, so one switch cannot expose another's management range."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    make_device("ACC-SW1", "10.10.10.31", "access")
-    _dist_snapshot(switch, vlan_id=10, name="MGMT", gateway="10.10.10.1",
-                   subnet="10.10.10.0/24")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    make_device("ACC-SW1", ACCESS_SW_MANAGEMENT_IP, "access")
+    _dist_snapshot(switch, vlan_id=10, name="MGMT", gateway="172.16.3.1",
+                   subnet=MANAGEMENT_NETWORK)
 
     assert build_topology()["networks"] == []
 
 
 def test_an_unparseable_subnet_is_dropped(app, make_device):
     """Fail closed: a value the filter cannot evaluate must not slip past it."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _dist_snapshot(switch, subnet="not-a-network")
 
     assert build_topology()["networks"] == []
 
 
 def test_networks_are_sorted_by_vlan_then_device(app, make_device):
-    second = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    first = make_device("DIST-SW1", "10.10.10.21", "distribution")
+    second = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    first = make_device("DIST-SW1", DIST_SW1_MANAGEMENT_IP, "distribution")
     _dist_snapshot(second, vlan_id=60, name="GUEST", gateway="10.10.60.1",
                    subnet="10.10.60.0/24")
     _dist_snapshot(first, vlan_id=20, name="HR", gateway="10.10.20.1",
@@ -260,7 +267,7 @@ def test_networks_are_sorted_by_vlan_then_device(app, make_device):
 def test_no_snapshots_yields_empty_maps(app, make_device):
     """MONITORING_ENABLED is false by default. The feature must be inert,
     not broken, on a deployment with no snapshots."""
-    make_device("DIST-SW2", "10.10.10.22", "distribution")
+    make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
 
     topology = build_topology()
 
@@ -292,8 +299,8 @@ def _routes_of(routing, hostname):
 
 
 def test_routing_reports_how_a_router_reaches_a_known_network(app, make_device):
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    router = make_device("INTERNAL-RTR", ROUTER_MANAGEMENT_IP, "core")
     _dist_snapshot(switch)
     _router_snapshot(router, [_route("10.10.60.0/24", "GigabitEthernet0/2")])
 
@@ -312,7 +319,7 @@ def test_the_gateway_switch_also_reports_its_connected_route(app, make_device):
     """DIST-SW2 is itself a routing role, and its connected route is how the
     model learns where the network physically attaches. It belongs in the
     map alongside the upstream router, not instead of it."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
     _dist_snapshot(switch)
 
     routing = build_topology()["routing"]
@@ -325,8 +332,8 @@ def test_the_gateway_switch_also_reports_its_connected_route(app, make_device):
 def test_routing_skips_networks_that_are_not_in_the_map(app, make_device):
     """Transit /30 links and the default route are noise, and the management
     network was already filtered out of "networks" - it must not reappear here."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    router = make_device("INTERNAL-RTR", ROUTER_MANAGEMENT_IP, "core")
     _dist_snapshot(switch)
     _router_snapshot(
         router,
@@ -334,7 +341,7 @@ def test_routing_skips_networks_that_are_not_in_the_map(app, make_device):
             _route("10.10.60.0/24", "GigabitEthernet0/2"),
             _route("10.255.1.4/30", "GigabitEthernet0/2", protocol="C"),
             _route("0.0.0.0/0", "GigabitEthernet0/0", protocol="S"),
-            _route("10.10.10.0/24", "GigabitEthernet0/3", protocol="C"),
+            _route(MANAGEMENT_NETWORK, "GigabitEthernet0/3", protocol="C"),
         ],
     )
 
@@ -345,8 +352,8 @@ def test_routing_skips_networks_that_are_not_in_the_map(app, make_device):
 def test_routing_only_covers_routing_roles(app, make_device):
     """An access switch has no routing table worth showing, even when it
     reports a route to a network that is in the map."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    access = make_device("ACC-SW1", "10.10.10.31", "access")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    access = make_device("ACC-SW1", ACCESS_SW_MANAGEMENT_IP, "access")
     _dist_snapshot(switch)
     _router_snapshot(access, [_route("10.10.60.0/24", "Vlan60")])
 
@@ -358,8 +365,8 @@ def test_routing_only_covers_routing_roles(app, make_device):
 def test_a_router_with_no_relevant_routes_is_omitted(app, make_device):
     """INTERNAL-RTR knows only a transit /30 here, which is not in the map,
     so it contributes nothing and is left out entirely."""
-    switch = make_device("DIST-SW2", "10.10.10.22", "distribution")
-    router = make_device("INTERNAL-RTR", "10.10.10.11", "core")
+    switch = make_device("DIST-SW2", DIST_SW2_MANAGEMENT_IP, "distribution")
+    router = make_device("INTERNAL-RTR", ROUTER_MANAGEMENT_IP, "core")
     _dist_snapshot(switch)
     _router_snapshot(router, [_route("10.255.1.4/30", "GigabitEthernet0/2")])
 

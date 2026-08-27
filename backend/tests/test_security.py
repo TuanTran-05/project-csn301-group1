@@ -110,7 +110,7 @@ def test_role_denial_is_reported_as_forbidden(client, viewer_headers):
         headers=viewer_headers,
         json={
             "hostname": "CORE-SW9",
-            "management_ip": "10.10.10.19",
+            "management_ip": "172.16.3.119",
             "device_type": "cisco_ios",
             "role": "core",
         },
@@ -138,7 +138,7 @@ def test_invalid_state_keeps_its_own_error_code(client, admin_headers, access_sw
 def test_conflict_and_invalid_state_are_distinguishable(client, admin_headers):
     payload = {
         "hostname": "CORE-SW1",
-        "management_ip": "10.10.10.11",
+        "management_ip": "172.16.3.111",
         "device_type": "cisco_ios",
         "role": "core",
     }

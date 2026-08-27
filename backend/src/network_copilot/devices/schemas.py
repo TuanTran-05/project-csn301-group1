@@ -16,7 +16,7 @@ def management_network() -> ipaddress.IPv4Network:
     """Read the management network from app config, falling back to the lab default."""
     from flask import current_app, has_app_context
 
-    default = "10.10.10.0/24"
+    default = "172.16.3.0/24"
     if has_app_context():
         default = current_app.config.get("MANAGEMENT_NETWORK", default)
     return ipaddress.ip_network(default, strict=False)

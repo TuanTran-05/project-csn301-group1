@@ -459,7 +459,7 @@ def test_ssh_result_never_carries_credentials():
 def test_build_client_for_device_uses_stored_credentials(app, device):
     store_device_credential(device.id, "ai-automation", "Secret123!")
     client = build_client_for_device(device)
-    assert client.target.host == "10.10.10.11"
+    assert client.target.host == "172.16.3.111"
     assert client.target.port == 22
     assert client.target.username == "ai-automation"
 

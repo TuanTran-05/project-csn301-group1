@@ -43,7 +43,7 @@ def test_preview_persists_frozen_connection_identity(
     child = batch.changes[0]
 
     assert child.target_hostname == "ACC-SW1"
-    assert child.target_management_ip == "10.10.10.31"
+    assert child.target_management_ip == "172.16.3.131"
     assert child.target_ssh_port == 22
     assert child.target_device_type == "cisco_ios"
 

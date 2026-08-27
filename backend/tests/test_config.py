@@ -75,3 +75,10 @@ def test_every_entry_point_resolves_to_the_same_file(monkeypatch):
     assert str(BASE_DIR) in uri
     assert app.instance_path not in uri
     importlib.reload(config_module)
+
+
+def test_default_management_network_matches_current_lab(monkeypatch):
+    monkeypatch.delenv("MANAGEMENT_NETWORK", raising=False)
+    module = importlib.import_module("network_copilot.config")
+    config = importlib.reload(module).Config
+    assert config.MANAGEMENT_NETWORK == "172.16.3.0/24"

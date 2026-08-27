@@ -132,7 +132,7 @@ def test_device_create_update_delete_are_audited(client, admin_headers, app):
         headers=admin_headers,
         json={
             "hostname": "CORE-SW1",
-            "management_ip": "10.10.10.11",
+            "management_ip": "172.16.3.111",
             "device_type": "cisco_ios",
             "role": "core",
         },
