@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-27
 
-**Status:** Awaiting written-spec review
+**Status:** Approved for implementation
 
 ## 1. Objective
 
