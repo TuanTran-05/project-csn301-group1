@@ -87,7 +87,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -105,7 +105,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -123,7 +123,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -141,7 +141,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -159,7 +159,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -177,7 +177,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "monitor",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -195,7 +195,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -213,7 +213,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -231,7 +231,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -249,7 +249,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -267,7 +267,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -285,7 +285,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "troubleshoot",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -303,7 +303,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -321,7 +321,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -339,7 +339,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -357,7 +357,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -375,7 +375,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -393,7 +393,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -411,7 +411,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -429,7 +429,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -447,7 +447,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -465,7 +465,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -483,7 +483,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -501,7 +501,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -519,7 +519,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -537,7 +537,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -555,7 +555,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -573,7 +573,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -591,7 +591,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -609,7 +609,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -627,7 +627,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -645,7 +645,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -663,7 +663,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -681,7 +681,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -699,7 +699,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -717,7 +717,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -735,7 +735,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -753,7 +753,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "exec",
     "expected_command_patterns": [],
@@ -771,7 +771,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -789,7 +789,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW2"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -807,7 +807,7 @@
     "actor_role": "ADMIN",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "R1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
@@ -825,7 +825,7 @@
     "actor_role": "VIEWER",
     "expected_intent": "configure",
     "expected_targets": [
-      "ACC-SW1"
+      "SW1"
     ],
     "expected_execution_mode": "config",
     "expected_command_patterns": [],
