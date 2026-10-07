@@ -16,6 +16,7 @@ document.addEventListener("alpine:init", () => {
     loginError: "",
     _sessionGeneration: 0,
 
+    projectName: "",
     summary: null,
     lastError: "",
     _summaryTimer: null,
@@ -29,8 +30,10 @@ document.addEventListener("alpine:init", () => {
     async authFetch(path, options = {}) {
       const token = this.token;
       const generation = this._sessionGeneration;
+      const projectId = localStorage.getItem("nc_project_id");
       const headers = Object.assign(
         { "Content-Type": "application/json" },
+        projectId ? { "X-Project-Id": projectId } : {},
         options.headers || {},
         token ? { Authorization: `Bearer ${token}` } : {}
       );
@@ -82,10 +85,21 @@ document.addEventListener("alpine:init", () => {
       localStorage.removeItem("nc_user");
       this.stopPolling();
       this.summary = null;
+      this.projectName = "";
       this.lastError = "";
     },
 
+    async loadProjectName() {
+      const data = await this.authFetch("/api/projects");
+      const stored = Number(localStorage.getItem("nc_project_id"));
+      const project =
+        data.items.find((item) => item.id === stored) ||
+        (data.items.length === 1 ? data.items[0] : null);
+      this.projectName = project ? project.name : "";
+    },
+
     async startApp() {
+      await this.loadProjectName().catch(() => {});
       await this.refreshSummary().catch(() => {});
       this.startPolling();
     },

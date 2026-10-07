@@ -45,10 +45,17 @@ class Step:
         print(f"  [SKIP] {label}  ({reason})")
 
 
+# Set from --project-id; sent on every request so the check targets one
+# project when the account can see several.
+PROJECT_ID = None
+
+
 def call(base_url, path, method="GET", body=None, token=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base_url + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
+    if PROJECT_ID is not None:
+        req.add_header("X-Project-Id", str(PROJECT_ID))
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
@@ -94,9 +101,17 @@ def prompt_for_confirmation() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:5000")
+    parser.add_argument(
+        "--project-id",
+        type=int,
+        default=None,
+        help="project to check (needed when the account can see several)",
+    )
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
     args = parser.parse_args()
+    global PROJECT_ID
+    PROJECT_ID = args.project_id
 
     step = Step()
     print(f"Demo check against {args.base_url}\n")

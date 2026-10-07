@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Network Copilot — Projects</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+</head>
+<body x-data="projectsApp()">
+
+  <section class="login-screen" x-show="!currentUser" x-cloak>
+    <form class="login-form" @submit.prevent="login()">
+      <h1>Network Copilot</h1>
+      <label>
+        Tên đăng nhập
+        <input type="text" x-model="loginForm.username" required autocomplete="username" />
+      </label>
+      <label>
+        Mật khẩu
+        <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
+      </label>
+      <p class="error-text" x-show="loginError" x-text="loginError"></p>
+      <button type="submit">Đăng nhập</button>
+    </form>
+  </section>
+
+  <div class="app-shell" x-show="currentUser" x-cloak>
+    <header class="top-bar">
+      <span class="app-title">Network Copilot — Projects</span>
+      <a class="nav-link" href="/dashboard">Dashboard</a>
+      <a class="nav-link" href="/">Chat</a>
+      <span class="user-badge">
+        <span x-text="currentUser && currentUser.username"></span>
+        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+      </span>
+      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+    </header>
+
+    <div class="projects-layout">
+
+      <!-- ===== Project list / create / users ===== -->
+      <aside class="projects-sidebar">
+        <h2>Projects</h2>
+        <p class="hint" x-show="!projects.length">Chưa có project nào.</p>
+        <ul class="project-list">
+          <template x-for="item in projects" :key="item.id">
+            <li>
+              <button
+                type="button"
+                class="project-item"
+                :class="{ active: item.id === currentProjectId }"
+                @click="selectProject(item.id)"
+              >
+                <span class="project-name" x-text="item.name"></span>
+                <span class="project-meta">
+                  <span class="pill" x-text="item.environment"></span>
+                  <span class="pill" x-text="item.access"></span>
+                  <span x-text="item.device_count + ' thiết bị'"></span>
+                </span>
+                <span class="project-meta" x-show="item.owner && item.owner !== (currentUser && currentUser.username)">
+                  của <span x-text="item.owner"></span>
+                </span>
+              </button>
+            </li>
+          </template>
+        </ul>
+
+        <form class="side-form" @submit.prevent="createProject()" x-show="canCreateProject">
+          <h3>Tạo project mới</h3>
+          <label>Tên
+            <input type="text" x-model="projectForm.name" required maxlength="80" />
+          </label>
+          <label>Mô tả
+            <input type="text" x-model="projectForm.description" maxlength="255" />
+          </label>
+          <label>Dải IP quản trị (CIDR)
+            <input type="text" x-model="projectForm.management_network" required placeholder="vd. 172.16.3.0/24" />
+          </label>
+          <label>Môi trường
+            <select x-model="projectForm.environment">
+              <option value="pnetlab">PNETLab</option>
+              <option value="physical">Thiết bị thật</option>
+              <option value="mixed">Cả hai</option>
+            </select>
+          </label>
+          <button type="submit" class="primary-btn">Tạo project</button>
+        </form>
+
+        <section class="side-form" x-show="isAdmin" x-cloak>
+          <h3>Tài khoản (ADMIN)</h3>
+          <ul class="user-list">
+            <template x-for="user in users" :key="user.id">
+              <li><span x-text="user.username"></span> <span class="pill" x-text="user.role"></span></li>
+            </template>
+          </ul>
+          <form @submit.prevent="createUser()">
+            <label>Tên đăng nhập
+              <input type="text" x-model="userForm.username" required autocomplete="off" />
+            </label>
+            <label>Mật khẩu (≥ 10 ký tự)
+              <input type="password" x-model="userForm.password" required autocomplete="new-password" />
+            </label>
+            <label>Vai trò
+              <select x-model="userForm.role">
+                <option value="OPERATOR">OPERATOR</option>
+                <option value="VIEWER">VIEWER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </label>
+            <p class="error-text" x-show="userError" x-text="userError"></p>
+            <p class="ok-text" x-show="userNotice" x-text="userNotice"></p>
+            <button type="submit" class="primary-btn">Tạo tài khoản</button>
+          </form>
+        </section>
+      </aside>
+
+      <!-- ===== Selected project ===== -->
+      <main class="project-main">
+        <p class="error-text" x-show="projectError" x-text="projectError"></p>
+        <p class="ok-text" x-show="projectNotice" x-text="projectNotice"></p>
+
+        <div class="empty-state" x-show="!project">
+          Chọn một project ở bên trái hoặc tạo project mới để thêm thiết bị và thiết kế mô hình mạng.
+        </div>
+
+        <template x-if="project">
+          <div>
+            <div class="project-header">
+              <div>
+                <h2 x-text="project.name"></h2>
+                <p class="hint">
+                  <span x-text="project.description || 'Không có mô tả'"></span> ·
+                  dải quản trị <code x-text="project.management_network"></code> ·
+                  quyền của bạn: <strong x-text="project.access"></strong>
+                </p>
+              </div>
+              <div class="project-actions">
+                <a class="nav-link" href="/">Mở Chat</a>
+                <a class="nav-link" href="/dashboard">Dashboard</a>
+              </div>
+            </div>
+
+            <nav class="tabs" role="tablist">
+              <button type="button" :class="{ active: tab === 'devices' }" @click="tab = 'devices'">Thiết bị</button>
+              <button type="button" :class="{ active: tab === 'topology' }" @click="tab = 'topology'">Sơ đồ mạng</button>
+              <button type="button" :class="{ active: tab === 'sharing' }" @click="tab = 'sharing'">Chia sẻ</button>
+              <button type="button" :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Cài đặt</button>
+            </nav>
+
+            <!-- ---------- Devices ---------- -->
+            <section x-show="tab === 'devices'">
+              <div class="section-bar">
+                <h3>Thiết bị (<span x-text="devices.length"></span>)</h3>
+                <button type="button" class="primary-btn" @click="openDeviceForm(null)" x-show="canEdit && !deviceFormOpen">+ Thêm thiết bị</button>
+              </div>
+              <p class="error-text" x-show="deviceError" x-text="deviceError"></p>
+              <p class="ok-text" x-show="deviceNotice" x-text="deviceNotice"></p>
+
+              <form class="card form-grid" @submit.prevent="saveDevice()" x-show="deviceFormOpen" x-cloak>
+                <h4 x-text="deviceForm.id ? 'Sửa thiết bị' : 'Thêm thiết bị'"></h4>
+                <label>Hostname
+                  <input type="text" x-model="deviceForm.hostname" required maxlength="64" placeholder="R1 (chữ HOA, số, -)" />
+                </label>
+                <label>IP quản trị
+                  <input type="text" x-model="deviceForm.management_ip" required :placeholder="'trong ' + project.management_network" />
+                </label>
+                <label>Loại
+                  <select x-model="deviceForm.device_type">
+                    <option value="cisco_ios">Cisco IOS</option>
+                    <option value="cisco_asa">Cisco ASA</option>
+                  </select>
+                </label>
+                <label>Vai trò
+                  <select x-model="deviceForm.role">
+                    <template x-for="role in ['isp','firewall','core','distribution','access','dmz','management']" :key="role">
+                      <option :value="role" x-text="role"></option>
+                    </template>
+                  </select>
+                </label>
+                <label>Môi trường
+                  <select x-model="deviceForm.environment">
+                    <option value="pnetlab">PNETLab</option>
+                    <option value="physical">Thiết bị thật</option>
+                  </select>
+                </label>
+                <label>Cổng SSH
+                  <input type="number" min="1" max="65535" x-model="deviceForm.ssh_port" />
+                </label>
+                <label>Tên đăng nhập SSH
+                  <input type="text" x-model="deviceForm.username" autocomplete="off" />
+                </label>
+                <label>Mật khẩu SSH
+                  <input type="password" x-model="deviceForm.password" autocomplete="new-password"
+                         :placeholder="deviceForm.id ? 'để trống = giữ nguyên' : ''" />
+                </label>
+                <label>Enable secret (tuỳ chọn)
+                  <input type="password" x-model="deviceForm.enable_secret" autocomplete="new-password" />
+                </label>
+                <label>Mô tả
+                  <input type="text" x-model="deviceForm.description" maxlength="255" />
+                </label>
+                <label class="check">
+                  <input type="checkbox" x-model="deviceForm.monitoring_enabled" /> Giám sát định kỳ
+                </label>
+                <div class="form-actions">
+                  <button type="submit" class="primary-btn" x-text="deviceForm.id ? 'Lưu' : 'Thêm'"></button>
+                  <button type="button" @click="closeDeviceForm()">Huỷ</button>
+                </div>
+                <p class="hint">Mật khẩu SSH được mã hoá trước khi lưu và không bao giờ được trả lại.</p>
+              </form>
+
+              <table class="data-table" x-show="devices.length">
+                <thead>
+                  <tr>
+                    <th>Hostname</th><th>IP quản trị</th><th>Loại</th><th>Vai trò</th>
+                    <th>Môi trường</th><th>Trạng thái</th><th>SSH</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="device in devices" :key="device.id">
+                    <tr>
+                      <td x-text="device.hostname"></td>
+                      <td><code x-text="device.management_ip"></code></td>
+                      <td x-text="device.device_type"></td>
+                      <td x-text="device.role"></td>
+                      <td x-text="device.environment === 'physical' ? 'Thiết bị thật' : 'PNETLab'"></td>
+                      <td>
+                        <span class="status-dot" :class="'status-' + device.status"></span>
+                        <span x-text="device.status"></span>
+                      </td>
+                      <td x-text="device.has_credential ? 'đã lưu' : 'chưa có'"></td>
+                      <td class="row-actions">
+                        <button type="button" @click="testConnection(device)" x-show="canEdit" :disabled="deviceBusy[device.id]">Kiểm tra</button>
+                        <button type="button" @click="openDeviceForm(device)" x-show="canEdit">Sửa</button>
+                        <button type="button" class="danger-btn" @click="deleteDevice(device)" x-show="canEdit">Xoá</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p class="hint" x-show="!devices.length">Project chưa có thiết bị. Thêm thiết bị rồi vẽ chúng ở tab Sơ đồ mạng.</p>
+            </section>
+
+            <!-- ---------- Topology ---------- -->
+            <section x-show="tab === 'topology'" x-cloak>
+              <div class="section-bar">
+                <h3>Sơ đồ mạng</h3>
+                <div class="row-actions">
+                  <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit">
+                    <span x-text="linkMode ? 'Đang nối thiết bị…' : 'Nối thiết bị'"></span>
+                  </button>
+                  <button type="button" @click="autoLayout()" x-show="canEdit">Sắp xếp lại</button>
+                  <button type="button" @click="loadPlan()" x-show="canEdit">Xem cấu hình sinh ra</button>
+                </div>
+              </div>
+              <p class="error-text" x-show="topologyError" x-text="topologyError"></p>
+              <p class="hint" x-show="!devices.length">Thêm thiết bị ở tab Thiết bị trước khi vẽ sơ đồ.</p>
+
+              <div class="topology-wrap" x-show="devices.length">
+                <svg
+                  x-ref="canvas"
+                  class="topology-canvas"
+                  viewBox="0 0 960 560"
+                  preserveAspectRatio="xMidYMid meet"
+                  @pointerdown="onCanvasPointerDown($event)"
+                >
+                  <g x-html="topologySvg"></g>
+                </svg>
+
+                <aside class="topology-panel">
+                  <div class="legend">
+                    <span><i class="swatch physical"></i> cáp thường</span>
+                    <span><i class="swatch routed"></i> routed (L3)</span>
+                    <span><i class="swatch trunk"></i> trunk</span>
+                  </div>
+
+                  <div x-show="selectedNode" x-cloak class="card">
+                    <h4 x-text="selectedNode && selectedNode.hostname"></h4>
+                    <p class="hint">
+                      <code x-text="selectedNode && selectedNode.management_ip"></code> ·
+                      <span x-text="selectedNode && selectedNode.role"></span> ·
+                      <span x-text="selectedNode && selectedNode.status"></span>
+                    </p>
+                  </div>
+
+                  <form class="card form-grid single" @submit.prevent="saveLink()" x-show="linkFormOpen" x-cloak>
+                    <h4 x-text="linkForm.id ? 'Sửa liên kết #' + linkForm.id : 'Liên kết mới'"></h4>
+                    <p class="hint" x-show="!linkForm.id">Bấm hai thiết bị trên sơ đồ hoặc chọn bên dưới.</p>
+
+                    <label>Thiết bị A
+                      <select x-model.number="linkForm.device_a_id" :disabled="!!linkForm.id">
+                        <option value="">—</option>
+                        <template x-for="d in devices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                      </select>
+                    </label>
+                    <label>Cổng A
+                      <input type="text" x-model="linkForm.interface_a" :disabled="!!linkForm.id" required placeholder="GigabitEthernet0/1" />
+                    </label>
+                    <label>Thiết bị B
+                      <select x-model.number="linkForm.device_b_id" :disabled="!!linkForm.id">
+                        <option value="">—</option>
+                        <template x-for="d in devices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                      </select>
+                    </label>
+                    <label>Cổng B
+                      <input type="text" x-model="linkForm.interface_b" :disabled="!!linkForm.id" required placeholder="GigabitEthernet0/0" />
+                    </label>
+                    <label>Kiểu liên kết
+                      <select x-model="linkForm.link_type">
+                        <option value="physical">Cáp thường (chỉ mô tả)</option>
+                        <option value="routed">Routed — gán IP</option>
+                        <option value="trunk">Trunk — switchport</option>
+                      </select>
+                    </label>
+
+                    <template x-if="linkForm.link_type === 'routed'">
+                      <div class="subfields">
+                        <label>Mạng điểm-điểm
+                          <input type="text" x-model="linkForm.network" required placeholder="10.0.12.0/30" />
+                        </label>
+                        <label>IP đầu A (tuỳ chọn)
+                          <input type="text" x-model="linkForm.ip_a" placeholder="tự động: host đầu tiên" />
+                        </label>
+                        <label>IP đầu B (tuỳ chọn)
+                          <input type="text" x-model="linkForm.ip_b" placeholder="tự động: host thứ hai" />
+                        </label>
+                      </div>
+                    </template>
+                    <template x-if="linkForm.link_type === 'trunk'">
+                      <div class="subfields">
+                        <label>VLAN cho phép (tuỳ chọn)
+                          <input type="text" x-model="linkForm.allowed_vlans" placeholder="10,20,30-40" />
+                        </label>
+                      </div>
+                    </template>
+
+                    <label>Ghi chú (làm description của cổng)
+                      <input type="text" x-model="linkForm.description" maxlength="255" />
+                    </label>
+                    <label class="check">
+                      <input type="checkbox" x-model="linkForm.bring_up" /> Bật cổng (<code>no shutdown</code>)
+                    </label>
+                    <div class="form-actions">
+                      <button type="submit" class="primary-btn" x-text="linkForm.id ? 'Lưu' : 'Tạo liên kết'"></button>
+                      <button type="button" class="danger-btn" x-show="linkForm.id" @click="deleteLink()">Xoá</button>
+                      <button type="button" @click="closeLinkForm()">Đóng</button>
+                    </div>
+                  </form>
+
+                  <p class="hint" x-show="!canEdit">Bạn chỉ có quyền xem sơ đồ này.</p>
+                </aside>
+              </div>
+
+              <div class="card plan" x-show="plan" x-cloak>
+                <h4>Cấu hình sinh ra từ sơ đồ</h4>
+                <p class="hint">
+                  Đây chỉ là bản xem trước. Không có lệnh nào chạy trên thiết bị cho đến khi một ADMIN
+                  duyệt và áp dụng nó qua luồng Preview → Approve → Apply.
+                </p>
+                <template x-for="entry in (plan ? plan.devices : [])" :key="entry.device_id">
+                  <div class="plan-device">
+                    <strong x-text="entry.hostname"></strong>
+                    <pre x-text="entry.commands.join('\n')"></pre>
+                  </div>
+                </template>
+                <template x-for="item in (plan ? plan.skipped : [])" :key="item.device_id">
+                  <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.reason"></span></p>
+                </template>
+                <div class="form-actions">
+                  <button type="button" class="primary-btn" @click="createPreview()" x-show="isAdmin">
+                    Tạo bản xem trước thay đổi
+                  </button>
+                  <span class="hint" x-show="!isAdmin">Chỉ ADMIN mới tạo được bản xem trước để duyệt.</span>
+                </div>
+                <p class="ok-text" x-show="previewNotice">
+                  <span x-text="previewNotice"></span> <a href="/">Mở trang Chat</a>
+                </p>
+              </div>
+            </section>
+
+            <!-- ---------- Sharing ---------- -->
+            <section x-show="tab === 'sharing'" x-cloak>
+              <h3>Chia sẻ project</h3>
+              <p class="hint">
+                Người được chia sẻ mới nhìn thấy project này. <strong>viewer</strong> chỉ xem;
+                <strong>editor</strong> thêm/sửa thiết bị và sơ đồ. ADMIN luôn thấy mọi project.
+              </p>
+              <p class="error-text" x-show="shareError" x-text="shareError"></p>
+              <table class="data-table" x-show="members.length">
+                <thead><tr><th>Người dùng</th><th>Quyền</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="member in members" :key="member.user_id">
+                    <tr>
+                      <td x-text="member.username"></td>
+                      <td>
+                        <select :value="member.access" :disabled="!isOwner"
+                                @change="changeMemberAccess(member, $event.target.value)">
+                          <option value="viewer">viewer</option>
+                          <option value="editor">editor</option>
+                        </select>
+                      </td>
+                      <td class="row-actions">
+                        <button type="button" class="danger-btn" x-show="isOwner" @click="unshare(member)">Gỡ</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p class="hint" x-show="!members.length">Chưa chia sẻ cho ai.</p>
+              <form class="inline-form" @submit.prevent="shareProject()" x-show="isOwner">
+                <input type="text" x-model="shareForm.username" placeholder="tên đăng nhập" required />
+                <select x-model="shareForm.access">
+                  <option value="viewer">viewer</option>
+                  <option value="editor">editor</option>
+                </select>
+                <button type="submit" class="primary-btn">Chia sẻ</button>
+              </form>
+            </section>
+
+            <!-- ---------- Settings ---------- -->
+            <section x-show="tab === 'settings'" x-cloak>
+              <h3>Cài đặt project</h3>
+              <form class="card form-grid" @submit.prevent="saveSettings()" x-show="settingsForm && isOwner">
+                <label>Tên
+                  <input type="text" x-model="settingsForm.name" required maxlength="80" />
+                </label>
+                <label>Mô tả
+                  <input type="text" x-model="settingsForm.description" maxlength="255" />
+                </label>
+                <label>Dải IP quản trị
+                  <input type="text" x-model="settingsForm.management_network" required />
+                </label>
+                <label>Môi trường
+                  <select x-model="settingsForm.environment">
+                    <option value="pnetlab">PNETLab</option>
+                    <option value="physical">Thiết bị thật</option>
+                    <option value="mixed">Cả hai</option>
+                  </select>
+                </label>
+                <div class="form-actions">
+                  <button type="submit" class="primary-btn">Lưu</button>
+                </div>
+              </form>
+              <p class="hint" x-show="!isOwner">Chỉ chủ project (hoặc ADMIN) mới sửa được cài đặt.</p>
+              <div class="danger-zone" x-show="isOwner">
+                <h4>Vùng nguy hiểm</h4>
+                <p class="hint">Xoá project sẽ xoá toàn bộ thiết bị, sơ đồ, chat và lịch sử thay đổi của nó.</p>
+                <button type="button" class="danger-btn" @click="deleteProject()">Xoá project</button>
+              </div>
+            </section>
+          </div>
+        </template>
+      </main>
+    </div>
+  </div>
+
+  <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
+</body>
+</html>

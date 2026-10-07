@@ -1,6 +1,8 @@
 # Network Copilot — AI Network Management Backend
 
-Flask backend that manages a PNETLab Cisco topology over SSH: it monitors device
+Flask backend that manages Cisco networks, PNETLab labs and real hardware alike,
+over SSH. Each network is a **project**: its devices, topology diagram, chat and
+change history are isolated from every other project. It monitors device
 state, runs policy-checked read-only commands, and drives configuration changes
 through a **Preview → Approve → Apply → Verify** workflow. An AI copilot can turn
 plain Vietnamese or English into a *proposal*, but it can never execute anything
@@ -12,6 +14,8 @@ The rules below are enforced by code and covered by tests, not by convention:
 
 | Rule | Where it is enforced |
 |---|---|
+| A project's devices, changes, chat, audit and AI context never reach another project; `"*"` means "every device of *this* project" | `projects/scope.py`, `devices/service.py`, `changes/batch_service.py`, `ai/service.py` |
+| A user only sees projects they own or that were shared with them; ADMIN sees all | `projects/service.py::access_level` |
 | Unknown read-only commands are denied by default | `commands/policy.py` — allowlist only |
 | Destructive configuration commands are never silently blocked or silently executed: they become high-risk previews and require typed confirmation before Apply | `changes/service.py`, `changes/batch_service.py` |
 | Only `ADMIN` may approve or apply a change | `auth/service.py::roles_required` |
@@ -25,6 +29,53 @@ The rules below are enforced by code and covered by tests, not by convention:
 
 Not in this MVP: zero-touch provisioning, auto-discovery, automatic rollback
 (rollback commands are surfaced, never executed), and full multi-vendor support.
+
+## Projects, sharing and the network designer
+
+Open <http://127.0.0.1:5000/projects>.
+
+- **Projects.** Anyone except a read-only `VIEWER` can create projects. Each one
+  declares its own management network (a private IPv4 range no wider than /16,
+  e.g. `172.16.3.0/24` or `192.168.50.0/24`) and an environment: `pnetlab`,
+  `physical` or `mixed`. Hostnames and management IPs are unique *within* a
+  project, so two projects may both have an `R1`. Two projects that reuse the
+  same address range cannot both be reachable from one backend at once; give
+  each lab its own range if they run together.
+- **Devices.** Add a device — environment (PNETLab or physical hardware), SSH
+  port and its SSH login — from the page or `POST /api/devices`. The password is
+  encrypted before it is stored and is never returned. There is no seed list to
+  edit.
+- **Sharing.** The owner shares a project with a username as `viewer` (read) or
+  `editor` (devices and diagram). Sharing never grants more than the user's
+  global role: a `VIEWER` account stays read-only everywhere. An ADMIN can see
+  and manage every project. ADMINs create accounts at `POST /api/users` or in
+  the page's account panel.
+- **Selecting a project.** API calls name the project with the `X-Project-Id`
+  header (or `?project_id=`). If the caller has exactly one project it is used
+  automatically; with several and no header the API answers
+  `400 project_required`. A project you cannot access is `404`, never `403`.
+  The chat, dashboard and projects pages share the selection.
+- **Network designer.** The *Sơ đồ mạng* tab is a canvas: drag devices, connect
+  interfaces, and mark each link `physical`, `routed` (a point-to-point subnet,
+  addresses derived or set by hand) or `trunk` (allowed VLANs). **Xem cấu hình
+  sinh ra** shows the IOS commands per device. **Tạo bản xem trước** (ADMIN)
+  freezes them as a change batch in that project, which is then approved and
+  applied through the normal Preview → Approve → Apply → Verify flow — the
+  design never touches a device by itself. Generated interfaces use
+  `no shutdown`, which the safeguards treat as a negation, so these batches ask
+  for the typed confirmation. ASA devices are listed as skipped (they need a
+  `nameif`/security level the design does not carry).
+
+Approving and applying a change is still ADMIN-only, in every project.
+
+### Upgrading an existing database
+
+`flask db upgrade` adds the project tables and moves everything already in the
+database into one **Default Lab** project (owned by the first ADMIN; existing
+non-admin users become its viewers). Nothing is lost; hostnames and IPs remain
+valid because the project's network defaults to `MANAGEMENT_NETWORK`.
+Downgrading restores global hostname/IP uniqueness and fails if two projects now
+reuse a hostname or an address.
 
 ## Requirements
 
@@ -55,7 +106,7 @@ cd backend
 flask db upgrade
 # Choose this secret yourself; the repository does not provide a demo password.
 export SEED_ADMIN_PASSWORD='<chosen-password>'
-python scripts/seed_lab.py
+python scripts/seed_lab.py     # optional: a "PNETLab" project with the three lab devices
 flask --app wsgi run --host 0.0.0.0 --port 5000
 ```
 
@@ -215,7 +266,7 @@ Run this on the AI Server (management NIC `172.16.3.28/24`):
 ./.venv/bin/python scripts/smoke_test_lab.py
 ```
 
-The command verifies exact inventory matching (`R1`, `SW1`, `SW2`) before any TCP or SSH checks, then opens SSH and runs `show clock` on all three devices.
+The command verifies exact inventory matching (`R1`, `SW1`, `SW2` in the `PNETLab` project) before any TCP or SSH checks, then opens SSH and runs `show clock` on all three devices.
 
 ## Tests
 
@@ -234,14 +285,25 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/health` | — | Liveness |
 | POST | `/api/auth/login` | — | Obtain a JWT (5 req/min/IP) |
 | GET | `/api/auth/me` | any | Current user |
-| GET/POST | `/api/devices` | any / ADMIN | List / create devices |
-| GET/PUT/DELETE | `/api/devices/<id>` | any / ADMIN | Read / update / delete |
-| POST | `/api/devices/<id>/test-connection` | ADMIN | SSH reachability check |
+| GET/POST | `/api/projects` | any / not VIEWER | List accessible projects / create one |
+| GET/PUT/DELETE | `/api/projects/<pid>` | viewer / owner | Read / update / delete (owner or ADMIN) |
+| GET/POST | `/api/projects/<pid>/members` | viewer / owner | List / share |
+| PUT/DELETE | `/api/projects/<pid>/members/<uid>` | owner | Change access / unshare |
+| GET | `/api/projects/<pid>/topology` | viewer | Devices (with canvas positions) and links |
+| PUT | `/api/projects/<pid>/topology/layout` | editor | Save node positions |
+| POST | `/api/projects/<pid>/topology/links` | editor | Add a link |
+| PUT/DELETE | `/api/projects/<pid>/topology/links/<id>` | editor | Edit / delete a link |
+| POST | `/api/projects/<pid>/topology/config-plan` | editor | Commands the design produces (no side effects) |
+| POST | `/api/projects/<pid>/topology/config-preview` | ADMIN | Freeze them as a change batch |
+| GET/POST | `/api/users` | ADMIN | List / create accounts |
+| GET/POST | `/api/devices` | viewer / editor | List / create devices in the current project |
+| GET/PUT/DELETE | `/api/devices/<id>` | viewer / editor | Read / update / delete |
+| POST | `/api/devices/<id>/test-connection` | editor | SSH reachability check |
 | GET | `/api/devices/<id>/status` | any | Latest monitoring snapshot |
 | GET | `/api/devices/<id>/snapshots` | any | Snapshot history |
 | POST | `/api/devices/<id>/refresh` | any | Poll now |
 | GET | `/api/devices/<id>/backups` | any | Config backups |
-| GET | `/api/devices/<id>/backups/<backup_id>` | ADMIN | One backup, with config |
+| GET | `/api/devices/<id>/backups/<backup_id>` | editor | One backup, with config |
 | POST | `/api/commands/execute-readonly` | any | Run an allowlisted command |
 | GET | `/api/commands/history` | any | Past executions |
 | POST | `/api/changes/preview` | ADMIN | Create a preview |
@@ -255,10 +317,16 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | POST | `/api/change-batches/<id>/approve` | ADMIN | Approve all frozen children |
 | POST | `/api/change-batches/<id>/apply` | ADMIN | Apply all children; high risk requires typed confirmation |
 | POST | `/api/change-batches/<id>/cancel` | ADMIN | Cancel the batch |
-| GET | `/api/audit-logs` | ADMIN | Filterable audit trail |
-| POST | `/api/ai/chat` | any* | AI copilot (20 req/min/user) |
+| GET | `/api/audit-logs` | ADMIN | Filterable audit trail of the current project (`?scope=all` for every project) |
+| POST | `/api/ai/chat` | any* | AI copilot (20 req/min/user), scoped to the current project |
 
 \* `configure` intents additionally require `ADMIN`.
+
+Everything below `/api/devices`, `/api/commands`, `/api/changes`,
+`/api/change-batches`, `/api/chat`, `/api/ai`, `/api/dashboard` and
+`/api/audit-logs` acts on the current project (see *Selecting a project*). The
+role column above is the minimum **project access** (viewer < editor < owner);
+the change workflow keeps its global ADMIN requirement on top.
 
 ### Change states
 
@@ -292,7 +360,8 @@ status alone and is what a client should branch on:
 | Status | `error` values |
 |---|---|
 | 403 | `policy_violation` (the policy engine refused the command), `forbidden` (your role is not allowed) |
-| 409 | `invalid_state` (wrong change state), `conflict` (duplicate hostname or IP) |
+| 400 | `project_required` (no project chosen and none can be inferred) |
+| 409 | `invalid_state` (wrong change state), `conflict` (duplicate hostname or IP in the project, overlapping link subnet, interface already cabled) |
 | 502 | `ssh_timeout`, `ssh_connection_error`, `ssh_authentication_error`, `device_unreachable`, `ai_provider_error` |
 | 503 | `ai_not_configured` (no `AI_API_KEY`, or the provider SDK is missing) |
 
@@ -316,7 +385,9 @@ src/network_copilot/
 ├── extensions.py     # db, migrate, jwt, limiter
 ├── errors.py         # AppError hierarchy -> JSON
 ├── auth/             # users, JWT, roles_required
-├── devices/          # inventory CRUD + validation
+├── projects/         # projects, sharing, request scoping (X-Project-Id)
+├── topology/         # diagram links, layout, config generation
+├── devices/          # inventory CRUD + validation (per project)
 ├── credentials/      # Fernet encryption at rest
 ├── ssh/              # Paramiko adapter (the only place sockets are opened)
 ├── commands/         # policy engine + read-only execution
@@ -330,7 +401,9 @@ src/network_copilot/
 
 ## Lab inventory
 
-`scripts/seed_lab.py` seeds these three devices. **The hostnames must match the
+`scripts/seed_lab.py` seeds these three devices into a `PNETLab` project
+(`SEED_PROJECT_NAME` to rename it). It is only a convenience for the course lab:
+any other network is added from the Projects page. **The hostnames must match the
 device hostnames in PNETLab exactly** — the copilot resolves a device by
 hostname, so a mismatch fails the request.
 

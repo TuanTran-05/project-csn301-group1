@@ -233,3 +233,30 @@ def test_user_administration_is_admin_only_and_validated(client, admin_headers, 
     assert client.post("/api/users", headers=alice_headers, json={}).status_code == 403
     bad = client.post("/api/users", headers=admin_headers, json={"username": "x", "password": "short"})
     assert bad.status_code == 422
+
+
+# -- pages ---------------------------------------------------------------------
+
+
+def test_projects_page_is_served_and_wires_the_designer(client):
+    response = client.get("/projects")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'x-data="projectsApp()"' in html
+    assert "js/projects.js" in html
+    assert "/api/projects" not in html  # data comes from the API, not the template
+
+
+def test_chat_page_offers_a_project_switcher(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "switchProject" in html
+    assert 'href="/projects"' in html
+
+
+def test_every_page_sends_the_selected_project_with_api_calls():
+    from pathlib import Path
+
+    static = Path("src/network_copilot/static/js")
+    for name in ("app.js", "dashboard.js", "projects.js"):
+        source = (static / name).read_text(encoding="utf-8")
+        assert "X-Project-Id" in source, name

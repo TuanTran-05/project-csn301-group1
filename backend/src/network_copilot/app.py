@@ -37,6 +37,10 @@ def create_app(config_object: type | None = None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.get("/projects")
+    def projects_page():
+        return render_template("projects.html")
+
     @app.get("/dashboard")
     def dashboard_page():
         return render_template("dashboard.html")

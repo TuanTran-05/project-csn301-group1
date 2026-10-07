@@ -92,8 +92,11 @@ def upgrade():
     with op.batch_alter_table("audit_logs") as batch_op:
         batch_op.add_column(sa.Column("project_id", sa.Integer(), nullable=True))
 
-    # Move existing data into one project.
-    if any(_has_rows(bind, t) for t in ("devices", "chat_sessions", "change_batches")):
+    # Move existing data into one project. An installation with no devices,
+    # batches or chat messages is fresh: the only chat session it can hold is
+    # the empty one an earlier migration creates, which is dropped so no
+    # stray project is invented.
+    if any(_has_rows(bind, t) for t in ("devices", "change_batches", "chat_messages")):
         owner = bind.execute(
             sa.text("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY id LIMIT 1")
         ).scalar()
@@ -116,6 +119,18 @@ def upgrade():
             sa.text("SELECT id FROM projects WHERE name = :name"),
             {"name": DEFAULT_PROJECT_NAME},
         ).scalar()
+        # Everyone could see every device before, so keep that read access:
+        # existing non-admin users become viewers of the default project
+        # (ADMIN sees all projects anyway).
+        bind.execute(
+            sa.text(
+                "INSERT INTO project_members "
+                "(project_id, user_id, access, granted_by_id, created_at) "
+                "SELECT :pid, id, 'viewer', NULL, :now FROM users "
+                "WHERE role != 'ADMIN'"
+            ),
+            {"pid": project_id, "now": now},
+        )
         for table in ("devices", "chat_sessions", "change_batches"):
             bind.execute(
                 sa.text(f"UPDATE {table} SET project_id = :pid"), {"pid": project_id}
@@ -127,6 +142,9 @@ def upgrade():
             ),
             {"pid": project_id},
         )
+
+    else:
+        bind.execute(sa.text("DELETE FROM chat_sessions"))
 
     # Constraints, now that every row has a project.
     with op.batch_alter_table("devices") as batch_op:

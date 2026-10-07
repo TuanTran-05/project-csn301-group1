@@ -28,6 +28,23 @@
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       <span class="app-title">Network Copilot</span>
+      <label class="project-switch" x-show="projects.length" x-cloak>
+        <span class="sr-only">Project</span>
+        <select
+          class="project-select"
+          :value="currentProjectId"
+          @change="switchProject(Number($event.target.value))"
+        >
+          <template x-for="project in projects" :key="project.id">
+            <option
+              :value="project.id"
+              :selected="project.id === currentProjectId"
+              x-text="project.name + (project.owner && currentUser && project.owner !== currentUser.username ? ' · ' + project.owner : '')"
+            ></option>
+          </template>
+        </select>
+      </label>
+      <a class="nav-link" href="/projects">Projects</a>
       <a class="nav-link" href="/dashboard">Dashboard</a>
       <span class="user-badge">
         <span x-text="currentUser && currentUser.username"></span>
@@ -35,7 +52,11 @@
       </span>
       <button class="logout-btn" @click="logout()">Đăng xuất</button>
     </header>
-    <div class="main-grid">
+    <p class="project-empty" x-show="noProject" x-cloak>
+      Bạn chưa có project nào. <a href="/projects">Tạo project</a> hoặc nhờ
+      người khác chia sẻ project cho bạn.
+    </p>
+    <div class="main-grid" x-show="!noProject">
       <aside class="sidebar devices-panel">
         <h2>Thiết bị</h2>
         <ul>

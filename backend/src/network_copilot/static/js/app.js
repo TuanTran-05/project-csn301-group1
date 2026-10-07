@@ -18,6 +18,15 @@ document.addEventListener("alpine:init", () => {
     _sessionGeneration: 0,
     _authRetryTimer: null,
 
+    // -- projects (the isolation boundary: devices, chat and changes all
+    // belong to the selected project) --
+    projects: [],
+    currentProjectId: (() => {
+      const stored = localStorage.getItem("nc_project_id");
+      return stored ? Number(stored) : null;
+    })(),
+    noProject: false,
+
     // -- devices --
     devices: [],
     _deviceRefreshGeneration: 0,
@@ -58,6 +67,10 @@ document.addEventListener("alpine:init", () => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
     })(),
+
+    get currentProject() {
+      return this.projects.find((p) => p.id === this.currentProjectId) || null;
+    },
 
     get pendingChanges() {
       return Object.values(this.changesById).filter(
@@ -110,8 +123,10 @@ document.addEventListener("alpine:init", () => {
     async authFetch(path, options = {}) {
       const token = this.token;
       const generation = this._sessionGeneration;
+      const projectId = this.currentProjectId;
       const headers = Object.assign(
         { "Content-Type": "application/json" },
+        projectId ? { "X-Project-Id": String(projectId) } : {},
         options.headers || {},
         token ? { Authorization: `Bearer ${token}` } : {}
       );
@@ -157,6 +172,57 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    _resetProjectData() {
+      this.stopPolling();
+      this._deviceRefreshGeneration += 1;
+      this._changesRefreshGeneration += 1;
+      this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
+      this._messagesRefreshGeneration += 1;
+      this.devices = [];
+      this.changesById = {};
+      this.confirmInputs = {};
+      this.changesLoading = false;
+      this.changesError = "";
+      this.batchesById = {};
+      this.batchConfirmInputs = {};
+      this.batchActionIds = {};
+      this.batchActionErrors = {};
+      this.batchesLoading = false;
+      this.batchesError = "";
+      this.messages = [];
+      this.draftMessage = "";
+      this.sending = false;
+      this.sessions = [];
+      this.currentSessionId = null;
+      localStorage.removeItem("nc_session_id");
+    },
+
+    async loadProjects() {
+      const data = await this.authFetch("/api/projects");
+      this.projects = data.items;
+      if (this.projects.length === 0) {
+        this.currentProjectId = null;
+        localStorage.removeItem("nc_project_id");
+        this.noProject = true;
+        return;
+      }
+      this.noProject = false;
+      if (!this.projects.some((p) => p.id === this.currentProjectId)) {
+        this.currentProjectId = this.projects[0].id;
+      }
+      localStorage.setItem("nc_project_id", String(this.currentProjectId));
+    },
+
+    async switchProject(projectId) {
+      if (projectId === this.currentProjectId) return;
+      this._sessionGeneration += 1;
+      this._resetProjectData();
+      this.currentProjectId = projectId;
+      localStorage.setItem("nc_project_id", String(projectId));
+      await this.startApp({ skipProjects: true });
+    },
+
     logout() {
       this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
@@ -188,10 +254,23 @@ document.addEventListener("alpine:init", () => {
       this.sessions = [];
       this.currentSessionId = null;
       localStorage.removeItem("nc_session_id");
+      this.projects = [];
+      this.currentProjectId = null;
+      this.noProject = false;
+      localStorage.removeItem("nc_project_id");
     },
 
-    async startApp() {
+    async startApp(options = {}) {
       const generation = this._sessionGeneration;
+      if (!options.skipProjects) {
+        try {
+          await this.loadProjects();
+        } catch {
+          if (generation !== this._sessionGeneration) return;
+        }
+        if (generation !== this._sessionGeneration) return;
+      }
+      if (this.noProject) return;
       this.changesLoading = true;
       this.batchesLoading = true;
       const bootstrap = [

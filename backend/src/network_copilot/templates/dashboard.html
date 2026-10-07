@@ -27,7 +27,11 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">Network Copilot — Dashboard</span>
+      <span class="app-title">
+        Network Copilot — Dashboard
+        <span class="project-tag" x-show="projectName" x-text="projectName"></span>
+      </span>
+      <a class="nav-link" href="/projects">Projects</a>
       <a class="nav-link" href="/">Chat</a>
       <span class="user-badge">
         <span x-text="currentUser && currentUser.username"></span>
