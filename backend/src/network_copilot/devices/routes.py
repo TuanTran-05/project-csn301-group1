@@ -2,7 +2,8 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
-from ..auth.service import current_user, roles_required
+from ..auth.service import current_user
+from ..projects.scope import current_project, write_project
 from . import service
 
 bp = Blueprint("devices", __name__, url_prefix="/api/devices")
@@ -16,16 +17,20 @@ def _current_user_id() -> int | None:
 @bp.get("")
 @jwt_required()
 def list_devices():
+    project = current_project()
     devices = service.list_devices(
-        role=request.args.get("role"), status=request.args.get("status")
+        role=request.args.get("role"),
+        status=request.args.get("status"),
+        project_id=project.id,
     )
     return jsonify({"items": [device.to_dict() for device in devices]}), 200
 
 
 @bp.post("")
-@roles_required("ADMIN")
+@jwt_required()
 def create_device():
-    device = service.create_device(request.get_json(silent=True) or {})
+    project = write_project()
+    device = service.create_device(request.get_json(silent=True) or {}, project)
     record_event(
         action="device.create",
         result="success",
@@ -39,14 +44,16 @@ def create_device():
 @bp.get("/<int:device_id>")
 @jwt_required()
 def get_device(device_id: int):
-    return jsonify(service.get_device(device_id).to_dict()), 200
+    project = current_project()
+    return jsonify(service.get_device(device_id, project.id).to_dict()), 200
 
 
 @bp.put("/<int:device_id>")
-@roles_required("ADMIN")
+@jwt_required()
 def update_device(device_id: int):
+    project = write_project()
     payload = request.get_json(silent=True) or {}
-    device = service.update_device(device_id, payload)
+    device = service.update_device(device_id, payload, project)
     record_event(
         action="device.update",
         result="success",
@@ -58,11 +65,12 @@ def update_device(device_id: int):
 
 
 @bp.delete("/<int:device_id>")
-@roles_required("ADMIN")
+@jwt_required()
 def delete_device(device_id: int):
-    device = service.get_device(device_id)
+    project = write_project()
+    device = service.get_device(device_id, project.id)
     hostname = device.hostname
-    service.delete_device(device_id)
+    service.delete_device(device_id, project.id)
     record_event(
         action="device.delete",
         result="success",
@@ -77,7 +85,8 @@ def delete_device(device_id: int):
 def list_backups(device_id: int):
     from ..backups import service as backup_service
 
-    service.get_device(device_id)
+    project = current_project()
+    service.get_device(device_id, project.id)
     backups = backup_service.list_backups(
         device_id, limit=request.args.get("limit", default=50, type=int)
     )
@@ -85,12 +94,14 @@ def list_backups(device_id: int):
 
 
 @bp.get("/<int:device_id>/backups/<int:backup_id>")
-@roles_required("ADMIN")
+@jwt_required()
 def get_backup(device_id: int, backup_id: int):
     from ..backups import service as backup_service
     from ..errors import NotFoundError
 
-    service.get_device(device_id)
+    # A backup is a full running-config, so it needs edit rights, not just view.
+    project = write_project()
+    service.get_device(device_id, project.id)
     backup = backup_service.get_backup(backup_id)
     if backup is None or backup.device_id != device_id:
         raise NotFoundError(f"Backup {backup_id} was not found.")
@@ -98,9 +109,10 @@ def get_backup(device_id: int, backup_id: int):
 
 
 @bp.post("/<int:device_id>/test-connection")
-@roles_required("ADMIN")
+@jwt_required()
 def test_connection(device_id: int):
-    device = service.get_device(device_id)
+    project = write_project()
+    device = service.get_device(device_id, project.id)
     reachable, detail = service.check_reachability(device)
     record_event(
         action="device.test_connection",

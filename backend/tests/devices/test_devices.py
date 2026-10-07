@@ -1,3 +1,4 @@
+from network_copilot.extensions import db
 import pytest
 
 VALID_DEVICE = {
@@ -205,3 +206,93 @@ def test_ssh_port_defaults_to_22(client, admin_headers):
     payload = {k: v for k, v in VALID_DEVICE.items() if k != "ssh_port"}
     body = client.post("/api/devices", headers=admin_headers, json=payload).get_json()
     assert body["ssh_port"] == 22
+
+
+# -- project-aware device creation ---------------------------------------------
+
+
+def test_device_can_be_created_with_its_ssh_credential(client, admin_headers, project, app):
+    from network_copilot.credentials.service import get_device_credential
+
+    response = client.post(
+        "/api/devices",
+        headers=admin_headers,
+        json={
+            "hostname": "CRED-R1",
+            "management_ip": "172.16.3.50",
+            "device_type": "cisco_ios",
+            "role": "core",
+            "environment": "physical",
+            "credential": {"username": "netops", "password": "S3cret!pw", "enable_secret": "en4ble"},
+        },
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["environment"] == "physical"
+    assert body["has_credential"] is True
+    assert "S3cret!pw" not in response.get_data(as_text=True)
+
+    stored = get_device_credential(body["id"])
+    assert (stored.username, stored.password, stored.enable_secret) == (
+        "netops", "S3cret!pw", "en4ble",
+    )
+
+
+def test_credential_secret_is_not_written_to_the_audit_log(client, admin_headers, project):
+    from network_copilot.audit.model import AuditLog
+
+    client.post(
+        "/api/devices",
+        headers=admin_headers,
+        json={
+            "hostname": "CRED-R2",
+            "management_ip": "172.16.3.51",
+            "device_type": "cisco_ios",
+            "role": "core",
+            "credential": {"username": "netops", "password": "S3cret!pw"},
+        },
+    )
+    logged = " ".join(str(row.details) for row in db.session.query(AuditLog).all())
+    assert "S3cret!pw" not in logged
+
+
+def test_credential_can_be_replaced_on_update(client, admin_headers, device):
+    from network_copilot.credentials.service import get_device_credential
+
+    client.put(
+        f"/api/devices/{device.id}",
+        headers=admin_headers,
+        json={"credential": {"username": "first", "password": "one"}},
+    )
+    client.put(
+        f"/api/devices/{device.id}",
+        headers=admin_headers,
+        json={"credential": {"username": "second", "password": "two"}},
+    )
+    assert get_device_credential(device.id).username == "second"
+
+
+def test_device_must_sit_inside_its_projects_network(client, admin_headers, project):
+    project.management_network = "192.168.77.0/24"
+    db.session.commit()
+    outside = client.post(
+        "/api/devices",
+        headers=admin_headers,
+        json={"hostname": "OUT", "management_ip": "172.16.3.9", "device_type": "cisco_ios", "role": "core"},
+    )
+    inside = client.post(
+        "/api/devices",
+        headers=admin_headers,
+        json={"hostname": "IN", "management_ip": "192.168.77.9", "device_type": "cisco_ios", "role": "core"},
+    )
+    assert outside.status_code == 422
+    assert inside.status_code == 201
+
+
+def test_deleting_a_device_with_a_credential_removes_it(client, admin_headers, device):
+    from network_copilot.credentials.model import DeviceCredential
+    from network_copilot.credentials.service import store_device_credential
+
+    store_device_credential(device.id, "u", "p")
+    assert client.delete(f"/api/devices/{device.id}", headers=admin_headers).status_code == 204
+    assert db.session.query(DeviceCredential).count() == 0

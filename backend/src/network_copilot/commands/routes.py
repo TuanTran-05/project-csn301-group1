@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required
 
 from ..auth.service import current_user
 from ..errors import ValidationError
+from ..projects.scope import current_project
 from . import service
 
 bp = Blueprint("commands", __name__, url_prefix="/api/commands")
@@ -28,11 +29,13 @@ def execute_readonly():
     if not isinstance(device_id, int):
         raise ValidationError("'device_id' is required and must be an integer.")
 
+    project = current_project()
     user = current_user()
     execution = service.execute_readonly(
         device_id=device_id,
         command=command,
         user_id=user.id if user else None,
+        project_id=project.id,
     )
     return jsonify(execution.to_dict()), 200
 
@@ -40,7 +43,9 @@ def execute_readonly():
 @bp.get("/history")
 @jwt_required()
 def history():
+    project = current_project()
     executions = service.list_history(
+        project_id=project.id,
         device_id=_int_arg("device_id"),
         user_id=_int_arg("user_id"),
         status=request.args.get("status"),

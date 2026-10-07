@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from conftest import default_project_id as _pid
 from network_copilot.chat.model import ChatMessage, ChatSession
 from network_copilot.chat.service import list_messages, record_message
 from network_copilot.chat.session_service import create_session
@@ -9,7 +10,7 @@ from network_copilot.extensions import db
 
 @pytest.fixture
 def chat_session(app):
-    session = ChatSession()
+    session = ChatSession(project_id=_pid())
     db.session.add(session)
     db.session.commit()
     return session
@@ -46,7 +47,7 @@ def test_allows_a_null_user(app, chat_session):
 
 
 def test_chat_session_has_created_at(app):
-    session = ChatSession()
+    session = ChatSession(project_id=_pid())
     db.session.add(session)
     db.session.commit()
     assert session.id is not None
@@ -61,18 +62,18 @@ def test_chat_message_requires_a_session(app):
 
 
 def test_record_message_persists_a_row(app):
-    record_message(1, "g1", "user", "hello")
+    record_message(1, "g1", "user", "hello", project_id=_pid())
     assert db.session.query(ChatMessage).count() == 1
 
 
 def test_record_message_stores_the_payload(app):
-    record_message(1, "g1", "assistant", "done", {"intent": "monitor"})
+    record_message(1, "g1", "assistant", "done", {"intent": "monitor"}, project_id=_pid())
     row = db.session.query(ChatMessage).one()
     assert row.payload == {"intent": "monitor"}
 
 
 def test_record_message_accepts_a_missing_user(app):
-    record_message(None, None, "system", "blocked")
+    record_message(None, None, "system", "blocked", project_id=_pid())
     row = db.session.query(ChatMessage).one()
     assert row.user_id is None
     assert row.username is None
@@ -82,23 +83,24 @@ def test_record_message_never_raises(app, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("db is down")
 
+    project_id = _pid()
     monkeypatch.setattr(db.session, "commit", boom)
-    result = record_message(1, "g1", "user", "hello")
+    result = record_message(1, "g1", "user", "hello", project_id=project_id)
     assert result is None
 
 
 def test_list_messages_orders_oldest_first(app):
-    record_message(1, "g1", "user", "first")
-    record_message(1, "g1", "assistant", "second")
-    rows = list_messages()
+    record_message(1, "g1", "user", "first", project_id=_pid())
+    record_message(1, "g1", "assistant", "second", project_id=_pid())
+    rows = list_messages(project_id=_pid())
     assert [row.content for row in rows] == ["first", "second"]
 
 
 def test_list_messages_returns_the_most_recent_window_oldest_first(app):
     for i in range(5):
-        record_message(1, "g1", "user", f"message {i}")
+        record_message(1, "g1", "user", f"message {i}", project_id=_pid())
 
-    rows = list_messages(limit=2)
+    rows = list_messages(limit=2, project_id=_pid())
 
     assert [row.content for row in rows] == ["message 3", "message 4"]
 
@@ -114,8 +116,8 @@ def test_messages_endpoint_is_readable_by_viewer(client, viewer_headers):
 
 
 def test_messages_endpoint_returns_recorded_messages(client, admin_headers, app):
-    record_message(1, "g1", "user", "hello")
-    record_message(1, "g1", "assistant", "hi there")
+    record_message(1, "g1", "user", "hello", project_id=_pid())
+    record_message(1, "g1", "assistant", "hi there", project_id=_pid())
     response = client.get("/api/chat/messages", headers=admin_headers)
     items = response.get_json()["items"]
     assert len(items) == 2
@@ -124,25 +126,25 @@ def test_messages_endpoint_returns_recorded_messages(client, admin_headers, app)
 
 
 def test_record_message_uses_the_given_session(app):
-    session = create_session()
-    record_message(1, "g1", "user", "hello", session_id=session.id)
+    session = create_session(_pid())
+    record_message(1, "g1", "user", "hello", session_id=session.id, project_id=_pid())
     row = db.session.query(ChatMessage).one()
     assert row.session_id == session.id
 
 
 def test_record_message_resolves_a_session_when_omitted(app):
-    record_message(1, "g1", "user", "hello")
+    record_message(1, "g1", "user", "hello", project_id=_pid())
     row = db.session.query(ChatMessage).one()
     assert row.session_id is not None
 
 
 def test_list_messages_only_returns_the_given_session(app):
-    session_a = create_session()
-    session_b = create_session()
-    record_message(1, "g1", "user", "in A", session_id=session_a.id)
-    record_message(1, "g1", "user", "in B", session_id=session_b.id)
+    session_a = create_session(_pid())
+    session_b = create_session(_pid())
+    record_message(1, "g1", "user", "in A", session_id=session_a.id, project_id=_pid())
+    record_message(1, "g1", "user", "in B", session_id=session_b.id, project_id=_pid())
 
-    rows = list_messages(session_id=session_a.id)
+    rows = list_messages(session_id=session_a.id, project_id=_pid())
 
     assert [row.content for row in rows] == ["in A"]
 
@@ -174,8 +176,8 @@ def test_list_sessions_endpoint_returns_created_sessions(client, admin_headers):
 def test_messages_endpoint_filters_by_session_id(client, admin_headers, app):
     session_a = client.post("/api/chat/sessions", headers=admin_headers).get_json()
     session_b = client.post("/api/chat/sessions", headers=admin_headers).get_json()
-    record_message(1, "g1", "user", "in A", session_id=session_a["id"])
-    record_message(1, "g1", "user", "in B", session_id=session_b["id"])
+    record_message(1, "g1", "user", "in A", session_id=session_a["id"], project_id=_pid())
+    record_message(1, "g1", "user", "in B", session_id=session_b["id"], project_id=_pid())
 
     response = client.get(
         f"/api/chat/messages?session_id={session_a['id']}", headers=admin_headers

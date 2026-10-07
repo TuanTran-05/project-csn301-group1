@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from pydantic import ValidationError as PydanticValidationError
 
@@ -6,6 +6,7 @@ from ..auth.service import current_user
 from ..chat.service import record_message as record_chat_message
 from ..errors import ValidationError
 from ..extensions import limiter
+from ..projects.scope import current_project
 from .schemas import ChatRequest
 from .service import AIService
 
@@ -26,6 +27,12 @@ def record_failed_chat_response(response):
     if identity is None:
         return response
 
+    # No project was resolved (none chosen, or no access): there is no
+    # transcript to put the failure in.
+    project_id = getattr(g, "project_id", None)
+    if project_id is None:
+        return response
+
     user = current_user()
     payload = response.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -43,6 +50,7 @@ def record_failed_chat_response(response):
         content,
         payload,
         session_id=session_id,
+        project_id=project_id,
     )
     return response
 
@@ -51,6 +59,9 @@ def record_failed_chat_response(response):
 @jwt_required()
 @limiter.limit("20 per minute")
 def chat():
+    # Resolve the project first so even a malformed request is recorded in
+    # (and only in) the right project's transcript.
+    project = current_project()
     try:
         data = ChatRequest.model_validate(request.get_json(silent=True) or {})
     except PydanticValidationError as exc:
@@ -65,9 +76,16 @@ def chat():
     username = user.username if user else None
 
     record_chat_message(
-        user_id, username, "user", data.message, session_id=data.session_id
+        user_id,
+        username,
+        "user",
+        data.message,
+        session_id=data.session_id,
+        project_id=project.id,
     )
-    result = AIService().handle(data.message, user_id, session_id=data.session_id)
+    result = AIService().handle(
+        data.message, user_id, session_id=data.session_id, project_id=project.id
+    )
     record_chat_message(
         user_id,
         username,
@@ -75,5 +93,6 @@ def chat():
         result.get("explanation", ""),
         result,
         session_id=data.session_id,
+        project_id=project.id,
     )
     return jsonify(result), 200

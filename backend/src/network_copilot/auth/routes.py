@@ -3,7 +3,14 @@ from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
 from ..extensions import limiter
-from .service import authenticate, current_user, issue_token
+from .service import (
+    authenticate,
+    create_user,
+    current_user,
+    issue_token,
+    list_all_users,
+    roles_required,
+)
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -60,3 +67,29 @@ def me():
             401,
         )
     return jsonify(user.to_dict()), 200
+
+
+# -- user administration ----------------------------------------------------
+
+users_bp = Blueprint("users", __name__, url_prefix="/api/users")
+
+
+@users_bp.get("")
+@roles_required("ADMIN")
+def list_users():
+    users = list_all_users()
+    return jsonify({"items": [user.to_dict() for user in users]}), 200
+
+
+@users_bp.post("")
+@roles_required("ADMIN")
+def create_user_route():
+    actor = current_user()
+    user = create_user(request.get_json(silent=True) or {})
+    record_event(
+        action="user.create",
+        result="success",
+        user_id=actor.id if actor else None,
+        details={"username": user.username, "role": user.role},
+    )
+    return jsonify(user.to_dict()), 201

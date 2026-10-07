@@ -4,6 +4,7 @@ from flask_jwt_extended import jwt_required
 from ..auth.service import current_user, roles_required
 from ..errors import ValidationError
 from ..extensions import limiter
+from ..projects.scope import current_project
 from . import batch_service
 
 bp = Blueprint("change_batches", __name__, url_prefix="/api/change-batches")
@@ -12,7 +13,9 @@ bp = Blueprint("change_batches", __name__, url_prefix="/api/change-batches")
 @bp.get("")
 @jwt_required()
 def list_batches():
+    project = current_project()
     batches = batch_service.list_batches(
+        project_id=project.id,
         limit=request.args.get("limit", default=100, type=int)
     )
     return jsonify({"items": [batch.to_dict() for batch in batches]}), 200
@@ -21,12 +24,15 @@ def list_batches():
 @bp.get("/<int:batch_id>")
 @jwt_required()
 def get_batch(batch_id: int):
-    return jsonify(batch_service.get_batch(batch_id).to_dict()), 200
+    project = current_project()
+    return jsonify(batch_service.get_batch(batch_id, project.id).to_dict()), 200
 
 
 @bp.post("/<int:batch_id>/approve")
 @roles_required("ADMIN")
 def approve(batch_id: int):
+    project = current_project(need="editor")
+    batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
     user = current_user()
     batch = batch_service.approve_batch(batch_id, user.id if user else None)
     return jsonify(batch.to_dict()), 200
@@ -36,6 +42,8 @@ def approve(batch_id: int):
 @roles_required("ADMIN")
 @limiter.limit("10 per minute")
 def apply(batch_id: int):
+    project = current_project(need="editor")
+    batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
     user = current_user()
     payload = request.get_json(silent=True)
     if payload is None:
@@ -53,6 +61,8 @@ def apply(batch_id: int):
 @bp.post("/<int:batch_id>/cancel")
 @roles_required("ADMIN")
 def cancel(batch_id: int):
+    project = current_project(need="editor")
+    batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
     user = current_user()
     batch = batch_service.cancel_batch(batch_id, user.id if user else None)
     return jsonify(batch.to_dict()), 200

@@ -81,6 +81,24 @@ def _request_context() -> dict:
         return {}
 
 
+def _implicit_project_id(device_id: int | None) -> int | None:
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            scoped = getattr(g, "project_id", None)
+            if scoped is not None:
+                return scoped
+    except Exception:  # pragma: no cover - defensive
+        pass
+    if device_id is None:
+        return None
+    from ..devices.model import Device
+
+    device = db.session.get(Device, device_id)
+    return device.project_id if device is not None else None
+
+
 def record_event(
     action: str,
     result: str,
@@ -89,10 +107,17 @@ def record_event(
     device_id: int | None = None,
     message: str | None = None,
     details=None,
+    project_id: int | None = None,
 ) -> AuditLog | None:
-    """Write one audit entry. Never raises: auditing must not break a request."""
+    """Write one audit entry. Never raises: auditing must not break a request.
+
+    The project is the explicit argument, else the project the current request
+    is scoped to, else the project of the device the event is about.
+    """
     try:
         context = _request_context()
+        if project_id is None:
+            project_id = _implicit_project_id(device_id)
         safe_details = redact_sensitive(details) if details is not None else None
         if safe_details is not None and not isinstance(safe_details, (dict, list)):
             safe_details = {"value": str(safe_details)[:500]}
@@ -103,6 +128,7 @@ def record_event(
             user_id=user_id,
             username=username,
             device_id=device_id,
+            project_id=project_id,
             message=(redact_sensitive(message) or "")[:512] if message else None,
             details=safe_details,
             source_ip=context.get("source_ip"),
@@ -121,6 +147,7 @@ def record_event(
 
 
 def list_events(
+    project_id: int | None = None,
     user_id: int | None = None,
     device_id: int | None = None,
     action: str | None = None,
@@ -130,6 +157,8 @@ def list_events(
     limit: int = 100,
 ) -> list[AuditLog]:
     query = db.session.query(AuditLog)
+    if project_id is not None:
+        query = query.filter(AuditLog.project_id == project_id)
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
     if device_id:

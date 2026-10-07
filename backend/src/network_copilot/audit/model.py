@@ -20,6 +20,9 @@ class AuditLog(db.Model):
     device_id = db.Column(
         db.Integer, db.ForeignKey("devices.id", ondelete="SET NULL"), index=True
     )
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), index=True
+    )
     message = db.Column(db.String(512))
     details = db.Column(db.JSON)
     source_ip = db.Column(db.String(45))
@@ -39,6 +42,7 @@ class AuditLog(db.Model):
             "user_id": self.user_id,
             "username": self.username,
             "device_id": self.device_id,
+            "project_id": self.project_id,
             "message": self.message,
             "details": self.details,
             "source_ip": self.source_ip,

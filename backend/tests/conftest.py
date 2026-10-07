@@ -5,6 +5,7 @@ from network_copilot.auth.model import User
 from network_copilot.config import TestConfig
 from network_copilot.devices.model import Device
 from network_copilot.extensions import db as _db
+from network_copilot.projects.model import Project, ProjectMember
 
 from fakes.fake_ssh_client import FakeSSHClient
 
@@ -32,12 +33,42 @@ def client(app):
     return app.test_client()
 
 
+def _default_project() -> Project:
+    """The one project the single-project tests live in (admins see it too)."""
+    project = _db.session.query(Project).filter_by(name="Default Lab").first()
+    if project is None:
+        project = Project(
+            name="Default Lab",
+            management_network="172.16.3.0/24",
+            environment="pnetlab",
+        )
+        _db.session.add(project)
+        _db.session.commit()
+    return project
+
+
+def default_project_id() -> int:
+    return _default_project().id
+
+
+@pytest.fixture
+def project(app):
+    return _default_project()
+
+
 def _create_user(username: str, password: str, role: str) -> User:
     user = User(username=username, role=role)
     user.set_password(password)
     _db.session.add(user)
     _db.session.commit()
     return user
+
+
+def _share_default_project(user: User, access: str = "viewer") -> None:
+    _db.session.add(
+        ProjectMember(project_id=_default_project().id, user_id=user.id, access=access)
+    )
+    _db.session.commit()
 
 
 @pytest.fixture
@@ -47,7 +78,9 @@ def admin_user(app):
 
 @pytest.fixture
 def viewer_user(app):
-    return _create_user("viewer", VIEWER_PASSWORD, "VIEWER")
+    user = _create_user("viewer", VIEWER_PASSWORD, "VIEWER")
+    _share_default_project(user)
+    return user
 
 
 class SSHFactoryStub:
@@ -94,8 +127,11 @@ def _auth_headers(client, username: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.get_json()['access_token']}"}
 
 
-def _create_device(hostname: str, ip: str, role: str, device_type="cisco_ios") -> Device:
+def _create_device(
+    hostname: str, ip: str, role: str, device_type="cisco_ios", project=None
+) -> Device:
     device = Device(
+        project_id=(project or _default_project()).id,
         hostname=hostname,
         management_ip=ip,
         device_type=device_type,
@@ -136,7 +172,7 @@ def make_device(app):
 
 
 @pytest.fixture
-def admin_headers(client, admin_user):
+def admin_headers(client, admin_user, project):
     return _auth_headers(client, "admin", ADMIN_PASSWORD)
 
 

@@ -249,7 +249,7 @@ def test_audit_log_endpoint_requires_authentication(client):
 
 
 def test_audit_log_endpoint_lists_events(client, admin_headers, app):
-    response = client.get("/api/audit-logs", headers=admin_headers)
+    response = client.get("/api/audit-logs?scope=all", headers=admin_headers)
     assert response.status_code == 200
     assert any(item["action"] == "auth.login" for item in response.get_json()["items"])
 
@@ -285,13 +285,13 @@ def test_audit_log_filters(client, admin_headers, admin_user, device, ssh_factor
 
 def test_audit_log_time_filters(client, admin_headers, app):
     future = client.get(
-        "/api/audit-logs?since=2999-01-01T00:00:00", headers=admin_headers
+        "/api/audit-logs?scope=all&since=2999-01-01T00:00:00", headers=admin_headers
     )
     assert future.status_code == 200
     assert future.get_json()["items"] == []
 
     past = client.get(
-        "/api/audit-logs?since=2000-01-01T00:00:00&until=2999-01-01T00:00:00",
+        "/api/audit-logs?scope=all&since=2000-01-01T00:00:00&until=2999-01-01T00:00:00",
         headers=admin_headers,
     )
     assert len(past.get_json()["items"]) >= 1

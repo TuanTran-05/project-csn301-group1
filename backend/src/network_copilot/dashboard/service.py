@@ -50,8 +50,8 @@ def _ospf_entry(device) -> dict:
     }
 
 
-def build_summary() -> dict:
-    devices = device_service.list_devices()
+def build_summary(project_id: int | None = None) -> dict:
+    devices = device_service.list_devices(project_id=project_id)
     ospf_devices = [device for device in devices if device.role in ROUTING_ROLES]
 
     return {
@@ -61,17 +61,21 @@ def build_summary() -> dict:
             "pending_approval": [
                 change.to_dict()
                 for change in changes_service.list_changes(
-                    status="pending_approval", limit=20
+                    status="pending_approval", limit=20, project_id=project_id
                 )
             ],
             "recent": [
                 change.to_dict()
-                for change in changes_service.list_changes(limit=10)
+                for change in changes_service.list_changes(
+                    limit=10, project_id=project_id
+                )
             ],
         },
         "audit": {
             "recent": [
-                event.to_dict() for event in audit_service.list_events(limit=20)
+                event.to_dict() for event in audit_service.list_events(
+                    project_id=project_id, limit=20
+                )
             ]
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),

@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required
 
 from ..devices import service as device_service
 from ..errors import ValidationError
+from ..projects.scope import current_project
 from . import service
 
 bp = Blueprint("monitoring", __name__, url_prefix="/api/devices")
@@ -23,14 +24,14 @@ def _status_payload(device, snapshot) -> dict:
 @bp.get("/<int:device_id>/status")
 @jwt_required()
 def device_status(device_id: int):
-    device = device_service.get_device(device_id)
+    device = device_service.get_device(device_id, current_project().id)
     return jsonify(_status_payload(device, service.latest_snapshot(device_id))), 200
 
 
 @bp.get("/<int:device_id>/snapshots")
 @jwt_required()
 def device_snapshots(device_id: int):
-    device_service.get_device(device_id)
+    device_service.get_device(device_id, current_project().id)
     try:
         limit = int(request.args.get("limit", 50))
     except ValueError as exc:
@@ -46,6 +47,6 @@ def device_snapshots(device_id: int):
 @bp.post("/<int:device_id>/refresh")
 @jwt_required()
 def refresh_device(device_id: int):
-    device = device_service.get_device(device_id)
+    device = device_service.get_device(device_id, current_project().id)
     snapshot = service.poll_device(device_id)
     return jsonify(_status_payload(device, snapshot)), 200

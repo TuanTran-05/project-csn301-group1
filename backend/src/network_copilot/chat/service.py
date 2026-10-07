@@ -24,11 +24,13 @@ def record_message(
     content: str,
     payload: dict | None = None,
     session_id: int | None = None,
+    *,
+    project_id: int,
 ) -> ChatMessage | None:
     """Persist one chat message. Never raises: a failure to record history
     must not break the AI response the user is waiting for."""
     try:
-        session = session_service.resolve_or_create_session(session_id)
+        session = session_service.resolve_or_create_session(session_id, project_id)
         message = ChatMessage(
             session_id=session.id,
             user_id=user_id,
@@ -49,8 +51,10 @@ def record_message(
         return None
 
 
-def list_messages(session_id: int | None = None, limit: int = 200) -> list[ChatMessage]:
-    session = session_service.resolve_or_create_session(session_id)
+def list_messages(
+    session_id: int | None = None, limit: int = 200, *, project_id: int
+) -> list[ChatMessage]:
+    session = session_service.resolve_or_create_session(session_id, project_id)
     bounded_ids = (
         db.session.query(ChatMessage.id.label("id"))
         .filter(ChatMessage.session_id == session.id)

@@ -3,7 +3,10 @@
 Usage:
     python scripts/seed_lab.py
 
+Everything is created inside one project (the lab), owned by the admin.
+
 Environment:
+    SEED_PROJECT_NAME     defaults to "PNETLab"
     SEED_ADMIN_USERNAME   defaults to "admin"
     SEED_ADMIN_PASSWORD   required, used for the initial ADMIN account
     LAB_SSH_USERNAME      optional, stored (encrypted) for every device
@@ -23,6 +26,8 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
+from flask import current_app  # noqa: E402
+
 from network_copilot.app import create_app  # noqa: E402
 from network_copilot.auth.model import User  # noqa: E402
 from network_copilot.credentials.service import (  # noqa: E402
@@ -30,6 +35,7 @@ from network_copilot.credentials.service import (  # noqa: E402
 )
 from network_copilot.devices.model import Device  # noqa: E402
 from network_copilot.extensions import db  # noqa: E402
+from network_copilot.projects.model import Project  # noqa: E402
 
 # Names must match the device hostnames in PNETLab exactly: the AI copilot
 # resolves a device by hostname, so a mismatch is a hard failure.
@@ -38,6 +44,29 @@ LAB_DEVICES = [
     ("SW1", "172.16.3.121", "cisco_ios", "access"),
     ("SW2", "172.16.3.122", "cisco_ios", "access"),
 ]
+
+
+def seed_project() -> Project:
+    """The project the lab devices live in; created on first run."""
+    name = os.environ.get("SEED_PROJECT_NAME", "PNETLab")
+    project = db.session.query(Project).filter_by(name=name).first()
+    if project is None:
+        owner = (
+            db.session.query(User)
+            .filter_by(username=os.environ.get("SEED_ADMIN_USERNAME", "admin"))
+            .one_or_none()
+        )
+        project = Project(
+            name=name,
+            description="PNETLab Cisco lab",
+            management_network=current_app.config["MANAGEMENT_NETWORK"],
+            environment="pnetlab",
+            owner_id=owner.id if owner else None,
+        )
+        db.session.add(project)
+        db.session.commit()
+        print(f"  created project '{name}'")
+    return project
 
 
 def seed_admin() -> int:
@@ -65,12 +94,17 @@ def seed_admin() -> int:
     return 1
 
 
-def seed_devices() -> tuple[int, int]:
+def seed_devices(project: Project | None = None) -> tuple[int, int]:
+    project = project or seed_project()
     created = updated = 0
     for hostname, ip, device_type, role in LAB_DEVICES:
-        device = db.session.query(Device).filter_by(hostname=hostname).one_or_none()
+        device = (
+            db.session.query(Device)
+            .filter_by(project_id=project.id, hostname=hostname)
+            .one_or_none()
+        )
         if device is None:
-            device = Device(hostname=hostname)
+            device = Device(project_id=project.id, hostname=hostname)
             db.session.add(device)
             created += 1
         else:
@@ -81,6 +115,7 @@ def seed_devices() -> tuple[int, int]:
         device.role = role
         device.ssh_port = 22
         device.monitoring_enabled = True
+        device.environment = "pnetlab"
         if device.status is None:
             device.status = "unknown"
 
@@ -88,7 +123,7 @@ def seed_devices() -> tuple[int, int]:
     return created, updated
 
 
-def seed_credentials() -> int:
+def seed_credentials(project: Project | None = None) -> int:
     username = os.environ.get("LAB_SSH_USERNAME")
     password = os.environ.get("LAB_SSH_PASSWORD")
     if not username or not password:
@@ -99,7 +134,8 @@ def seed_credentials() -> int:
         return 0
 
     count = 0
-    for device in db.session.query(Device).all():
+    project = project or seed_project()
+    for device in db.session.query(Device).filter_by(project_id=project.id):
         store_device_credential(device.id, username, password)
         count += 1
     return count
@@ -110,9 +146,10 @@ def main() -> int:
     with app.app_context():
         print("Seeding lab inventory...")
         seed_admin()
-        created, updated = seed_devices()
+        project = seed_project()
+        created, updated = seed_devices(project)
         print(f"  devices: {created} created, {updated} updated")
-        stored = seed_credentials()
+        stored = seed_credentials(project)
         if stored:
             print(f"  credentials stored (encrypted) for {stored} device(s)")
         print("Done.")

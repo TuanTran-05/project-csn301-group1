@@ -3,6 +3,8 @@ from flask_jwt_extended import create_access_token
 
 from fakes.fake_ai_provider import FakeAIProvider
 
+from conftest import _default_project
+from conftest import default_project_id as _pid
 from network_copilot.ai.service import AIService
 from network_copilot.app import create_app
 from network_copilot.auth.model import User
@@ -68,7 +70,7 @@ def test_chat_endpoint_records_messages_against_the_given_session(
 
     ssh_factory.set_client(dist_switch.hostname, default_output="ok")
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=MONITOR_ACTION)
-    session = create_session()
+    session = create_session(_pid())
 
     client.post(
         "/api/ai/chat",
@@ -136,6 +138,7 @@ def test_chat_endpoint_records_a_validation_failure_once(client, admin_headers):
 
 def test_chat_endpoint_records_a_rate_limit_failure_once(rate_limited_app):
     with rate_limited_app.app_context():
+        _default_project()
         user = User(username="admin", role="ADMIN")
         user.set_password("StrongPass123!")
         db.session.add(user)
@@ -161,7 +164,7 @@ def test_chat_endpoint_records_a_rate_limit_failure_once(rate_limited_app):
 def test_chat_endpoint_records_an_unexpected_failure_once(
     client, admin_headers, monkeypatch
 ):
-    def boom(self, message, user_id, session_id=None):
+    def boom(self, message, user_id, session_id=None, project_id=None):
         raise RuntimeError("provider secret")
 
     monkeypatch.setattr(AIService, "handle", boom)
@@ -187,8 +190,8 @@ def test_chat_endpoint_forwards_the_session_history_to_the_model(
     from network_copilot.chat.service import record_message
     from network_copilot.chat.session_service import create_session
 
-    session = create_session()
-    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id)
+    session = create_session(_pid())
+    record_message(1, "g1", "user", "cau hoi cu", session_id=session.id, project_id=_pid())
 
     provider = FakeAIProvider(
         responses={
@@ -218,7 +221,8 @@ def test_chat_endpoint_does_not_record_an_unauthenticated_attempt(client):
     assert db.session.query(ChatMessage).count() == 0
 
 
-def test_chat_endpoint_records_failure_for_valid_jwt_with_deleted_user(client, app):
+def test_chat_endpoint_rejects_a_valid_jwt_whose_user_was_deleted(client, app, project):
+    """A deleted user has no project access, so nothing can be resolved or recorded."""
     with app.app_context():
         token = create_access_token(
             identity="999999",
@@ -231,10 +235,6 @@ def test_chat_endpoint_records_failure_for_valid_jwt_with_deleted_user(client, a
         json={},
     )
 
-    assert response.status_code == 422
-    rows = db.session.query(ChatMessage).order_by(ChatMessage.id).all()
-    assert len(rows) == 1
-    assert rows[0].role == "system"
-    assert rows[0].user_id is None
-    assert rows[0].username is None
-    assert rows[0].payload["error"] == "validation_error"
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "project_required"
+    assert db.session.query(ChatMessage).count() == 0

@@ -6,34 +6,46 @@ from .model import ChatMessage, ChatSession
 _TITLE_MAX_LENGTH = 60
 
 
-def create_session(created_by_id: int | None = None) -> ChatSession:
-    session = ChatSession(created_by_id=created_by_id)
+def create_session(project_id: int, created_by_id: int | None = None) -> ChatSession:
+    session = ChatSession(project_id=project_id, created_by_id=created_by_id)
     db.session.add(session)
     db.session.commit()
     return session
 
 
-def resolve_or_create_session(session_id: int | None) -> ChatSession:
+def get_session(session_id: int, project_id: int) -> ChatSession | None:
+    """The session, only if it belongs to ``project_id``."""
+    session = db.session.get(ChatSession, session_id)
+    if session is None or session.project_id != project_id:
+        return None
+    return session
+
+
+def resolve_or_create_session(
+    session_id: int | None, project_id: int
+) -> ChatSession:
     """Return the session for session_id, or a sensible default.
 
     Used wherever a session_id is optional at the API layer (see the
     "Deviation from the spec" note in the plan's Global Constraints): an
-    unknown or omitted id falls back to the most recently created session,
-    creating a brand new one only if none exist at all.
+    unknown or omitted id - or one that belongs to another project - falls
+    back to the project's most recently created session, creating a brand new
+    one only if the project has none at all.
     """
     if session_id is not None:
-        session = db.session.get(ChatSession, session_id)
+        session = get_session(session_id, project_id)
         if session is not None:
             return session
 
     latest = (
         db.session.query(ChatSession)
+        .filter(ChatSession.project_id == project_id)
         .order_by(ChatSession.created_at.desc(), ChatSession.id.desc())
         .first()
     )
     if latest is not None:
         return latest
-    return create_session()
+    return create_session(project_id)
 
 
 def _title_for_session(session_id: int) -> str:
@@ -68,7 +80,9 @@ def _last_activity(session: ChatSession):
     return last or session.created_at
 
 
-def list_sessions() -> list[dict]:
-    sessions = db.session.query(ChatSession).all()
+def list_sessions(project_id: int) -> list[dict]:
+    sessions = (
+        db.session.query(ChatSession).filter(ChatSession.project_id == project_id).all()
+    )
     sessions.sort(key=_last_activity, reverse=True)
     return [session_to_dict(session) for session in sessions]

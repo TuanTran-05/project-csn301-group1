@@ -5,6 +5,7 @@ from pydantic import ValidationError as PydanticValidationError
 from ..auth.service import current_user, roles_required
 from ..errors import ValidationError
 from ..extensions import limiter
+from ..projects.scope import current_project
 from . import service
 from .schemas import ChangePreviewSchema
 
@@ -39,9 +40,11 @@ def _parse(schema, payload: dict):
 @bp.post("/preview")
 @roles_required("ADMIN")
 def preview():
+    project = current_project(need="editor")
     data = _parse(ChangePreviewSchema, request.get_json(silent=True) or {})
     user = current_user()
     change = service.create_preview(
+        project_id=project.id,
         user_id=user.id if user else None,
         device_id=data.device_id,
         commands=data.commands,
@@ -55,8 +58,10 @@ def preview():
 @bp.get("")
 @jwt_required()
 def list_changes():
+    project = current_project()
     device_id = request.args.get("device_id", type=int)
     changes = service.list_changes(
+        project_id=project.id,
         device_id=device_id,
         status=request.args.get("status"),
         limit=request.args.get("limit", default=100, type=int),
@@ -68,12 +73,15 @@ def list_changes():
 @bp.get("/<int:change_id>")
 @jwt_required()
 def get_change(change_id: int):
-    return jsonify(service.get_change(change_id).to_dict()), 200
+    project = current_project()
+    return jsonify(service.get_change(change_id, project.id).to_dict()), 200
 
 
 @bp.post("/<int:change_id>/approve")
 @roles_required("ADMIN")
 def approve(change_id: int):
+    project = current_project(need="editor")
+    service.get_change(change_id, project.id)  # 404 for another project's change
     user = current_user()
     change = service.approve(change_id, user.id if user else None)
     return jsonify(change.to_dict()), 200
@@ -83,6 +91,8 @@ def approve(change_id: int):
 @roles_required("ADMIN")
 @limiter.limit("10 per minute")
 def apply(change_id: int):
+    project = current_project(need="editor")
+    service.get_change(change_id, project.id)  # 404 for another project's change
     user = current_user()
     payload = request.get_json(silent=True) or {}
     change = service.apply(
@@ -94,6 +104,8 @@ def apply(change_id: int):
 @bp.post("/<int:change_id>/cancel")
 @roles_required("ADMIN")
 def cancel(change_id: int):
+    project = current_project(need="editor")
+    service.get_change(change_id, project.id)  # 404 for another project's change
     user = current_user()
     change = service.cancel(change_id, user.id if user else None)
     return jsonify(change.to_dict()), 200

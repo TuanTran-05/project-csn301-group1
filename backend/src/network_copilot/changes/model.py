@@ -27,6 +27,13 @@ class ChangeBatch(db.Model):
     __tablename__ = "change_batches"
 
     id = db.Column(db.Integer, primary_key=True)
+    # A batch never spans projects: every child targets a device of this one.
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     status = db.Column(db.String(32), nullable=False, default="pending_approval")
     risk_level = db.Column(db.String(16), nullable=False, default="low")
     requires_confirmation = db.Column(
@@ -70,6 +77,7 @@ class ChangeBatch(db.Model):
         sorted_changes = sorted(self.changes, key=lambda c: c.target_hostname or "")
         return {
             "id": self.id,
+            "project_id": self.project_id,
             "status": self.status,
             "risk_level": self.risk_level,
             "requires_confirmation": self.requires_confirmation,
