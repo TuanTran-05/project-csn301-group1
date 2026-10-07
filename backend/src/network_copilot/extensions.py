@@ -5,8 +5,26 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
 
-db = SQLAlchemy()
+# Predictable constraint names: migrations can drop or alter a constraint by
+# name instead of guessing what the database generated. Explicitly named
+# constraints keep their name; this only names the ones left anonymous.
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+db = SQLAlchemy(metadata=MetaData(naming_convention=NAMING_CONVENTION))
+
+
+def in_check(column: str, values, name: str):
+    """CHECK (column IN (...)) so the database itself rejects a bad enum value."""
+    quoted = ", ".join("'" + str(value).replace("'", "''") + "'" for value in values)
+    return db.CheckConstraint(f"{column} IN ({quoted})", name=name)
 migrate = Migrate()
 jwt = JWTManager()
 

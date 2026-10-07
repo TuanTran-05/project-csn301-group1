@@ -8,7 +8,7 @@ caller may access (see projects/scope.py).
 
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 PROJECT_ENVIRONMENTS = ("pnetlab", "physical", "mixed")
 MEMBER_ACCESS_LEVELS = ("viewer", "editor")
@@ -43,6 +43,7 @@ class Project(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("owner_id", "name", name="uq_projects_owner_name"),
+        in_check("environment", PROJECT_ENVIRONMENTS, "environment_valid"),
     )
 
     def to_dict(self) -> dict:
@@ -91,6 +92,7 @@ class ProjectMember(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("project_id", "user_id", name="uq_project_members_user"),
+        in_check("access", MEMBER_ACCESS_LEVELS, "access_valid"),
     )
 
     def to_dict(self) -> dict:

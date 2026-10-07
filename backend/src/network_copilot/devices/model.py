@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 DEVICE_TYPES = ("cisco_ios", "cisco_asa")
 DEVICE_ROLES = (
@@ -57,6 +57,11 @@ class Device(db.Model):
     )
 
     __table_args__ = (
+        in_check("device_type", DEVICE_TYPES, "device_type_valid"),
+        in_check("role", DEVICE_ROLES, "role_valid"),
+        in_check("status", DEVICE_STATUSES, "status_valid"),
+        in_check("environment", DEVICE_ENVIRONMENTS, "environment_valid"),
+        db.CheckConstraint("ssh_port BETWEEN 1 AND 65535", name="ssh_port_range"),
         db.UniqueConstraint("project_id", "hostname", name="uq_devices_project_hostname"),
         db.UniqueConstraint(
             "project_id", "management_ip", name="uq_devices_project_management_ip"

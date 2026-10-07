@@ -95,12 +95,6 @@ document.addEventListener("alpine:init", () => {
     shareForm: { username: "", access: "viewer" },
     shareError: "",
 
-    // -- users (ADMIN) --
-    users: [],
-    userForm: { username: "", password: "", role: "OPERATOR" },
-    userError: "",
-    userNotice: "",
-
     // -- topology --
     links: [],
     selectedNodeId: null,
@@ -231,7 +225,6 @@ document.addEventListener("alpine:init", () => {
         await this.loadProjects();
         if (generation !== this._sessionGeneration) return;
         if (this.currentProjectId) await this.loadProjectData();
-        if (this.isAdmin) await this.loadUsers();
       } catch (err) {
         if (generation === this._sessionGeneration) {
           this.projectError = this.describeError(err);
@@ -551,31 +544,6 @@ document.addEventListener("alpine:init", () => {
         await this.loadMembers();
       } catch (err) {
         this.shareError = this.describeError(err);
-      }
-    },
-
-    // ------------------------------------------------------------------
-    // users (ADMIN)
-    // ------------------------------------------------------------------
-
-    async loadUsers() {
-      const data = await this.authFetch("/api/users");
-      this.users = data.items;
-    },
-
-    async createUser() {
-      this.userError = "";
-      this.userNotice = "";
-      try {
-        const created = await this.authFetch("/api/users", {
-          method: "POST",
-          body: JSON.stringify(this.userForm),
-        });
-        this.userForm = { username: "", password: "", role: "OPERATOR" };
-        this.userNotice = `Đã tạo tài khoản ${created.username}.`;
-        await this.loadUsers();
-      } catch (err) {
-        this.userError = this.describeError(err);
       }
     },
 

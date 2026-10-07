@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 LINK_TYPES = ("physical", "routed", "trunk")
 
@@ -45,6 +45,16 @@ class TopologyLink(db.Model):
     description = db.Column(db.String(255))
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        in_check("link_type", LINK_TYPES, "link_type_valid"),
+        db.CheckConstraint("device_a_id <> device_b_id", name="distinct_devices"),
+        # An interface carries one cable. The same port could still appear as
+        # the A end of one link and the B end of another; the service layer
+        # rejects that (see topology/service.py::_assert_endpoints_free).
+        db.UniqueConstraint("device_a_id", "interface_a", name="uq_topology_links_end_a"),
+        db.UniqueConstraint("device_b_id", "interface_b", name="uq_topology_links_end_b"),
     )
 
     device_a = db.relationship("Device", foreign_keys=[device_a_id])

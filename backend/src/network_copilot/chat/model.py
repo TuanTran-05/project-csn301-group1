@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 CHAT_ROLES = ("user", "assistant", "system")
 
@@ -63,6 +63,11 @@ class ChatMessage(db.Model):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         index=True,
+    )
+
+    __table_args__ = (
+        in_check("role", CHAT_ROLES, "role_valid"),
+        db.Index("ix_chat_messages_session_created", "session_id", "created_at"),
     )
 
     def to_dict(self) -> dict:

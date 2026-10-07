@@ -68,6 +68,34 @@ Open <http://127.0.0.1:5000/projects>.
 
 Approving and applying a change is still ADMIN-only, in every project.
 
+### User administration
+
+ADMINs manage accounts at <http://127.0.0.1:5000/users> (or `/api/users`):
+create (username, password ≥ 10 characters, role, optional name and email),
+edit role / profile, reset a password, and deactivate or re-activate. Accounts
+are deactivated, never deleted, so audit history keeps its author. Anyone can
+change their own password on the same page.
+
+* Changing a password, a role or the active flag logs that user out everywhere
+  (their tokens are revoked), and the role is always read from the database, so
+  a demotion applies immediately.
+* The last active ADMIN cannot be demoted or deactivated, and an administrator
+  cannot demote or deactivate themselves.
+* The first administrator, or promoting an account that already exists, is done
+  from the command line, with no server running:
+
+  ```bash
+  python scripts/manage_users.py ensure-admin g1    # create it, or promote it and keep its password
+  python scripts/manage_users.py list
+  python scripts/manage_users.py set-password g1    # prompts; NEW_USER_PASSWORD also works
+  ```
+
+### Database
+
+The schema is documented, with an entity diagram, in
+[`docs/database.md`](../docs/database.md): foreign keys are enforced, enumerated
+columns have CHECK constraints, and hostnames/IPs are unique per project.
+
 ### Upgrading an existing database
 
 `flask db upgrade` adds the project tables and moves everything already in the
@@ -296,6 +324,9 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | POST | `/api/projects/<pid>/topology/config-plan` | editor | Commands the design produces (no side effects) |
 | POST | `/api/projects/<pid>/topology/config-preview` | ADMIN | Freeze them as a change batch |
 | GET/POST | `/api/users` | ADMIN | List / create accounts |
+| GET/PUT | `/api/users/<id>` | ADMIN | Read / edit role, profile, active flag |
+| POST | `/api/users/<id>/reset-password` | ADMIN | Set a new password (revokes their tokens) |
+| POST | `/api/auth/change-password` | any | Change your own password |
 | GET/POST | `/api/devices` | viewer / editor | List / create devices in the current project |
 | GET/PUT/DELETE | `/api/devices/<id>` | viewer / editor | Read / update / delete |
 | POST | `/api/devices/<id>/test-connection` | editor | SSH reachability check |
@@ -384,7 +415,7 @@ src/network_copilot/
 ├── config.py         # environment-driven config
 ├── extensions.py     # db, migrate, jwt, limiter
 ├── errors.py         # AppError hierarchy -> JSON
-├── auth/             # users, JWT, roles_required
+├── auth/             # users, JWT, token revocation, roles_required
 ├── projects/         # projects, sharing, request scoping (X-Project-Id)
 ├── topology/         # diagram links, layout, config generation
 ├── devices/          # inventory CRUD + validation (per project)

@@ -1195,3 +1195,34 @@ a:focus-visible {
   .projects-sidebar { border-right: none; border-bottom: 1px solid var(--border); }
   .topology-wrap { grid-template-columns: 1fr; }
 }
+
+/* -- Users page -- */
+
+.users-page { padding: 16px 24px; max-width: 1100px; width: 100%; }
+.users-page input[type="text"],
+.users-page input[type="password"],
+.users-page select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+}
+.users-page button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.users-page button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.users-page button:disabled { opacity: 0.5; cursor: default; }
+.users-page .primary-btn { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+.users-page .primary-btn:hover:not(:disabled) { color: var(--accent-contrast); opacity: 0.9; }
+.users-page .danger-btn { color: var(--danger-text); border-color: var(--danger-bg); }
+.users-page section { margin-bottom: 24px; }
+.data-table tr.muted td { color: var(--text-muted); }

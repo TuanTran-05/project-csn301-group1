@@ -41,6 +41,10 @@ def create_app(config_object: type | None = None) -> Flask:
     def projects_page():
         return render_template("projects.html")
 
+    @app.get("/users")
+    def users_page():
+        return render_template("users.html")
+
     @app.get("/dashboard")
     def dashboard_page():
         return render_template("dashboard.html")
@@ -50,8 +54,13 @@ def create_app(config_object: type | None = None) -> Flask:
 
 def _register_extensions(app: Flask) -> None:
     db.init_app(app)
+    _enforce_sqlite_foreign_keys(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+
+    from .auth.service import is_token_revoked
+
+    jwt.token_in_blocklist_loader(is_token_revoked)
 
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
     app.config["RATELIMIT_ENABLED"] = bool(app.config.get("RATELIMIT_ENABLED", True))
@@ -59,6 +68,30 @@ def _register_extensions(app: Flask) -> None:
         "RATELIMIT_STORAGE_URI", "memory://"
     )
     limiter.init_app(app)
+
+
+def _enforce_sqlite_foreign_keys(app: Flask) -> None:
+    """Turn on FOREIGN KEY enforcement for every SQLite connection.
+
+    Alembic's env.py switches it off again for the duration of a migration:
+    SQLite rebuilds a table to alter it, and dropping the old table with
+    enforcement on would cascade-delete its children.
+    """
+    if not app.config.get("SQLITE_FOREIGN_KEYS"):
+        return
+
+    from sqlalchemy import event
+
+    with app.app_context():
+        engine = db.engine
+        if engine.dialect.name != "sqlite":
+            return
+
+        @event.listens_for(engine, "connect")
+        def _pragma(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
 
 def _register_models() -> None:

@@ -28,6 +28,7 @@
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       <span class="app-title">Network Copilot — Projects</span>
+      <a class="nav-link" href="/users">Tài khoản</a>
       <a class="nav-link" href="/dashboard">Dashboard</a>
       <a class="nav-link" href="/">Chat</a>
       <span class="user-badge">
@@ -87,32 +88,9 @@
           <button type="submit" class="primary-btn">Tạo project</button>
         </form>
 
-        <section class="side-form" x-show="isAdmin" x-cloak>
-          <h3>Tài khoản (ADMIN)</h3>
-          <ul class="user-list">
-            <template x-for="user in users" :key="user.id">
-              <li><span x-text="user.username"></span> <span class="pill" x-text="user.role"></span></li>
-            </template>
-          </ul>
-          <form @submit.prevent="createUser()">
-            <label>Tên đăng nhập
-              <input type="text" x-model="userForm.username" required autocomplete="off" />
-            </label>
-            <label>Mật khẩu (≥ 10 ký tự)
-              <input type="password" x-model="userForm.password" required autocomplete="new-password" />
-            </label>
-            <label>Vai trò
-              <select x-model="userForm.role">
-                <option value="OPERATOR">OPERATOR</option>
-                <option value="VIEWER">VIEWER</option>
-                <option value="ADMIN">ADMIN</option>
-              </select>
-            </label>
-            <p class="error-text" x-show="userError" x-text="userError"></p>
-            <p class="ok-text" x-show="userNotice" x-text="userNotice"></p>
-            <button type="submit" class="primary-btn">Tạo tài khoản</button>
-          </form>
-        </section>
+        <p class="hint" x-show="isAdmin" x-cloak>
+          Quản lý tài khoản ở trang <a href="/users">Người dùng</a>.
+        </p>
       </aside>
 
       <!-- ===== Selected project ===== -->

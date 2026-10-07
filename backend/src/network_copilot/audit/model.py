@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 RESULTS = ("success", "failure", "blocked")
 
@@ -32,6 +32,11 @@ class AuditLog(db.Model):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         index=True,
+    )
+
+    __table_args__ = (
+        in_check("result", RESULTS, "result_valid"),
+        db.Index("ix_audit_logs_project_created", "project_id", "created_at"),
     )
 
     def to_dict(self) -> dict:

@@ -25,6 +25,10 @@ class ConfigBackup(db.Model):
         index=True,
     )
 
+    __table_args__ = (
+        db.Index("ix_config_backups_device_created", "device_id", "created_at"),
+    )
+
     device = db.relationship("Device")
 
     def to_dict(self, include_config: bool = False) -> dict:

@@ -54,6 +54,11 @@ class Config:
     # Management network every device must live in.
     MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "172.16.3.0/24")
 
+    # SQLite ignores FOREIGN KEY clauses unless asked to enforce them per
+    # connection. On, the ON DELETE CASCADE / SET NULL rules in the schema are
+    # real and a row can never point at something that does not exist.
+    SQLITE_FOREIGN_KEYS = _bool("SQLITE_FOREIGN_KEYS", True)
+
     SSH_CONNECT_TIMEOUT = int(os.environ.get("SSH_CONNECT_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT = int(os.environ.get("SSH_COMMAND_TIMEOUT", "30"))
 
@@ -82,3 +87,11 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
+    # Most fixtures insert rows with placeholder ids (user_id=1 ...), so the
+    # shared test config leaves FK enforcement off; ForeignKeyTestConfig turns
+    # it on for the tests that check the schema's integrity rules.
+    SQLITE_FOREIGN_KEYS = False
+
+
+class ForeignKeyTestConfig(TestConfig):
+    SQLITE_FOREIGN_KEYS = True

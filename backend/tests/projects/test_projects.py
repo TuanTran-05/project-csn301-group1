@@ -260,3 +260,9 @@ def test_every_page_sends_the_selected_project_with_api_calls():
     for name in ("app.js", "dashboard.js", "projects.js"):
         source = (static / name).read_text(encoding="utf-8")
         assert "X-Project-Id" in source, name
+
+
+def test_users_page_is_served(client):
+    html = client.get("/users").get_data(as_text=True)
+    assert 'x-data="usersApp()"' in html
+    assert "js/users.js" in html

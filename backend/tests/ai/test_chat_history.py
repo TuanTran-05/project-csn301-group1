@@ -222,7 +222,7 @@ def test_chat_endpoint_does_not_record_an_unauthenticated_attempt(client):
 
 
 def test_chat_endpoint_rejects_a_valid_jwt_whose_user_was_deleted(client, app, project):
-    """A deleted user has no project access, so nothing can be resolved or recorded."""
+    """A token outlives its account for nothing: it is revoked and nothing is recorded."""
     with app.app_context():
         token = create_access_token(
             identity="999999",
@@ -235,6 +235,5 @@ def test_chat_endpoint_rejects_a_valid_jwt_whose_user_was_deleted(client, app, p
         json={},
     )
 
-    assert response.status_code == 400
-    assert response.get_json()["error"] == "project_required"
+    assert response.status_code == 401
     assert db.session.query(ChatMessage).count() == 0

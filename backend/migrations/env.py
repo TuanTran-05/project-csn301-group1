@@ -97,6 +97,15 @@ def run_migrations_online():
     connectable = get_engine()
 
     with connectable.connect() as connection:
+        if connection.dialect.name == "sqlite":
+            # Table rebuilds (batch_alter_table) drop and recreate tables;
+            # with FOREIGN KEY enforcement on, dropping a parent table would
+            # cascade-delete its rows. Integrity is re-checked at the end.
+            # Straight on the DBAPI connection: going through SQLAlchemy would
+            # open a transaction that Alembic then neither commits nor owns.
+            cursor = connection.connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.close()
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
@@ -105,6 +114,17 @@ def run_migrations_online():
 
         with context.begin_transaction():
             context.run_migrations()
+
+        if connection.dialect.name == "sqlite":
+            violations = connection.exec_driver_sql(
+                "PRAGMA foreign_key_check"
+            ).fetchall()
+            if violations:
+                logger.warning(
+                    "%d row(s) reference a missing parent after migration: %s",
+                    len(violations),
+                    violations[:10],
+                )
 
 
 if context.is_offline_mode():

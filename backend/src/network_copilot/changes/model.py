@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import event
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 CHANGE_STATUSES = (
     "pending_approval",
@@ -19,6 +19,10 @@ BATCH_STATUSES = (
 )
 
 RISK_LEVELS = ("low", "medium", "high")
+
+# Where a change came from: a direct API call, the AI copilot, or a topology
+# design turned into configuration.
+CHANGE_SOURCES = ("api", "ai", "design")
 
 
 class ChangeBatch(db.Model):
@@ -55,6 +59,12 @@ class ChangeBatch(db.Model):
     )
     approved_at = db.Column(db.DateTime)
     applied_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        in_check("status", BATCH_STATUSES, "status_valid"),
+        in_check("risk_level", RISK_LEVELS, "risk_level_valid"),
+        in_check("source", CHANGE_SOURCES, "source_valid"),
+    )
 
     changes = db.relationship(
         "ChangeRequest",
@@ -173,6 +183,14 @@ class ChangeRequest(db.Model):
     )
     approved_at = db.Column(db.DateTime)
     applied_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        in_check("status", CHANGE_STATUSES, "status_valid"),
+        in_check("risk_level", RISK_LEVELS, "risk_level_valid"),
+        in_check("source", CHANGE_SOURCES, "source_valid"),
+        in_check("execution_mode", ("config", "exec"), "execution_mode_valid"),
+        db.Index("ix_change_requests_device_status", "device_id", "status"),
+    )
 
     device = db.relationship("Device")
     requested_by = db.relationship("User", foreign_keys=[requested_by_id])
