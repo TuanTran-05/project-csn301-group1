@@ -90,19 +90,52 @@ def require_project(user: User | None, project_id: int, need: str = "viewer") ->
     return project
 
 
-def project_view(user: User | None, project: Project) -> dict:
+def project_view(
+    user: User | None,
+    project: Project,
+    device_counts: dict | None = None,
+    owners: dict | None = None,
+) -> dict:
+    """A project as the API shows it.
+
+    ``device_counts`` / ``owners`` let a listing pass pre-fetched lookups so it
+    costs two queries in total rather than two per project.
+    """
     from ..devices.model import Device
 
     data = project.to_dict()
     data["access"] = access_level(user, project)
-    data["device_count"] = (
-        db.session.query(db.func.count(Device.id))
-        .filter(Device.project_id == project.id)
-        .scalar()
-    )
-    owner = db.session.get(User, project.owner_id) if project.owner_id else None
-    data["owner"] = owner.username if owner else None
+    if device_counts is not None:
+        data["device_count"] = device_counts.get(project.id, 0)
+    else:
+        data["device_count"] = (
+            db.session.query(db.func.count(Device.id))
+            .filter(Device.project_id == project.id)
+            .scalar()
+        )
+    if owners is not None:
+        data["owner"] = owners.get(project.owner_id)
+    else:
+        owner = db.session.get(User, project.owner_id) if project.owner_id else None
+        data["owner"] = owner.username if owner else None
     return data
+
+
+def project_views(user: User | None, projects: list[Project]) -> list[dict]:
+    from ..devices.model import Device
+
+    ids = [project.id for project in projects]
+    counts = dict(
+        db.session.query(Device.project_id, db.func.count(Device.id))
+        .filter(Device.project_id.in_(ids))
+        .group_by(Device.project_id)
+        .all()
+    ) if ids else {}
+    owner_ids = {p.owner_id for p in projects if p.owner_id}
+    owners = dict(
+        db.session.query(User.id, User.username).filter(User.id.in_(owner_ids)).all()
+    ) if owner_ids else {}
+    return [project_view(user, p, counts, owners) for p in projects]
 
 
 # -- CRUD -------------------------------------------------------------------

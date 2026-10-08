@@ -7,7 +7,8 @@ from ..errors import ConflictError, NotFoundError, ValidationError
 from ..extensions import db
 from ..projects.service import validate
 from .model import TopologyLink
-from .schemas import LayoutSchema, LinkSchema, LinkUpdateSchema
+from .schemas import LayoutSchema, LinkSchema, LinkUpdateSchema, QuickDeviceSchema
+from .templates import get_template, next_free_interface, next_hostname, next_management_ip
 
 MIN_ROUTED_PREFIX = 8
 MAX_ROUTED_PREFIX = 31
@@ -211,15 +212,23 @@ def create_link(project, payload: dict) -> TopologyLink:
     data = validate(LinkSchema, payload, "Link")
     if data.device_a_id == data.device_b_id:
         raise ValidationError("A link must connect two different devices.")
-    _project_device(project.id, data.device_a_id)
-    _project_device(project.id, data.device_b_id)
+    device_a = _project_device(project.id, data.device_a_id)
+    device_b = _project_device(project.id, data.device_b_id)
+    fields = data.model_dump()
+    if fields["interface_a"] is None:
+        fields["interface_a"] = next_free_interface(project.id, device_a)
+    if fields["interface_b"] is None:
+        fields["interface_b"] = next_free_interface(project.id, device_b)
     _assert_endpoints_free(
         project.id,
-        [(data.device_a_id, data.interface_a), (data.device_b_id, data.interface_b)],
+        [
+            (data.device_a_id, fields["interface_a"]),
+            (data.device_b_id, fields["interface_b"]),
+        ],
         None,
     )
 
-    fields = _finalize_fields(project, data.model_dump())
+    fields = _finalize_fields(project, fields)
     link = TopologyLink(project_id=project.id, **fields)
     db.session.add(link)
     db.session.commit()
@@ -288,3 +297,29 @@ def save_layout(project, payload: dict) -> list[Device]:
         devices[position.device_id].pos_y = position.y
     db.session.commit()
     return list(devices.values())
+
+
+def quick_add_device(project, payload: dict) -> Device:
+    """Create a device from a template with a free name and management IP.
+
+    The name and address are suggestions chosen server-side so two quick drops
+    never collide; the normal device validation still runs on the result.
+    """
+    from ..devices import service as device_service
+
+    data = validate(QuickDeviceSchema, payload, "Device")
+    template = get_template(data.template)
+    device_payload = {
+        "hostname": next_hostname(project.id, template["prefix"]),
+        "management_ip": next_management_ip(project),
+        "device_type": template["device_type"],
+        "role": template["role"],
+        "environment": data.environment
+        or ("physical" if project.environment == "physical" else "pnetlab"),
+    }
+    if data.credential:
+        device_payload["credential"] = data.credential
+    if data.x is not None and data.y is not None:
+        device_payload["pos_x"] = data.x
+        device_payload["pos_y"] = data.y
+    return device_service.create_device(device_payload, project)

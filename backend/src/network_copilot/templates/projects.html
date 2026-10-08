@@ -225,24 +225,51 @@
               <div class="section-bar">
                 <h3>Sơ đồ mạng</h3>
                 <div class="row-actions">
-                  <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit">
-                    <span x-text="linkMode ? 'Đang nối thiết bị…' : 'Nối thiết bị'"></span>
+                  <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit"
+                          title="Bấm thiết bị nguồn rồi thiết bị đích; cổng trống được chọn tự động">
+                    <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>
                   </button>
+                  <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
                   <button type="button" @click="autoLayout()" x-show="canEdit">Sắp xếp lại</button>
                   <button type="button" @click="loadPlan()" x-show="canEdit">Xem cấu hình sinh ra</button>
                 </div>
               </div>
               <p class="error-text" x-show="topologyError" x-text="topologyError"></p>
-              <p class="hint" x-show="!devices.length">Thêm thiết bị ở tab Thiết bị trước khi vẽ sơ đồ.</p>
 
-              <div class="topology-wrap" x-show="devices.length">
+              <p class="hint" x-show="linkMode" x-cloak>
+                <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Chọn thiết bị nguồn.'"></span>
+              </p>
+
+              <div class="topology-wrap" :class="{ 'no-palette': !canEdit }">
+                <aside class="palette" x-show="canEdit" x-cloak>
+                  <h4>Thiết bị</h4>
+                  <p class="hint">Kéo thả vào sơ đồ hoặc bấm để thêm. Tên và IP được đặt tự động.</p>
+                  <template x-for="tpl in templates" :key="tpl.key">
+                    <button type="button" class="palette-item" draggable="true"
+                            @dragstart="onPaletteDragStart($event, tpl.key)"
+                            @click="addTemplate(tpl.key)" :disabled="dropBusy">
+                      <span class="palette-icon" x-html="iconSvg(tpl.key)"></span>
+                      <span x-text="tpl.label"></span>
+                    </button>
+                  </template>
+                  <details class="palette-ssh">
+                    <summary>SSH mặc định</summary>
+                    <p class="hint">Gán cho mọi thiết bị thêm mới. Chỉ giữ trong trang này, không lưu.</p>
+                    <input type="text" x-model="defaultSsh.username" placeholder="tài khoản" autocomplete="off" />
+                    <input type="password" x-model="defaultSsh.password" placeholder="mật khẩu" autocomplete="new-password" />
+                  </details>
+                </aside>
+
                 <svg
                   x-ref="canvas"
                   class="topology-canvas"
-                  viewBox="0 0 960 560"
+                  :view-box.camel="'0 0 ' + canvasW + ' ' + canvasH"
                   preserveAspectRatio="xMidYMid meet"
                   @pointerdown="onCanvasPointerDown($event)"
+                  @dragover.prevent
+                  @drop="onCanvasDrop($event)"
                 >
+                  <text x="50%" y="50%" class="canvas-empty" text-anchor="middle" x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
                   <g x-html="topologySvg"></g>
                 </svg>
 
@@ -258,8 +285,13 @@
                     <p class="hint">
                       <code x-text="selectedNode && selectedNode.management_ip"></code> ·
                       <span x-text="selectedNode && selectedNode.role"></span> ·
-                      <span x-text="selectedNode && selectedNode.status"></span>
+                      <span x-text="selectedNode && selectedNode.status"></span> ·
+                      <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
                     </p>
+                    <div class="row-actions" x-show="canEdit">
+                      <button type="button" @click="editSelectedDevice()">Sửa</button>
+                      <button type="button" class="danger-btn" @click="deleteDevice(selectedNode)">Xoá (Delete)</button>
+                    </div>
                   </div>
 
                   <form class="card form-grid single" @submit.prevent="saveLink()" x-show="linkFormOpen" x-cloak>

@@ -12,7 +12,7 @@ bp = Blueprint("projects", __name__, url_prefix="/api/projects")
 @jwt_required()
 def list_projects():
     user = current_user()
-    items = [service.project_view(user, p) for p in service.accessible_projects(user)]
+    items = service.project_views(user, service.accessible_projects(user))
     return jsonify({"items": items}), 200
 
 

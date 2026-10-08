@@ -60,9 +60,13 @@
     <div class="main-grid" x-show="!noProject">
       <aside class="sidebar devices-panel">
         <h2>Thiết bị</h2>
+        <p class="sidebar-state" x-show="!devices.length">Project chưa có thiết bị. <a href="/projects">Thêm thiết bị</a>.</p>
         <ul>
           <template x-for="device in devices" :key="device.id">
-            <li>
+            <li class="device-item" tabindex="0" role="button"
+                :title="'Chèn ' + device.hostname + ' vào tin nhắn'"
+                @click="insertHostname(device.hostname)"
+                @keydown.enter="insertHostname(device.hostname)">
               <span
                 class="status-dot"
                 :class="'status-' + device.status"
@@ -90,7 +94,17 @@
             New chat
           </button>
         </div>
-        <div class="chat-log" x-ref="chatLog">
+        <div class="chat-empty" x-show="!messages.length && !sending" x-cloak>
+          <h3>Bạn muốn làm gì với mạng này?</h3>
+          <p>Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ <em>đề xuất</em>: mọi thay đổi cấu hình
+            vẫn phải được ADMIN duyệt trước khi chạy.</p>
+          <div class="chips">
+            <template x-for="prompt in suggestions" :key="prompt">
+              <button type="button" class="chip" @click="useSuggestion(prompt)" x-text="prompt"></button>
+            </template>
+          </div>
+        </div>
+        <div class="chat-log" x-ref="chatLog" @scroll.passive="onChatScroll()" x-show="messages.length || sending">
           <template x-for="message in messages" :key="message.id">
             <div class="bubble" :class="'bubble-' + message.role">
               <div class="bubble-meta">
@@ -127,7 +141,11 @@
                           ></span>
                         </div>
                         <template x-if="resultColumns(result).length === 0">
-                          <pre x-text="result.output || 'No output returned.'"></pre>
+                          <div class="output-wrap">
+                            <button type="button" class="copy-btn" x-show="result.output"
+                                    @click="copyText(result.output, $event)">Sao chép</button>
+                            <pre x-text="result.output || 'No output returned.'"></pre>
+                          </div>
                         </template>
                         <template x-if="resultColumns(result).length > 0">
                           <div class="result-table-wrap">
@@ -370,16 +388,24 @@
           </div>
         </div>
 
+        <button type="button" class="jump-btn" x-show="showJump" x-cloak
+                @click="_scrollToBottom(); showJump = false">↓ Tin mới</button>
+        <div class="typing" x-show="sending" x-cloak aria-live="polite">
+          <span class="dots"><i></i><i></i><i></i></span> AI đang xử lý…
+        </div>
         <form class="chat-input" @submit.prevent="sendMessage()">
           <label class="sr-only" for="chat-message">Tin nhắn cho Network Copilot</label>
-          <input
+          <textarea
             id="chat-message"
-            type="text"
+            x-ref="composer"
+            rows="1"
             x-model="draftMessage"
             :disabled="sending"
-            placeholder="Hỏi AI về trạng thái mạng hoặc yêu cầu thay đổi cấu hình..."
-          />
-          <button type="submit" :disabled="sending">Gửi</button>
+            @keydown="onComposerKeydown($event)"
+            @input="autoGrow($event.target)"
+            placeholder="Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước"
+          ></textarea>
+          <button type="submit" :disabled="sending || !draftMessage.trim()">Gửi</button>
         </form>
       </main>
       <aside class="sidebar changes-panel">

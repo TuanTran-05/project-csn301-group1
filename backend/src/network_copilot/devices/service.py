@@ -61,7 +61,9 @@ def list_devices(
     HTTP routes always pass ``project_id``; ``None`` is for internal callers
     (the monitoring scheduler, CLI scripts) that work across projects.
     """
-    query = db.session.query(Device)
+    # has_credential is serialised for every device: load the credentials in
+    # one extra query instead of one per row.
+    query = db.session.query(Device).options(db.selectinload(Device.credential))
     if project_id is not None:
         query = query.filter(Device.project_id == project_id)
     if role:

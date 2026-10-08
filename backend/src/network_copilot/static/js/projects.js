@@ -24,6 +24,25 @@ const NODE_H = 52;
 const CANVAS_W = 960;
 const CANVAS_H = 560;
 
+// Small line glyphs, drawn in a 24x24 box at the left of a node.
+const ICONS = {
+  router:
+    '<circle cx="12" cy="12" r="8" /><path d="M12 5v14M5 12h14M9 8l3-3 3 3M9 16l3 3 3-3M8 9l-3 3 3 3M16 9l3 3-3 3" />',
+  switch_l3:
+    '<rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 11h10M14 8l3 3-3 3M10 16l-3-3" />',
+  switch:
+    '<rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 10.5h10M14 8l3 2.5-3 2.5M17 14H7M10 12l-3 2 3 2" />',
+  firewall:
+    '<rect x="3" y="5" width="18" height="14" rx="1" /><path d="M3 10h18M3 15h18M9 5v5M15 10v5M9 15v4" />',
+};
+
+function templateKeyFor(device) {
+  if (device.device_type === "cisco_asa" || device.role === "firewall") return "firewall";
+  if (device.role === "core") return "router";
+  if (device.role === "distribution") return "switch_l3";
+  return "switch";
+}
+
 const LINK_COLORS = { physical: "#75899f", routed: "#22c55e", trunk: "#06b6d4" };
 
 const EMPTY_DEVICE_FORM = () => ({
@@ -103,6 +122,10 @@ document.addEventListener("alpine:init", () => {
     linkForm: EMPTY_LINK_FORM(),
     linkFormOpen: false,
     topologyError: "",
+    templates: [],
+    defaultSsh: { username: "", password: "" },
+    dropBusy: false,
+    linkSourceId: null,
     plan: null,
     previewNotice: "",
     previewBatchId: null,
@@ -114,8 +137,28 @@ document.addEventListener("alpine:init", () => {
     // ------------------------------------------------------------------
 
     init() {
+      window.addEventListener("keydown", (event) => this.onKeyDown(event));
       if (!this.token) return;
       this.startApp();
+    },
+
+    // Delete removes what is selected on the canvas, like a diagram editor.
+    onKeyDown(event) {
+      if (event.key === "Escape" && this.tab === "topology") {
+        this.linkMode = false;
+        this.linkSourceId = null;
+        this.closeLinkForm();
+        return;
+      }
+      if (event.key !== "Delete" || this.tab !== "topology" || !this.canEdit) return;
+      const tag = (event.target && event.target.tagName) || "";
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+      if (this.selectedLinkId) {
+        this.linkForm.id = this.selectedLinkId;
+        this.deleteLink();
+      } else if (this.selectedNode) {
+        this.deleteDevice(this.selectedNode);
+      }
     },
 
     async authFetch(path, options = {}) {
@@ -272,6 +315,8 @@ document.addEventListener("alpine:init", () => {
       this.selectedNodeId = null;
       this.selectedLinkId = null;
       this.linkMode = false;
+      this.linkSourceId = null;
+      this.templates = [];
       this.linkFormOpen = false;
       this.deviceFormOpen = false;
       this.deviceError = "";
@@ -300,6 +345,8 @@ document.addEventListener("alpine:init", () => {
       await this.loadDevices();
       if (projectId !== this.currentProjectId) return;
       await this.loadTopology();
+      if (projectId !== this.currentProjectId) return;
+      await this.loadTemplates();
       if (projectId !== this.currentProjectId) return;
       await this.loadMembers();
     },
@@ -583,6 +630,17 @@ document.addEventListener("alpine:init", () => {
       };
     },
 
+    // The canvas grows to fit devices dragged past the default edge.
+    get canvasW() {
+      const xs = this.devices.map((d) => this.nodePos(d).x);
+      return Math.max(CANVAS_W, Math.min(4000, Math.max(0, ...xs) + NODE_W));
+    },
+
+    get canvasH() {
+      const ys = this.devices.map((d) => this.nodePos(d).y);
+      return Math.max(CANVAS_H, Math.min(4000, Math.max(0, ...ys) + NODE_H * 2));
+    },
+
     get topologySvg() {
       const parts = [];
       const pos = {};
@@ -619,16 +677,18 @@ document.addEventListener("alpine:init", () => {
 
       for (const device of this.devices) {
         const p = pos[device.id];
-        const selected = device.id === this.selectedNodeId;
+        const selected =
+          device.id === this.selectedNodeId || device.id === this.linkSourceId;
         const status = ["online", "offline"].includes(device.status)
           ? device.status
           : "unknown";
         parts.push(
           `<g class="topo-node${selected ? " selected" : ""} env-${esc(device.environment)}" data-node-id="${device.id}" transform="translate(${p.x - NODE_W / 2},${p.y - NODE_H / 2})">` +
             `<rect width="${NODE_W}" height="${NODE_H}" rx="8" />` +
-            `<circle class="dot ${status}" cx="12" cy="12" r="5" />` +
-            `<text class="host" x="${NODE_W / 2}" y="24" text-anchor="middle">${esc(device.hostname)}</text>` +
-            `<text class="sub" x="${NODE_W / 2}" y="41" text-anchor="middle">${esc(device.role)} · ${device.environment === "physical" ? "thật" : "PNETLab"}</text>` +
+            `<circle class="dot ${status}" cx="${NODE_W - 10}" cy="10" r="4.5" />` +
+            `<g class="icon" transform="translate(6,${NODE_H / 2 - 14}) scale(1.15)">${ICONS[templateKeyFor(device)]}</g>` +
+            `<text class="host" x="${NODE_W / 2 + 10}" y="24" text-anchor="middle">${esc(device.hostname)}</text>` +
+            `<text class="sub" x="${NODE_W / 2 + 10}" y="41" text-anchor="middle">${esc(device.role)} · ${device.environment === "physical" ? "thật" : "PNETLab"}</text>` +
             `</g>`
         );
       }
@@ -723,8 +783,8 @@ document.addEventListener("alpine:init", () => {
       const point = this._svgPoint(event);
       const device = this.deviceById(drag.id);
       if (!device) return;
-      device.pos_x = Math.max(NODE_W / 2, Math.min(CANVAS_W - NODE_W / 2, point.x + drag.dx));
-      device.pos_y = Math.max(NODE_H / 2, Math.min(CANVAS_H - NODE_H / 2, point.y + drag.dy));
+      device.pos_x = Math.max(NODE_W / 2, Math.min(4000, point.x + drag.dx));
+      device.pos_y = Math.max(NODE_H / 2, Math.min(4000, point.y + drag.dy));
     },
 
     async _onDragEnd() {
@@ -752,14 +812,14 @@ document.addEventListener("alpine:init", () => {
     clickNode(device) {
       this.topologyError = "";
       if (this.linkMode && this.canEdit) {
-        if (!this.linkFormOpen) {
-          this.linkForm = EMPTY_LINK_FORM();
-          this.linkFormOpen = true;
-        }
-        if (!this.linkForm.device_a_id) {
-          this.linkForm.device_a_id = device.id;
-        } else if (!this.linkForm.device_b_id && device.id !== Number(this.linkForm.device_a_id)) {
-          this.linkForm.device_b_id = device.id;
+        // Quick cabling: click the source, then the target. Free ports are
+        // picked for both ends; click the new link afterwards to refine it.
+        if (!this.linkSourceId) {
+          this.linkSourceId = device.id;
+        } else if (device.id !== this.linkSourceId) {
+          const source = this.linkSourceId;
+          this.linkSourceId = null;
+          this.quickLink(source, device.id);
         }
         return;
       }
@@ -777,15 +837,93 @@ document.addEventListener("alpine:init", () => {
 
     toggleLinkMode() {
       this.linkMode = !this.linkMode;
+      this.linkSourceId = null;
       this.topologyError = "";
-      if (this.linkMode) {
-        this.selectedNodeId = null;
-        this.selectedLinkId = null;
-        this.linkForm = EMPTY_LINK_FORM();
-        this.linkFormOpen = true;
-      } else {
-        this.linkFormOpen = false;
+      this.selectedNodeId = null;
+      this.selectedLinkId = null;
+      this.linkFormOpen = false;
+    },
+
+    async quickLink(sourceId, targetId) {
+      this.topologyError = "";
+      try {
+        await this.authFetch(this.topologyUrl("/links"), {
+          method: "POST",
+          body: JSON.stringify({ device_a_id: sourceId, device_b_id: targetId }),
+        });
+        this.plan = null;
+        await this.loadTopology();
+      } catch (err) {
+        this.topologyError = this.describeError(err);
       }
+    },
+
+    openManualLinkForm() {
+      this.linkMode = false;
+      this.linkSourceId = null;
+      this.selectedLinkId = null;
+      this.linkForm = EMPTY_LINK_FORM();
+      this.linkFormOpen = true;
+    },
+
+    // ---- palette: drag a device type onto the canvas --------------------
+
+    async loadTemplates() {
+      const projectId = this.currentProjectId;
+      const data = await this.authFetch(this.topologyUrl("/templates"));
+      if (projectId === this.currentProjectId) this.templates = data.items;
+    },
+
+    iconSvg(key) {
+      return `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[key] || ""}</svg>`;
+    },
+
+    onPaletteDragStart(event, key) {
+      event.dataTransfer.setData("text/plain", `template:${key}`);
+      event.dataTransfer.effectAllowed = "copy";
+    },
+
+    onCanvasDrop(event) {
+      event.preventDefault();
+      const raw = event.dataTransfer.getData("text/plain");
+      if (!raw.startsWith("template:") || !this.canEdit) return;
+      const point = this._svgPoint(event);
+      this.addTemplate(raw.slice("template:".length), point);
+    },
+
+    async addTemplate(key, point) {
+      if (!this.canEdit || this.dropBusy) return;
+      this.dropBusy = true;
+      this.topologyError = "";
+      const body = { template: key };
+      if (point) {
+        body.x = Math.max(NODE_W / 2, Math.round(point.x));
+        body.y = Math.max(NODE_H / 2, Math.round(point.y));
+      }
+      if (this.defaultSsh.username && this.defaultSsh.password) {
+        body.credential = { ...this.defaultSsh };
+      }
+      try {
+        const device = await this.authFetch(this.topologyUrl("/quick-device"), {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        await this.loadTopology();
+        await this.loadProjects();
+        this.selectedLinkId = null;
+        this.selectedNodeId = device.id;
+      } catch (err) {
+        this.topologyError = this.describeError(err);
+      } finally {
+        this.dropBusy = false;
+      }
+    },
+
+    editSelectedDevice() {
+      const device = this.selectedNode;
+      if (!device) return;
+      this.tab = "devices";
+      this.openDeviceForm(device);
     },
 
     selectLink(id) {

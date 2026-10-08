@@ -27,6 +27,11 @@ document.addEventListener("alpine:init", () => {
     })(),
     noProject: false,
 
+    // -- chat composer --
+    showJump: false,
+    _sentHistory: [],
+    _historyIndex: -1,
+
     // -- devices --
     devices: [],
     _deviceRefreshGeneration: 0,
@@ -67,6 +72,106 @@ document.addEventListener("alpine:init", () => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
     })(),
+
+    // Starter prompts built from this project's real devices, so a new chat
+    // is never a blank box.
+    get suggestions() {
+      const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
+      const router = byRole("core", "isp");
+      const switchDevice = byRole("access", "distribution");
+      const prompts = [];
+      if (router) {
+        prompts.push(`Kiểm tra trạng thái OSPF trên ${router.hostname}`);
+        prompts.push(`Hiển thị bảng định tuyến của ${router.hostname}`);
+      }
+      if (switchDevice) {
+        prompts.push(`Liệt kê VLAN trên ${switchDevice.hostname}`);
+        prompts.push(`Xem trạng thái các cổng của ${switchDevice.hostname}`);
+      }
+      if (this.devices.length) {
+        prompts.push("Thiết bị nào đang offline?");
+        if (this.currentUser && this.currentUser.role === "ADMIN") {
+          prompts.push("Lưu cấu hình trên toàn bộ thiết bị");
+        }
+      } else {
+        prompts.push("Mạng của tôi cần những gì để bắt đầu?");
+      }
+      return prompts;
+    },
+
+    useSuggestion(text) {
+      this.draftMessage = text;
+      return this.sendMessage();
+    },
+
+    insertHostname(hostname) {
+      const sep = this.draftMessage && !/\s$/.test(this.draftMessage) ? " " : "";
+      this.draftMessage = `${this.draftMessage}${sep}${hostname} `;
+      this.$nextTick(() => {
+        const box = this.$refs.composer;
+        if (box) {
+          box.focus();
+          this.autoGrow(box);
+        }
+      });
+    },
+
+    // Enter sends, Shift+Enter breaks the line. Enter while an input method
+    // (Vietnamese Telex/VNI) is composing only confirms the word, so it must
+    // not send.
+    onComposerKeydown(event) {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        this.sendMessage();
+        return;
+      }
+      const box = event.target;
+      const atStart = box.selectionStart === 0 && box.selectionEnd === 0;
+      if (event.key === "ArrowUp" && atStart && this._sentHistory.length) {
+        event.preventDefault();
+        this._historyIndex = Math.min(
+          this._historyIndex + 1,
+          this._sentHistory.length - 1
+        );
+        this.draftMessage = this._sentHistory[this._historyIndex];
+        this.$nextTick(() => this.autoGrow(box));
+      } else if (event.key === "ArrowDown" && this._historyIndex >= 0) {
+        const atEnd = box.selectionStart === box.value.length;
+        if (!atEnd) return;
+        event.preventDefault();
+        this._historyIndex -= 1;
+        this.draftMessage =
+          this._historyIndex >= 0 ? this._sentHistory[this._historyIndex] : "";
+        this.$nextTick(() => this.autoGrow(box));
+      }
+    },
+
+    autoGrow(box) {
+      if (!box) return;
+      box.style.height = "auto";
+      box.style.height = `${Math.min(box.scrollHeight, 160)}px`;
+    },
+
+    onChatScroll() {
+      this.showJump = !this._isScrolledToBottom();
+    },
+
+    async copyText(text, event) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const button = event && event.target;
+        if (button) {
+          const label = button.textContent;
+          button.textContent = "Đã chép";
+          setTimeout(() => {
+            button.textContent = label;
+          }, 1200);
+        }
+      } catch {
+        // Clipboard access can be blocked (plain http); the text stays selectable.
+      }
+    },
 
     get currentProject() {
       return this.projects.find((p) => p.id === this.currentProjectId) || null;
@@ -824,7 +929,11 @@ document.addEventListener("alpine:init", () => {
         .filter((message) => !message._client)
         .map((message) => message.id);
       this.draftMessage = "";
+      this._sentHistory.unshift(text);
+      this._sentHistory = this._sentHistory.slice(0, 30);
+      this._historyIndex = -1;
       this.sending = true;
+      this.$nextTick(() => this.autoGrow(this.$refs.composer));
       this._ingestMessage(
         this._clientMessage("user", text, null, knownServerIds)
       );
@@ -876,6 +985,8 @@ document.addEventListener("alpine:init", () => {
         }
         if (generation === this._messagesRefreshGeneration) {
           this.sending = false;
+          // Give the box back to the user so the next question needs no click.
+          this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
         }
       }
     },

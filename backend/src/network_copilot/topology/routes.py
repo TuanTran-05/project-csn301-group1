@@ -7,6 +7,7 @@ from ..auth.service import current_user, roles_required
 from ..projects import service as project_service
 from . import configgen, service
 from .schemas import ConfigRequestSchema
+from .templates import DEVICE_TEMPLATES
 
 # Topology routes name the project in the URL, unlike the inventory routes
 # that use the X-Project-Id header: the diagram is addressed as a sub-resource
@@ -27,6 +28,28 @@ def _project(project_id: int, need: str):
 def get_topology(project_id: int):
     project = _project(project_id, "viewer")
     return jsonify(service.get_topology(project)), 200
+
+
+@bp.get("/templates")
+@jwt_required()
+def list_templates(project_id: int):
+    _project(project_id, "viewer")
+    return jsonify({"items": list(DEVICE_TEMPLATES)}), 200
+
+
+@bp.post("/quick-device")
+@jwt_required()
+def quick_device(project_id: int):
+    project = _project(project_id, "editor")
+    device = service.quick_add_device(project, request.get_json(silent=True) or {})
+    record_event(
+        action="device.create",
+        result="success",
+        user_id=current_user().id,
+        device_id=device.id,
+        details=device.to_dict(),
+    )
+    return jsonify(device.to_dict()), 201
 
 
 @bp.put("/layout")

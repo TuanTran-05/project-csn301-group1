@@ -23,9 +23,10 @@ class LinkSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     device_a_id: int
-    interface_a: str = Field(min_length=1, max_length=40)
+    # Left out, an interface is chosen for you: the lowest free port.
+    interface_a: str | None = Field(default=None, min_length=1, max_length=40)
     device_b_id: int
-    interface_b: str = Field(min_length=1, max_length=40)
+    interface_b: str | None = Field(default=None, min_length=1, max_length=40)
     link_type: LinkType = "physical"
     network: str | None = None
     ip_a: str | None = None
@@ -34,8 +35,10 @@ class LinkSchema(BaseModel):
     bring_up: bool = True
     description: str | None = Field(default=None, max_length=255)
 
-    _check_a = field_validator("interface_a")(normalize_interface)
-    _check_b = field_validator("interface_b")(normalize_interface)
+    @field_validator("interface_a", "interface_b")
+    @classmethod
+    def check_interface(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_interface(value)
 
 
 class LinkUpdateSchema(BaseModel):
@@ -64,6 +67,18 @@ class LayoutSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     positions: list[Position] = Field(max_length=500)
+
+
+class QuickDeviceSchema(BaseModel):
+    """Drop a templated device on the canvas."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    template: str = Field(min_length=1, max_length=32)
+    x: float | None = Field(default=None, ge=-100000, le=100000)
+    y: float | None = Field(default=None, ge=-100000, le=100000)
+    environment: Literal["pnetlab", "physical"] | None = None
+    credential: dict | None = None
 
 
 class ConfigRequestSchema(BaseModel):

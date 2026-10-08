@@ -74,6 +74,8 @@ class DeviceCreateSchema(BaseModel):
     environment: DeviceEnvironment = "pnetlab"
     description: str | None = Field(default=None, max_length=255)
     credential: CredentialSchema | None = None
+    pos_x: float | None = Field(default=None, ge=-100000, le=100000)
+    pos_y: float | None = Field(default=None, ge=-100000, le=100000)
 
     _check_hostname = field_validator("hostname")(_validate_hostname)
     _check_ip = field_validator("management_ip")(_validate_management_ip)

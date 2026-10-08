@@ -266,3 +266,21 @@ def test_users_page_is_served(client):
     html = client.get("/users").get_data(as_text=True)
     assert 'x-data="usersApp()"' in html
     assert "js/users.js" in html
+
+
+def test_designer_offers_a_device_palette_and_quick_cabling(client):
+    html = client.get("/projects").get_data(as_text=True)
+    assert "palette-item" in html
+    assert "onCanvasDrop" in html
+    assert "toggleLinkMode" in html
+
+
+def test_chat_composer_does_not_send_while_an_ime_is_composing():
+    from pathlib import Path
+
+    source = Path("src/network_copilot/static/js/app.js").read_text(encoding="utf-8")
+    # Vietnamese Telex/VNI confirm a word with Enter; that must not send.
+    assert "event.isComposing" in source
+    assert "onComposerKeydown" in source
+    html = Path("src/network_copilot/templates/index.html").read_text(encoding="utf-8")
+    assert "<textarea" in html and "suggestions" in html

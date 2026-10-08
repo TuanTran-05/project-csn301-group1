@@ -285,3 +285,95 @@ def test_preview_with_only_unsupported_devices_is_refused(client, admin_headers,
     client.post(f"{base}/links", headers=admin_headers,
                 json=link_payload(lab["fw"], "Gi0/0", asa2, "Gi0/0"))
     assert client.post(f"{base}/config-preview", headers=admin_headers, json={}).status_code == 422
+
+
+# -- palette: templated devices, automatic names, addresses and ports -----------
+
+
+def drop(client, headers, base, template="router", **extra):
+    return client.post(f"{base}/quick-device", headers=headers, json={"template": template, **extra})
+
+
+def test_templates_are_listed(client, admin_headers, base):
+    items = client.get(f"{base}/templates", headers=admin_headers).get_json()["items"]
+    assert {t["key"] for t in items} == {"router", "switch_l3", "switch", "firewall"}
+
+
+def test_dropping_devices_picks_free_names_and_addresses(client, admin_headers, base, project):
+    first = drop(client, admin_headers, base, "router", x=120, y=80).get_json()
+    second = drop(client, admin_headers, base, "router").get_json()
+    switch = drop(client, admin_headers, base, "switch").get_json()
+
+    assert (first["hostname"], second["hostname"], switch["hostname"]) == ("R1", "R2", "SW1")
+    assert (first["role"], switch["role"]) == ("core", "access")
+    assert (first["pos_x"], first["pos_y"]) == (120.0, 80.0)
+    assert second["pos_x"] is None
+    # Inside the project network, from the 10th host up, never twice the same.
+    ips = [first["management_ip"], second["management_ip"], switch["management_ip"]]
+    assert ips == ["172.16.3.10", "172.16.3.11", "172.16.3.12"]
+
+
+def test_names_and_addresses_reuse_gaps(client, admin_headers, base):
+    a = drop(client, admin_headers, base).get_json()
+    b = drop(client, admin_headers, base).get_json()
+    client.delete(f"/api/devices/{a['id']}", headers=admin_headers)
+    again = drop(client, admin_headers, base).get_json()
+    assert (again["hostname"], again["management_ip"]) == (a["hostname"], a["management_ip"])
+    assert b["hostname"] == "R2"
+
+
+def test_firewall_template_is_an_asa(client, admin_headers, base):
+    body = drop(client, admin_headers, base, "firewall").get_json()
+    assert (body["device_type"], body["role"], body["hostname"]) == ("cisco_asa", "firewall", "FW1")
+
+
+def test_quick_device_stores_the_ssh_credential(client, admin_headers, base):
+    from network_copilot.credentials.service import get_device_credential
+
+    body = drop(client, admin_headers, base, credential={"username": "netops", "password": "S3cret!pw"}).get_json()
+    assert body["has_credential"] is True
+    assert get_device_credential(body["id"]).username == "netops"
+
+
+def test_quick_device_respects_the_environment_and_unknown_templates(client, admin_headers, base):
+    assert drop(client, admin_headers, base, environment="physical").get_json()["environment"] == "physical"
+    assert drop(client, admin_headers, base, "toaster").status_code == 404
+    assert drop(client, admin_headers, base, bogus=1).status_code == 422
+
+
+def test_quick_device_reports_a_full_network(client, admin_headers, base, project):
+    project.management_network = "192.168.9.0/30"  # two usable hosts
+    db.session.commit()
+    assert drop(client, admin_headers, base).status_code == 201
+    assert drop(client, admin_headers, base).status_code == 201
+    assert drop(client, admin_headers, base).status_code == 409
+
+
+def test_viewers_cannot_drop_devices(client, viewer_headers, base):
+    assert drop(client, viewer_headers, base).status_code == 403
+
+
+def test_links_choose_free_ports_when_none_are_given(client, admin_headers, base, lab):
+    def connect(a, b):
+        response = client.post(
+            f"{base}/links", headers=admin_headers,
+            json={"device_a_id": lab[a].id, "device_b_id": lab[b].id},
+        )
+        assert response.status_code == 201
+        return response.get_json()
+
+    one = connect("r1", "sw1")
+    two = connect("r1", "sw2")
+    three = connect("sw1", "sw2")
+    assert (one["interface_a"], one["interface_b"]) == ("GigabitEthernet0/0", "GigabitEthernet0/0")
+    assert two["interface_a"] == "GigabitEthernet0/1"          # r1 port 0 is taken
+    assert (three["interface_a"], three["interface_b"]) == ("GigabitEthernet0/1", "GigabitEthernet0/1")
+
+
+def test_an_explicit_port_can_be_mixed_with_an_automatic_one(client, admin_headers, base, lab):
+    response = client.post(
+        f"{base}/links", headers=admin_headers,
+        json={"device_a_id": lab["r1"].id, "interface_a": "GigabitEthernet0/5", "device_b_id": lab["sw1"].id},
+    )
+    assert response.status_code == 201
+    assert response.get_json()["interface_b"] == "GigabitEthernet0/0"

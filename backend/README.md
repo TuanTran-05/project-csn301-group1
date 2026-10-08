@@ -55,7 +55,13 @@ Open <http://127.0.0.1:5000/projects>.
   automatically; with several and no header the API answers
   `400 project_required`. A project you cannot access is `404`, never `403`.
   The chat, dashboard and projects pages share the selection.
-- **Network designer.** The *Sơ đồ mạng* tab is a canvas: drag devices, connect
+- **Adding devices like Packet Tracer.** In the *Sơ đồ mạng* tab, drag a Router,
+  Switch L2/L3 or Firewall from the palette onto the canvas (or click it). The name
+  (`R1`, `SW2`…) and a free management IP are chosen for you; an optional default
+  SSH login, kept only in the page, is stored (encrypted) on each new device.
+  *Nối dây* cables two devices with two clicks and picks the free ports itself;
+  `Delete` removes the selected device or link, `Esc` leaves cabling mode.
+- **Network designer.** The same tab is a canvas: drag devices, connect
   interfaces, and mark each link `physical`, `routed` (a point-to-point subnet,
   addresses derived or set by hand) or `trunk` (allowed VLANs). **Xem cấu hình
   sinh ra** shows the IOS commands per device. **Tạo bản xem trước** (ADMIN)
@@ -319,7 +325,9 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | PUT/DELETE | `/api/projects/<pid>/members/<uid>` | owner | Change access / unshare |
 | GET | `/api/projects/<pid>/topology` | viewer | Devices (with canvas positions) and links |
 | PUT | `/api/projects/<pid>/topology/layout` | editor | Save node positions |
-| POST | `/api/projects/<pid>/topology/links` | editor | Add a link |
+| GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
+| POST | `/api/projects/<pid>/topology/quick-device` | editor | Create a device from a template (free name and IP) |
+| POST | `/api/projects/<pid>/topology/links` | editor | Add a link (ports optional: free ones are chosen) |
 | PUT/DELETE | `/api/projects/<pid>/topology/links/<id>` | editor | Edit / delete a link |
 | POST | `/api/projects/<pid>/topology/config-plan` | editor | Commands the design produces (no side effects) |
 | POST | `/api/projects/<pid>/topology/config-preview` | ADMIN | Freeze them as a change batch |
