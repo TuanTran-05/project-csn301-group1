@@ -5,6 +5,7 @@ import pytest
 from network_copilot.devices.model import Device
 from network_copilot.integrations import pnetlab
 from network_copilot.topology import pnetlab_import
+from network_copilot.topology.interfaces import normalize_label
 from network_copilot.topology.model import TopologyLink
 from network_copilot.extensions import db
 
@@ -64,7 +65,7 @@ def base(project):
      ("Fa0/3", "FastEthernet0/3"), ("Te1/0/1", "TenGigabitEthernet1/0/1"), ("mgmt", None), ("", None), (None, None)],
 )
 def test_interface_labels_are_expanded(label, expected):
-    assert pnetlab_import.normalize_label(label) == expected
+    assert normalize_label(label) == expected
 
 
 @pytest.mark.parametrize(

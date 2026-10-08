@@ -293,6 +293,10 @@
                   </button>
                   <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
                   <button type="button" @click="autoLayout()" x-show="canEdit">Sắp xếp lại</button>
+                  <button type="button" @click="runDiscovery()" x-show="canEdit" :disabled="discovery && discovery.loading"
+                          title="Hỏi thiết bị về hàng xóm CDP/LLDP và so với sơ đồ">
+                    <span x-text="discovery && discovery.loading ? 'Đang hỏi thiết bị…' : 'Khám phá (CDP/LLDP)'"></span>
+                  </button>
                   <button type="button" @click="loadPlan()" x-show="canEdit">Xem cấu hình sinh ra</button>
                 </div>
               </div>
@@ -422,6 +426,50 @@
 
                   <p class="hint" x-show="!canEdit">Bạn chỉ có quyền xem sơ đồ này.</p>
                 </aside>
+              </div>
+
+              <div class="card" x-show="discovery && (discovery.error || discovery.result)" x-cloak>
+                <div class="section-bar">
+                  <h4>So sánh sơ đồ với mạng thật</h4>
+                  <button type="button" @click="clearDiscovery()">Ẩn</button>
+                </div>
+                <p class="error-text" x-show="discovery && discovery.error" x-text="discovery && discovery.error"></p>
+                <template x-if="discovery && discovery.result">
+                  <div>
+                    <p class="hint">
+                      <span class="drift-chip matched">khớp <b x-text="discovery.result.matched.length"></b></span>
+                      <span class="drift-chip missing">thiếu trên mạng <b x-text="discovery.result.missing.length"></b></span>
+                      <span class="drift-chip unknown">chưa kiểm tra được <b x-text="discovery.result.unknown.length"></b></span>
+                      <span class="drift-chip unplanned">chưa có trong sơ đồ <b x-text="discovery.result.unplanned.length"></b></span>
+                    </p>
+                    <p class="hint">Trên sơ đồ: dây xanh lá viền sáng = khớp, đỏ nét đứt = thiết kế có nhưng thiết bị không báo, xám = thiết bị không trả lời.</p>
+                    <template x-for="item in discovery.result.errors" :key="item.device">
+                      <p class="error-text"><strong x-text="item.device"></strong>: <span x-text="item.error"></span></p>
+                    </template>
+                    <template x-if="discovery.result.unplanned.length">
+                      <div>
+                        <table class="data-table">
+                          <thead><tr><th>Thiết bị A</th><th>Cổng A</th><th>Thiết bị B</th><th>Cổng B</th><th></th></tr></thead>
+                          <tbody>
+                            <template x-for="(link, index) in discovery.result.unplanned" :key="index">
+                              <tr>
+                                <td x-text="link.hostname_a"></td><td x-text="link.interface_a"></td>
+                                <td x-text="link.hostname_b"></td><td x-text="link.interface_b"></td>
+                                <td class="row-actions"><button type="button" @click="addDiscovered([link])">Thêm vào sơ đồ</button></td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                        <div class="form-actions">
+                          <button type="button" class="primary-btn" @click="addDiscovered(discovery.result.unplanned)">Thêm tất cả</button>
+                        </div>
+                      </div>
+                    </template>
+                    <template x-for="(item, index) in discovery.result.unmatched" :key="'u' + index">
+                      <p class="hint">Hàng xóm ngoài project: <b x-text="item.neighbor"></b> (cổng <span x-text="item.interface"></span> của <span x-text="item.device"></span>)</p>
+                    </template>
+                  </div>
+                </template>
               </div>
 
               <div class="card plan" x-show="plan" x-cloak>

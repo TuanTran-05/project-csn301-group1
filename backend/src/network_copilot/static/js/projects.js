@@ -125,6 +125,7 @@ document.addEventListener("alpine:init", () => {
     linkForm: EMPTY_LINK_FORM(),
     linkFormOpen: false,
     topologyError: "",
+    discovery: null,
     templates: [],
     defaultSsh: { username: "", password: "" },
     dropBusy: false,
@@ -745,8 +746,9 @@ document.addEventListener("alpine:init", () => {
         const color = LINK_COLORS[link.link_type] || LINK_COLORS.physical;
         const selected = link.id === this.selectedLinkId;
         const dash = link.link_type === "trunk" ? ' stroke-dasharray="7 4"' : "";
+        const drift = this.driftOf(link.id);
         parts.push(
-          `<g class="topo-link${selected ? " selected" : ""}" data-link-id="${link.id}">` +
+          `<g class="topo-link${selected ? " selected" : ""}" data-link-id="${link.id}"${drift ? ` data-drift="${drift}"` : ""}>` +
             `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="16" />` +
             `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${selected ? 4 : 2}"${dash} />` +
             this._linkLabels(link, x1, y1, x2, y2, color) +
@@ -1114,6 +1116,52 @@ document.addEventListener("alpine:init", () => {
           method: "PUT",
           body: JSON.stringify({ positions }),
         });
+      } catch (err) {
+        this.topologyError = this.describeError(err);
+      }
+    },
+
+    // ---- discovery: compare the diagram with what the devices report -----
+
+    driftOf(linkId) {
+      const result = this.discovery && this.discovery.result;
+      if (!result) return "";
+      if (result.matched.includes(linkId)) return "matched";
+      if (result.missing.includes(linkId)) return "missing";
+      if (result.unknown.includes(linkId)) return "unknown";
+      return "";
+    },
+
+    async runDiscovery() {
+      this.topologyError = "";
+      this.discovery = { loading: true, error: "", result: null };
+      try {
+        const result = await this.authFetch(this.topologyUrl("/discover"), {
+          method: "POST",
+          body: "{}",
+        });
+        this.discovery = { loading: false, error: "", result };
+      } catch (err) {
+        this.discovery = { loading: false, error: this.describeError(err), result: null };
+      }
+    },
+
+    clearDiscovery() {
+      this.discovery = null;
+    },
+
+    async addDiscovered(links) {
+      this.topologyError = "";
+      try {
+        const done = await this.authFetch(this.topologyUrl("/discover/apply"), {
+          method: "POST",
+          body: JSON.stringify({ links }),
+        });
+        await this.loadTopology();
+        if (done.skipped.length) {
+          this.topologyError = done.skipped.map((s) => s.message).join("; ");
+        }
+        await this.runDiscovery();
       } catch (err) {
         this.topologyError = this.describeError(err);
       }

@@ -6,7 +6,7 @@ from ..audit.service import record_event
 from ..auth.service import current_user, roles_required
 from ..projects import service as project_service
 from ..extensions import limiter
-from . import configgen, pnetlab_import, service
+from . import configgen, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -143,6 +143,42 @@ def pnetlab_import_route(project_id: int):
             "devices": created,
             "links": sum(1 for l in result["links"] if l["status"] == "created"),
         },
+    )
+    return jsonify(result), 200
+
+
+@bp.post("/discover")
+@jwt_required()
+@limiter.limit("6 per minute")
+def discover_route(project_id: int):
+    """Ask the devices who their neighbors are and compare with the design."""
+    project = _project(project_id, "editor")
+    result = discovery.discover(project)
+    record_event(
+        action="topology.discover",
+        result="success",
+        user_id=current_user().id,
+        details={"polled": result["polled"], "errors": len(result["errors"]),
+                 "unplanned": len(result["unplanned"]), "missing": len(result["missing"])},
+    )
+    return jsonify(result), 200
+
+
+@bp.post("/discover/apply")
+@jwt_required()
+def discover_apply(project_id: int):
+    project = _project(project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    links = payload.get("links")
+    if not isinstance(links, list) or not all(isinstance(i, dict) for i in links):
+        from ..errors import ValidationError
+        raise ValidationError("'links' must be a list of discovered links.")
+    result = discovery.apply_discovered(project, links)
+    record_event(
+        action="topology.discover_apply",
+        result="success",
+        user_id=current_user().id,
+        details={"created": len(result["created"]), "skipped": len(result["skipped"])},
     )
     return jsonify(result), 200
 

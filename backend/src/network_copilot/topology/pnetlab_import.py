@@ -10,22 +10,8 @@ from ..extensions import db
 from ..integrations.pnetlab import build_client
 from ..projects.service import validate
 from . import service as topology_service
+from .interfaces import normalize_label
 from .templates import free_management_ips
-
-INTERFACE_WORDS = (
-    ("tengigabitethernet", "TenGigabitEthernet"),
-    ("tengig", "TenGigabitEthernet"),
-    ("gigabitethernet", "GigabitEthernet"),
-    ("fastethernet", "FastEthernet"),
-    ("ethernet", "Ethernet"),
-    ("gi", "GigabitEthernet"),
-    ("fa", "FastEthernet"),
-    ("te", "TenGigabitEthernet"),
-    ("eth", "Ethernet"),
-    ("g", "GigabitEthernet"),
-    ("e", "Ethernet"),
-)
-
 
 class LabSource(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -49,19 +35,6 @@ class ImportRequest(LabSource):
     nodes: list[NodeChoice] = Field(min_length=1, max_length=500)
     credential: dict | None = None
     import_links: bool = True
-
-
-def normalize_label(label: str | None) -> str | None:
-    """"e0/1", "Gi0/1", "gigabitethernet0/1" -> a full interface name, or None."""
-    text = "".join((label or "").split())
-    match = re.match(r"^([A-Za-z-]+)(\d[\d/.:]*)$", text)
-    if not match:
-        return None
-    word, rest = match.group(1).lower(), match.group(2)
-    for prefix, full in INTERFACE_WORDS:
-        if word == prefix:
-            return f"{full}{rest}"
-    return None
 
 
 def classify(template: str | None) -> dict | None:

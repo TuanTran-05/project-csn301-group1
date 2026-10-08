@@ -1198,6 +1198,13 @@ a:focus-visible {
 .topo-node .dot.offline { fill: var(--offline); }
 .topo-node .dot.unknown { fill: var(--unknown); }
 .topo-link { cursor: pointer; }
+.topo-link[data-drift="matched"] line:nth-child(2) { stroke: #22c55e; filter: drop-shadow(0 0 3px #22c55e); }
+.topo-link[data-drift="missing"] line:nth-child(2) { stroke: #ef4444; stroke-dasharray: 3 5; }
+.topo-link[data-drift="unknown"] line:nth-child(2) { stroke: #75899f; opacity: 0.5; }
+.drift-chip { display: inline-block; margin-right: 8px; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); font-size: 12px; }
+.drift-chip.matched { color: var(--success-text); }
+.drift-chip.missing { color: var(--danger-text); }
+.drift-chip.unplanned { color: var(--warn-text); }
 .topo-link .iface { fill: var(--text); font-size: 10px; }
 .topo-link .mid { font-size: 11px; }
 .topo-link text { paint-order: stroke; stroke: var(--surface-raised); stroke-width: 4px; stroke-linejoin: round; }
