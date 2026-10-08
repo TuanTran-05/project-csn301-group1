@@ -137,11 +137,13 @@ def _register_blueprints(app: Flask) -> None:
     from .devices.routes import bp as devices_bp
     from .monitoring.routes import bp as monitoring_bp
     from .projects.routes import bp as projects_bp
+    from .realtime.routes import bp as realtime_bp
     from .topology.routes import bp as topology_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(projects_bp)
+    app.register_blueprint(realtime_bp)
     app.register_blueprint(topology_bp)
     app.register_blueprint(devices_bp)
     app.register_blueprint(commands_bp)

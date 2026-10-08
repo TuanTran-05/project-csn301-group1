@@ -12,23 +12,44 @@ trên công sức; mục đã làm được đánh dấu ✅.
   chỉ báo AI đang xử lý, bấm thiết bị để chèn hostname, sao chép output.
 - ✅ Bớt truy vấn thừa: danh sách thiết bị và danh sách project không còn N+1.
 
-## Nên làm tiếp (ưu tiên cao)
+## Đã làm thêm (vòng 2)
+
+- ✅ **Nhập thiết bị từ PNETLab** qua API tương thích EVE-NG (chỉ đọc, chống SSRF).
+  Chưa thử với PNETLab thật; xem ghi chú bên dưới.
+- ✅ **Khám phá CDP/LLDP** và so sánh sơ đồ với mạng thật (khớp / thiếu / chưa kiểm
+  tra được / chưa có trong sơ đồ), thêm cáp tìm thấy vào sơ đồ.
+- ✅ **Nhập/xuất**: JSON project, CSV thiết bị, ảnh SVG/PNG, nhân bản project.
+- ✅ **Hoàn tác/làm lại**, chọn nhiều thiết bị (kéo vùng, Shift+bấm, Ctrl+A), căn chỉnh.
+- ✅ **Cấu hình L2/L3 từ sơ đồ**: VLAN, cổng access, SVI, route tĩnh, OSPF, ASA.
+- ✅ **Chat cập nhật tức thì** bằng SSE (trễ ≈ 2 giây thay vì tới 7 giây), polling chỉ
+  còn là dự phòng; monitoring chạy song song có giới hạn và báo khi vòng poll quá hạn.
+
+### Giới hạn đã biết
+
+- PNETLab: mã dựa trên API EVE-NG công khai. Bản PNETLab khác (đường dẫn đăng nhập,
+  định dạng `left/top`, tên nhãn cổng) có thể cần chỉnh nhỏ trong `integrations/pnetlab.py`.
+- Hoàn tác không áp dụng cho "xoá thiết bị" (mất thông tin đăng nhập SSH).
+- Khám phá chỉ hỗ trợ IOS (ASA không chạy CDP); LLDP phải được bật trên thiết bị.
+- OSPF sinh ra là một area 0; chưa có area khác, xác thực hay `passive-interface`.
+- SSE giữ một thread cho mỗi tab đang mở: cần Gunicorn `gthread` (xem README).
+
+## Danh sách ban đầu (đã hoàn thành)
 
 | # | Việc | Vì sao |
 |---|---|---|
-| 1 | **Nhập thiết bị từ PNETLab** qua API của PNETLab (liệt kê node của một lab) | Hiện vẫn phải thêm tay từng thiết bị; PNETLab đã biết tên, loại và console của chúng |
-| 2 | **Tự khám phá topology** bằng `show cdp neighbors detail` / `show lldp neighbors` trên thiết bị thật, rồi vẽ link | Dựng sơ đồ từ mạng thật thay vì vẽ tay; cũng là cơ sở cho mục 3 |
-| 3 | **So sánh thiết kế với thực tế**: tô đỏ link có trong sơ đồ nhưng không có trên thiết bị (và ngược lại) | Phát hiện lệch cấu hình, đúng nhu cầu "thiết kế rồi cấu hình" |
-| 4 | **Nhập/xuất sơ đồ** (JSON, CSV thiết bị, ảnh PNG/SVG) và **nhân bản project/mẫu** | Chia sẻ bài lab, dựng lại nhanh |
-| 5 | **Hoàn tác / làm lại** trên canvas, chọn nhiều thiết bị, căn lề | Thao tác sơ đồ an tâm như Packet Tracer |
-| 6 | **Cấu hình L2/L3 phong phú hơn từ sơ đồ**: VLAN, cổng access, SVI, định tuyến tĩnh/OSPF theo link | Hiện chỉ sinh IP, trunk, mô tả; ASA mới bị bỏ qua |
+| ✅ 1 | **Nhập thiết bị từ PNETLab** qua API của PNETLab (liệt kê node của một lab) | Hiện vẫn phải thêm tay từng thiết bị; PNETLab đã biết tên, loại và console của chúng |
+| ✅ 2 | **Tự khám phá topology** bằng `show cdp neighbors detail` / `show lldp neighbors` trên thiết bị thật, rồi vẽ link | Dựng sơ đồ từ mạng thật thay vì vẽ tay; cũng là cơ sở cho mục 3 |
+| ✅ 3 | **So sánh thiết kế với thực tế**: tô đỏ link có trong sơ đồ nhưng không có trên thiết bị (và ngược lại) | Phát hiện lệch cấu hình, đúng nhu cầu "thiết kế rồi cấu hình" |
+| ✅ 4 | **Nhập/xuất sơ đồ** (JSON, CSV thiết bị, ảnh PNG/SVG) và **nhân bản project/mẫu** | Chia sẻ bài lab, dựng lại nhanh |
+| ✅ 5 | **Hoàn tác / làm lại** trên canvas, chọn nhiều thiết bị, căn lề | Thao tác sơ đồ an tâm như Packet Tracer |
+| ✅ 6 | **Cấu hình L2/L3 phong phú hơn từ sơ đồ**: VLAN, cổng access, SVI, định tuyến tĩnh/OSPF theo link | Hiện chỉ sinh IP, trunk, mô tả; ASA mới bị bỏ qua |
 
 ## Hiệu năng và độ tin cậy
 
-- **Cập nhật chat bằng push thay vì thăm dò.** Trang chat gọi 4 API mỗi 7–15 giây cho
+- ✅ **Cập nhật chat bằng push thay vì thăm dò.** Trang chat gọi 4 API mỗi 7–15 giây cho
   mỗi tab đang mở. Dùng SSE (một kết nối, server gửi khi có tin/thay đổi) hoặc ít nhất
   `ETag`/`If-None-Match` để các lần thăm dò không đổi trả `304`.
-- **Monitoring theo project, chạy song song có giới hạn.** Vòng poll hiện tuần tự
+- ✅ **Monitoring theo project, chạy song song có giới hạn.** Vòng poll hiện tuần tự
   qua mọi thiết bị của mọi project (`max_instances=1`); nhiều project sẽ làm một vòng
   kéo dài hơn chu kỳ. Dùng thread pool nhỏ và lưu thời lượng vòng để cảnh báo.
 - **Giữ lại snapshot có hạn.** `device_snapshots` và `command_executions` tăng mãi;

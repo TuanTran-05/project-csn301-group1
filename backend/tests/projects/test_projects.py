@@ -284,3 +284,9 @@ def test_chat_composer_does_not_send_while_an_ime_is_composing():
     assert "onComposerKeydown" in source
     html = Path("src/network_copilot/templates/index.html").read_text(encoding="utf-8")
     assert "<textarea" in html and "suggestions" in html
+
+
+def test_designer_page_wires_the_new_tools(client):
+    html = client.get("/projects").get_data(as_text=True)
+    for marker in ("pnetPreview", "runDiscovery", "exportDiagramSvg", "undo()", "addDesign('vlans')", "importCsvFile"):
+        assert marker in html, marker

@@ -67,6 +67,11 @@
           </template>
         </ul>
 
+        <label class="side-form file-pick" x-show="canCreateProject">
+          <span class="hint">Nhập project từ file JSON đã xuất</span>
+          <input type="file" accept="application/json,.json" @change="importProjectFile($event)" />
+        </label>
+
         <form class="side-form" @submit.prevent="createProject()" x-show="canCreateProject">
           <h3>Tạo project mới</h3>
           <label>Tên
@@ -114,6 +119,8 @@
                 </p>
               </div>
               <div class="project-actions">
+                <button type="button" @click="exportProject()" title="Tải project thành file JSON (không kèm mật khẩu)">Xuất JSON</button>
+                <button type="button" @click="cloneProject()" x-show="canCreateProject" title="Tạo bản sao làm mẫu">Nhân bản</button>
                 <a class="nav-link" href="/">Mở Chat</a>
                 <a class="nav-link" href="/dashboard">Dashboard</a>
               </div>
@@ -122,6 +129,7 @@
             <nav class="tabs" role="tablist">
               <button type="button" :class="{ active: tab === 'devices' }" @click="tab = 'devices'">Thiết bị</button>
               <button type="button" :class="{ active: tab === 'topology' }" @click="tab = 'topology'">Sơ đồ mạng</button>
+              <button type="button" :class="{ active: tab === 'design' }" @click="tab = 'design'">Thiết kế L2/L3</button>
               <button type="button" :class="{ active: tab === 'sharing' }" @click="tab = 'sharing'">Chia sẻ</button>
               <button type="button" :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Cài đặt</button>
             </nav>
@@ -131,6 +139,10 @@
               <div class="section-bar">
                 <h3>Thiết bị (<span x-text="devices.length"></span>)</h3>
                 <div class="row-actions">
+                  <button type="button" @click="exportDevicesCsv()" title="hostname, IP, loại… (không kèm mật khẩu)">Xuất CSV</button>
+                  <label class="file-button" x-show="canEdit" title="Cột bắt buộc: hostname, management_ip">
+                    Nhập CSV <input type="file" accept=".csv,text/csv" @change="importCsvFile($event)" hidden />
+                  </label>
                   <button type="button" @click="openPnet()" x-show="canEdit && !pnet">Nhập từ PNETLab</button>
                   <button type="button" class="primary-btn" @click="openDeviceForm(null)" x-show="canEdit && !deviceFormOpen">+ Thêm thiết bị</button>
                 </div>
@@ -292,7 +304,11 @@
                     <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>
                   </button>
                   <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
+                  <button type="button" @click="undo()" x-show="canEdit" :disabled="!canUndo" title="Hoàn tác (Ctrl+Z)">↶ Hoàn tác</button>
+                  <button type="button" @click="redo()" x-show="canEdit" :disabled="!canRedo" title="Làm lại (Ctrl+Y)">↷ Làm lại</button>
                   <button type="button" @click="autoLayout()" x-show="canEdit">Sắp xếp lại</button>
+                  <button type="button" @click="exportDiagramSvg()" title="Tải sơ đồ thành ảnh vector">Tải SVG</button>
+                  <button type="button" @click="exportDiagramPng()" title="Tải sơ đồ thành ảnh PNG">Tải PNG</button>
                   <button type="button" @click="runDiscovery()" x-show="canEdit" :disabled="discovery && discovery.loading"
                           title="Hỏi thiết bị về hàng xóm CDP/LLDP và so với sơ đồ">
                     <span x-text="discovery && discovery.loading ? 'Đang hỏi thiết bị…' : 'Khám phá (CDP/LLDP)'"></span>
@@ -305,6 +321,18 @@
               <p class="hint" x-show="linkMode" x-cloak>
                 <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Chọn thiết bị nguồn.'"></span>
               </p>
+
+              <div class="align-bar" x-show="canAlign" x-cloak>
+                <span class="hint">Đã chọn <b x-text="multi.length"></b> thiết bị — kéo để di chuyển cùng nhau:</span>
+                <button type="button" @click="align('left')">Căn trái</button>
+                <button type="button" @click="align('top')">Căn trên</button>
+                <button type="button" @click="align('center')">Giữa dọc</button>
+                <button type="button" @click="align('middle')">Giữa ngang</button>
+                <button type="button" @click="align('spread-x')" x-show="multi.length > 2">Dàn đều ngang</button>
+                <button type="button" @click="align('spread-y')" x-show="multi.length > 2">Dàn đều dọc</button>
+                <button type="button" class="danger-btn" @click="deleteSelectedDevices()">Xoá đã chọn</button>
+              </div>
+              <p class="hint" x-show="devices.length > 1 && !linkMode">Kéo trên vùng trống để chọn nhiều thiết bị, Shift+bấm để thêm/bớt, Ctrl+Z hoàn tác.</p>
 
               <div class="topology-wrap" :class="{ 'no-palette': !canEdit }">
                 <aside class="palette" x-show="canEdit" x-cloak>
@@ -403,6 +431,23 @@
                         </label>
                       </div>
                     </template>
+                    <template x-if="linkForm.link_type === 'routed' && (isAsa(linkForm.device_a_id) || isAsa(linkForm.device_b_id))">
+                      <div class="subfields">
+                        <p class="hint">Firewall ASA: tên giao diện (nameif) và mức tin cậy 0–100. Để trống: tự đặt <code>to-&lt;hàng xóm&gt;</code> và mức 0.</p>
+                        <template x-if="isAsa(linkForm.device_a_id)">
+                          <div class="subfields">
+                            <label>nameif đầu A <input type="text" x-model="linkForm.nameif_a" placeholder="outside" /></label>
+                            <label>security-level đầu A <input type="number" min="0" max="100" x-model="linkForm.security_a" /></label>
+                          </div>
+                        </template>
+                        <template x-if="isAsa(linkForm.device_b_id)">
+                          <div class="subfields">
+                            <label>nameif đầu B <input type="text" x-model="linkForm.nameif_b" placeholder="inside" /></label>
+                            <label>security-level đầu B <input type="number" min="0" max="100" x-model="linkForm.security_b" /></label>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
                     <template x-if="linkForm.link_type === 'trunk'">
                       <div class="subfields">
                         <label>VLAN cho phép (tuỳ chọn)
@@ -496,6 +541,118 @@
                 <p class="ok-text" x-show="previewNotice">
                   <span x-text="previewNotice"></span> <a href="/">Mở trang Chat</a>
                 </p>
+              </div>
+            </section>
+
+            <!-- ---------- Design: L2 / L3 ---------- -->
+            <section x-show="tab === 'design'" x-cloak>
+              <h3>Thiết kế L2/L3</h3>
+              <p class="hint">Khai báo VLAN, cổng access, SVI, route tĩnh và OSPF. Cấu hình được sinh ở tab Sơ đồ mạng
+                (cùng với IP và trunk của các dây nối) và chỉ chạy sau khi ADMIN duyệt. OSPF dùng một area 0 và tự lấy mạng từ
+                các dây routed và SVI của thiết bị.</p>
+              <p class="error-text" x-show="designError" x-text="designError"></p>
+
+              <div class="card">
+                <h4>VLAN</h4>
+                <table class="data-table" x-show="design.vlans.length">
+                  <thead><tr><th>VLAN</th><th>Tên</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.vlans" :key="item.id">
+                    <tr><td x-text="item.vlan_id"></td><td x-text="item.name"></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('vlans', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('vlans')" x-show="canEdit">
+                  <input type="number" min="2" max="4094" x-model="designForms.vlans.vlan_id" placeholder="ID (2–4094)" required />
+                  <input type="text" x-model="designForms.vlans.name" placeholder="TÊN" required maxlength="32" />
+                  <button type="submit" class="primary-btn">Thêm VLAN</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>Cổng access</h4>
+                <table class="data-table" x-show="design.access_ports.length">
+                  <thead><tr><th>Thiết bị</th><th>Cổng</th><th>VLAN</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.access_ports" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td x-text="item.interface"></td><td x-text="item.vlan_id"></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('access-ports', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('access-ports')" x-show="canEdit">
+                  <select x-model="designForms['access-ports'].device_id" required>
+                    <option value="">Switch…</option>
+                    <template x-for="d in switchDevices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <input type="text" x-model="designForms['access-ports'].interface" placeholder="GigabitEthernet0/5" required />
+                  <select x-model="designForms['access-ports'].vlan_id" required>
+                    <option value="">VLAN…</option>
+                    <template x-for="v in design.vlans" :key="v.id"><option :value="v.vlan_id" x-text="v.vlan_id + ' ' + v.name"></option></template>
+                  </select>
+                  <button type="submit" class="primary-btn">Thêm cổng</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>SVI (giao diện VLAN)</h4>
+                <table class="data-table" x-show="design.svis.length">
+                  <thead><tr><th>Thiết bị</th><th>VLAN</th><th>Địa chỉ</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.svis" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td x-text="item.vlan_id"></td><td><code x-text="item.ip + '/' + item.prefix_length"></code></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('svis', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('svis')" x-show="canEdit">
+                  <select x-model="designForms.svis.device_id" required>
+                    <option value="">Switch…</option>
+                    <template x-for="d in switchDevices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <select x-model="designForms.svis.vlan_id" required>
+                    <option value="">VLAN…</option>
+                    <template x-for="v in design.vlans" :key="v.id"><option :value="v.vlan_id" x-text="v.vlan_id + ' ' + v.name"></option></template>
+                  </select>
+                  <input type="text" x-model="designForms.svis.ip" placeholder="192.168.10.1" required />
+                  <input type="number" min="8" max="30" x-model="designForms.svis.prefix_length" title="Độ dài prefix" required />
+                  <button type="submit" class="primary-btn">Thêm SVI</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>Route tĩnh</h4>
+                <table class="data-table" x-show="design.routes.length">
+                  <thead><tr><th>Thiết bị</th><th>Mạng đích</th><th>Next hop</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.routes" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td><code x-text="item.network + '/' + item.prefix_length"></code></td><td x-text="item.next_hop"></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('routes', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('routes')" x-show="canEdit">
+                  <select x-model="designForms.routes.device_id" required>
+                    <option value="">Thiết bị…</option>
+                    <template x-for="d in devices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <input type="text" x-model="designForms.routes.network" placeholder="0.0.0.0/0" required />
+                  <input type="text" x-model="designForms.routes.next_hop" placeholder="10.0.12.2" required />
+                  <button type="submit" class="primary-btn">Thêm route</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>OSPF (area 0)</h4>
+                <table class="data-table" x-show="design.ospf.length">
+                  <thead><tr><th>Thiết bị</th><th>Process</th><th>Router ID</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.ospf" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td x-text="item.process_id"></td><td x-text="item.router_id || 'tự động'"></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('ospf', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('ospf')" x-show="canEdit">
+                  <select x-model="designForms.ospf.device_id" required>
+                    <option value="">Thiết bị IOS…</option>
+                    <template x-for="d in iosDevices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <input type="number" min="1" max="65535" x-model="designForms.ospf.process_id" title="Process ID" required />
+                  <input type="text" x-model="designForms.ospf.router_id" placeholder="router-id (tuỳ chọn)" />
+                  <button type="submit" class="primary-btn">Bật / sửa OSPF</button>
+                </form>
               </div>
             </section>
 

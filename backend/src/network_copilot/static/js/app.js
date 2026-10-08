@@ -27,6 +27,12 @@ document.addEventListener("alpine:init", () => {
     })(),
     noProject: false,
 
+    // -- live updates (server-sent events; polling is the fallback) --
+    _streamGeneration: 0,
+    _streamAbort: null,
+    _streamHealthy: false,
+    _streamState: null,
+
     // -- chat composer --
     showJump: false,
     _sentHistory: [],
@@ -394,22 +400,128 @@ document.addEventListener("alpine:init", () => {
         if (generation !== this._sessionGeneration) return;
       }
       this.startPolling();
+      this.startRealtime();
     },
 
     startPolling() {
       this.stopPolling();
-      this._deviceTimer = setInterval(() => {
-        this.refreshDevices().catch(() => {});
-      }, 15000);
-      this._changesTimer = setInterval(() => {
-        this.refreshChanges().catch(() => {});
-      }, 15000);
-      this._batchesTimer = setInterval(() => {
-        this.refreshBatches().catch(() => {});
-      }, 15000);
-      this._messagesTimer = setInterval(() => {
-        this.pollMessages().catch(() => {});
-      }, 7000);
+      // While the event stream is healthy the server says when to refresh, so
+      // these timers only act when it is not.
+      const unlessStreaming = (refresh) => () => {
+        if (!this._streamHealthy) refresh().catch(() => {});
+      };
+      this._deviceTimer = setInterval(unlessStreaming(() => this.refreshDevices()), 15000);
+      this._changesTimer = setInterval(unlessStreaming(() => this.refreshChanges()), 15000);
+      this._batchesTimer = setInterval(unlessStreaming(() => this.refreshBatches()), 15000);
+      this._messagesTimer = setInterval(unlessStreaming(() => this.pollMessages()), 7000);
+      // A slow full refresh as a safety net against a missed event.
+      this._safetyTimer = setInterval(() => this._refreshEverything(), 60000);
+    },
+
+    _refreshEverything() {
+      return Promise.allSettled([
+        this.refreshDevices(),
+        this.refreshChanges(),
+        this.refreshBatches(),
+        this.pollMessages(),
+      ]);
+    },
+
+    // ---- server-sent events over fetch (EventSource cannot send our headers) ----
+
+    startRealtime() {
+      this.stopRealtime();
+      if (
+        !this.currentProjectId ||
+        typeof AbortController === "undefined" ||
+        typeof TextDecoder === "undefined"
+      ) {
+        return;
+      }
+      const generation = ++this._streamGeneration;
+      this._streamState = null;
+      this._streamLoop(generation);
+    },
+
+    stopRealtime() {
+      this._streamGeneration += 1;
+      this._streamHealthy = false;
+      if (this._streamAbort) this._streamAbort.abort();
+      this._streamAbort = null;
+    },
+
+    async _streamLoop(generation) {
+      let failures = 0;
+      while (generation === this._streamGeneration && this.token) {
+        const controller = new AbortController();
+        this._streamAbort = controller;
+        try {
+          const response = await fetch(`/api/projects/${this.currentProjectId}/events`, {
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "X-Project-Id": String(this.currentProjectId),
+            },
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) throw new Error(String(response.status));
+          failures = 0;
+          this._streamHealthy = true;
+          await this._readStream(response.body, generation);
+        } catch {
+          if (generation !== this._streamGeneration) return;
+          failures += 1;
+        }
+        this._streamHealthy = false;
+        if (generation !== this._streamGeneration) return;
+        // A normal end (the server closes after ~55s) reconnects at once;
+        // errors back off, and polling covers the gap.
+        const wait = failures === 0 ? 300 : Math.min(30000, 1000 * 2 ** Math.min(failures, 5));
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    },
+
+    async _readStream(body, generation) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (generation === this._streamGeneration) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf("\n\n")) >= 0) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          this._handleStreamBlock(block);
+        }
+      }
+    },
+
+    _handleStreamBlock(block) {
+      let name = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (name !== "state" || !data) return;
+      try {
+        this._onRemoteState(JSON.parse(data));
+      } catch {
+        // A garbled event is ignored; the safety refresh catches up.
+      }
+    },
+
+    // Refetch only the parts whose fingerprint moved. The first state after
+    // connecting refreshes everything once, closing the gap since startApp.
+    _onRemoteState(next) {
+      const previous = this._streamState;
+      this._streamState = next;
+      const changed = (key) => !previous || previous[key] !== next[key];
+      if (changed("devices")) this.refreshDevices().catch(() => {});
+      if (changed("changes")) this.refreshChanges().catch(() => {});
+      if (changed("batches")) this.refreshBatches().catch(() => {});
+      if (changed("messages")) this.pollMessages().catch(() => {});
     },
 
     stopPolling() {
@@ -417,6 +529,9 @@ document.addEventListener("alpine:init", () => {
       clearInterval(this._changesTimer);
       clearInterval(this._batchesTimer);
       clearInterval(this._messagesTimer);
+      if (this._safetyTimer) clearInterval(this._safetyTimer);
+      this._safetyTimer = null;
+      this.stopRealtime();
       this._deviceTimer = null;
       this._changesTimer = null;
       this._batchesTimer = null;

@@ -61,6 +61,35 @@ Open <http://127.0.0.1:5000/projects>.
   SSH login, kept only in the page, is stored (encrypted) on each new device.
   *Nối dây* cables two devices with two clicks and picks the free ports itself;
   `Delete` removes the selected device or link, `Esc` leaves cabling mode.
+- **Importing from PNETLab.** *Devices → Nhập từ PNETLab* reads a lab's nodes and
+  cabling through the EVE-NG compatible API (`/api/auth/login`, `/api/labs/<lab>.unl/
+  nodes|topology`; read-only, nothing in the lab is started or edited). Pick the
+  nodes, fix the management IPs (PNETLab does not know them), and import: devices
+  come with their canvas positions and the cables between them. Only private
+  lab addresses are accepted as the PNETLab URL, redirects are refused, and the
+  lab password is never stored or logged. vIOS/IOL/CSR nodes become routers,
+  `*l2*` nodes switches, ASAv firewalls; other templates (VPCS, Linux…) are listed
+  as unsupported.
+- **Discovering the real cabling.** *Khám phá (CDP/LLDP)* asks every IOS device for
+  `show cdp neighbors detail` (LLDP when CDP says nothing), four at a time, read-only,
+  and compares the answer with the diagram: green = matches, red dashed = designed
+  but not reported by a device that answered, grey = the device did not answer.
+  Cables the devices report that the diagram lacks can be added in one click.
+- **Layer 2/3 design.** *Thiết kế L2/L3* holds VLANs, access ports, SVIs, static
+  routes and single-area OSPF. The configuration plan (*Xem cấu hình sinh ra*) now
+  covers, per IOS device: VLANs (on switches), access ports, link interfaces, SVIs,
+  static routes and OSPF networks taken from the device's routed links and SVIs. ASA
+  devices get routed interfaces (`nameif`, `security-level`, address — set per link
+  end, defaults `to-<neighbour>` / 0) and static routes. A VLAN that a port or SVI
+  uses cannot be deleted, and SVI subnets cannot overlap other links or SVIs.
+- **Import, export and templates.** Export a project as JSON (no credentials) and
+  import it as a new project, or *Nhân bản* it; export the diagram as SVG/PNG; import
+  and export the device list as CSV (`hostname`, `management_ip` required; a CSV with
+  any bad row imports nothing and names the lines).
+- **Editing the canvas.** Drag on empty space to select several devices (or
+  Shift/Ctrl+click, Ctrl+A), drag them together, align or distribute them, and
+  undo/redo cabling, moves and additions with Ctrl+Z / Ctrl+Y. Deleting an existing
+  device cannot be undone (its SSH login is gone).
 - **Network designer.** The same tab is a canvas: drag devices, connect
   interfaces, and mark each link `physical`, `routed` (a point-to-point subnet,
   addresses derived or set by hand) or `trunk` (allowed VLANs). **Xem cấu hình
@@ -101,6 +130,22 @@ change their own password on the same page.
 The schema is documented, with an entity diagram, in
 [`docs/database.md`](../docs/database.md): foreign keys are enforced, enumerated
 columns have CHECK constraints, and hostnames/IPs are unique per project.
+
+### Live updates and monitoring load
+
+The chat page is told when something changed over a server-sent event stream
+(`GET /api/projects/<id>/events`, with a conditional `GET .../state` as a
+cheaper polling alternative) and refetches only the part that moved; if the
+stream is unavailable it falls back to polling by itself. A stream holds one
+server thread for up to `REALTIME_MAX_SECONDS` (55), so run Gunicorn with
+threads, e.g. `gunicorn --worker-class gthread --threads 16 ...`; with plain
+synchronous workers set `REALTIME_ENABLED=false`. `REALTIME_MAX_STREAMS` (20)
+caps the streams per process.
+
+Monitoring polls up to `MONITORING_MAX_WORKERS` (4) devices at once; the
+database work stays on one thread. `GET /api/dashboard/monitoring` (ADMIN)
+shows the last cycle's duration and warns when it exceeds
+`MONITORING_INTERVAL_SECONDS`.
 
 ### Upgrading an existing database
 
@@ -326,6 +371,15 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/projects/<pid>/topology` | viewer | Devices (with canvas positions) and links |
 | PUT | `/api/projects/<pid>/topology/layout` | editor | Save node positions |
 | GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
+| POST | `/api/projects/<pid>/topology/import/pnetlab/preview` · `/import/pnetlab` | editor | Read / import a PNETLab lab (10 req/min) |
+| POST | `/api/projects/<pid>/topology/discover` · `/discover/apply` | editor | CDP/LLDP discovery and drift; add found cables |
+| GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, routes, OSPF |
+| POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis`, `routes`, `ospf` |
+| GET | `/api/projects/<pid>/export` · `/devices.csv` | viewer | Project JSON / device CSV (no credentials) |
+| POST | `/api/projects/import` · `/api/projects/<pid>/clone` | not VIEWER | New project from a JSON document / copy a project |
+| POST | `/api/projects/<pid>/devices/import-csv` | editor | Add devices from CSV (all or nothing) |
+| GET | `/api/projects/<pid>/state` · `/events` | viewer | Change fingerprints (ETag) / server-sent events |
+| GET | `/api/dashboard/monitoring` | ADMIN | Last monitoring cycle |
 | POST | `/api/projects/<pid>/topology/quick-device` | editor | Create a device from a template (free name and IP) |
 | POST | `/api/projects/<pid>/topology/links` | editor | Add a link (ports optional: free ones are chosen) |
 | PUT/DELETE | `/api/projects/<pid>/topology/links/<id>` | editor | Edit / delete a link |
@@ -425,7 +479,9 @@ src/network_copilot/
 ├── errors.py         # AppError hierarchy -> JSON
 ├── auth/             # users, JWT, token revocation, roles_required
 ├── projects/         # projects, sharing, request scoping (X-Project-Id)
-├── topology/         # diagram links, layout, config generation
+├── topology/         # diagram links, layout, design items, config generation, PNETLab import, discovery
+├── integrations/     # read-only PNETLab client
+├── realtime/         # change fingerprints and the event stream
 ├── devices/          # inventory CRUD + validation (per project)
 ├── credentials/      # Fernet encryption at rest
 ├── ssh/              # Paramiko adapter (the only place sockets are opened)

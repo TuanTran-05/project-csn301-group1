@@ -80,16 +80,12 @@ def _save(
     return snapshot
 
 
-def poll_device(device_id: int) -> DeviceSnapshot:
-    """Poll one device and persist the result. Never raises on SSH failure."""
-    device = device_service.get_device(device_id)
-    started = time.monotonic()
-
+def _collect(device: Device, client, started: float) -> tuple:
+    """Run the poll commands and parse them. Touches no database, so it can run
+    in a worker thread. Returns (status, raw, parsed, error, elapsed_ms)."""
     raw_output: dict[str, str] = {}
     parsed_data: dict[str, list] = {}
-
     try:
-        client = build_client_for_device(device)
         for command in commands_for_device(device):
             result = client.run_show(command)
             raw_output[command] = result.output
@@ -98,30 +94,38 @@ def poll_device(device_id: int) -> DeviceSnapshot:
                 parsed_data[command] = parsed
     except SSHError as exc:
         logger.info("Poll failed for %s: %s", device.hostname, exc.message)
-        return _save(
-            device,
-            "offline",
-            raw_output,
-            parsed_data,
-            exc.message,
-            _elapsed_ms(started),
-        )
+        return "offline", raw_output, parsed_data, exc.message, _elapsed_ms(started)
     except Exception as exc:  # pragma: no cover - defensive: a poll must not crash
         logger.exception("Unexpected error polling %s", device.hostname)
-        return _save(
-            device,
-            "offline",
-            raw_output,
-            parsed_data,
-            f"{type(exc).__name__}",
-            _elapsed_ms(started),
+        return "offline", raw_output, parsed_data, f"{type(exc).__name__}", _elapsed_ms(started)
+    return "online", raw_output, parsed_data, None, _elapsed_ms(started)
+
+
+def poll_device(device_id: int) -> DeviceSnapshot:
+    """Poll one device and persist the result. Never raises on SSH failure."""
+    device = device_service.get_device(device_id)
+    started = time.monotonic()
+    try:
+        client = build_client_for_device(device)
+    except SSHError as exc:
+        return _save(device, "offline", {}, {}, exc.message, _elapsed_ms(started))
+    return _save(device, *_collect(device, client, started))
+
+
+def poll_all_enabled_devices(max_workers: int | None = None) -> list[DeviceSnapshot]:
+    """Poll every monitored device, a few at a time. One failure never stops the rest.
+
+    The slow part is SSH, so it runs in up to ``max_workers`` threads (config
+    ``MONITORING_MAX_WORKERS``); clients are built and results saved on the
+    calling thread, which owns the database session.
+    """
+    from flask import current_app, has_app_context
+
+    if max_workers is None:
+        max_workers = (
+            current_app.config.get("MONITORING_MAX_WORKERS", 4) if has_app_context() else 4
         )
-
-    return _save(device, "online", raw_output, parsed_data, None, _elapsed_ms(started))
-
-
-def poll_all_enabled_devices() -> list[DeviceSnapshot]:
-    """Poll every monitored device. One failure never stops the rest."""
+    cycle_started = time.monotonic()
     devices = (
         db.session.query(Device)
         .filter(Device.monitoring_enabled.is_(True))
@@ -129,13 +133,59 @@ def poll_all_enabled_devices() -> list[DeviceSnapshot]:
         .all()
     )
 
-    snapshots: list[DeviceSnapshot] = []
+    prepared, snapshots = [], []
     for device in devices:
+        started = time.monotonic()
         try:
-            snapshots.append(poll_device(device.id))
-        except Exception:  # pragma: no cover - defensive
+            prepared.append((device, build_client_for_device(device), started))
+        except SSHError as exc:
+            snapshots.append(_save(device, "offline", {}, {}, exc.message, _elapsed_ms(started)))
+        except Exception:  # pragma: no cover - e.g. no credential stored
             logger.exception("Skipping %s after an unexpected error", device.hostname)
+
+    workers = max(1, min(int(max_workers or 1), len(prepared) or 1))
+    if workers == 1:
+        collected = [_collect(*item) for item in prepared]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            collected = list(pool.map(lambda item: _collect(*item), prepared))
+
+    for (device, _client, _started), outcome in zip(prepared, collected):
+        try:
+            snapshots.append(_save(device, *outcome))
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Could not save the poll of %s", device.hostname)
+            db.session.rollback()
+
+    _record_cycle(len(devices), workers, time.monotonic() - cycle_started)
     return snapshots
+
+
+def _record_cycle(device_count: int, workers: int, seconds: float) -> None:
+    """Remember how long a cycle took, and say so when it outlasts the interval."""
+    from datetime import datetime, timezone
+
+    from flask import current_app, has_app_context
+
+    if not has_app_context():
+        return
+    interval = current_app.config.get("MONITORING_INTERVAL_SECONDS", 60)
+    current_app.extensions["monitoring_stats"] = {
+        "devices": device_count,
+        "workers": workers,
+        "last_cycle_seconds": round(seconds, 2),
+        "interval_seconds": interval,
+        "overrunning": seconds > interval,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if seconds > interval:
+        logger.warning(
+            "Polling %d device(s) took %.1fs, longer than the %ss interval; "
+            "raise MONITORING_MAX_WORKERS or the interval.",
+            device_count, seconds, interval,
+        )
 
 
 def latest_snapshot(device_id: int) -> DeviceSnapshot | None:

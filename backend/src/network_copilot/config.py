@@ -66,6 +66,18 @@ class Config:
     MONITORING_INTERVAL_SECONDS = int(
         os.environ.get("MONITORING_INTERVAL_SECONDS", "60")
     )
+    # Devices polled at the same time. SSH is the slow part, so a handful in
+    # parallel keeps a cycle well inside the interval as projects grow.
+    MONITORING_MAX_WORKERS = int(os.environ.get("MONITORING_MAX_WORKERS", "4"))
+
+    # Server-sent events: the chat page is told when something changed instead
+    # of asking every few seconds. Each open stream holds one worker thread for
+    # up to REALTIME_MAX_SECONDS, so run Gunicorn with threads (gthread) or turn
+    # this off; the page then falls back to polling by itself.
+    REALTIME_ENABLED = _bool("REALTIME_ENABLED", True)
+    REALTIME_POLL_SECONDS = float(os.environ.get("REALTIME_POLL_SECONDS", "2"))
+    REALTIME_MAX_SECONDS = float(os.environ.get("REALTIME_MAX_SECONDS", "55"))
+    REALTIME_MAX_STREAMS = int(os.environ.get("REALTIME_MAX_STREAMS", "20"))
 
     RATELIMIT_ENABLED = _bool("RATELIMIT_ENABLED", True)
     RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
@@ -91,6 +103,8 @@ class TestConfig(Config):
     # shared test config leaves FK enforcement off; ForeignKeyTestConfig turns
     # it on for the tests that check the schema's integrity rules.
     SQLITE_FOREIGN_KEYS = False
+    # One in-memory SQLite connection is shared by the whole test run.
+    MONITORING_MAX_WORKERS = 1
 
 
 class ForeignKeyTestConfig(TestConfig):
