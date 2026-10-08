@@ -69,8 +69,8 @@ def next_hostname(project_id: int, prefix: str) -> str:
     return f"{prefix}{number}"
 
 
-def next_management_ip(project) -> str:
-    """Lowest free host address of the project's management network."""
+def free_management_ips(project, count: int) -> list[str]:
+    """The ``count`` lowest free host addresses of the management network."""
     network = ipaddress.ip_network(project.management_network, strict=False)
     used = {
         row[0]
@@ -80,12 +80,17 @@ def next_management_ip(project) -> str:
     }
     hosts = list(network.hosts())
     ordered = hosts[FIRST_SUGGESTED_HOST - 1 :] + hosts[: FIRST_SUGGESTED_HOST - 1]
-    for address in ordered:
-        if str(address) not in used:
-            return str(address)
-    raise ConflictError(
-        f"The management network {network} has no free address left."
-    )
+    free = [str(address) for address in ordered if str(address) not in used]
+    if len(free) < count:
+        raise ConflictError(
+            f"The management network {network} has no free address left."
+        )
+    return free[:count]
+
+
+def next_management_ip(project) -> str:
+    """Lowest free host address of the project's management network."""
+    return free_management_ips(project, 1)[0]
 
 
 def next_free_interface(project_id: int, device: Device) -> str:

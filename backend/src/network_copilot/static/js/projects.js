@@ -109,6 +109,9 @@ document.addEventListener("alpine:init", () => {
     deviceNotice: "",
     deviceBusy: {},
 
+    // -- PNETLab import --
+    pnet: null,
+
     // -- sharing --
     members: [],
     shareForm: { username: "", access: "viewer" },
@@ -538,6 +541,82 @@ document.addEventListener("alpine:init", () => {
         const busy = { ...this.deviceBusy };
         delete busy[device.id];
         this.deviceBusy = busy;
+      }
+    },
+
+    // ------------------------------------------------------------------
+    // PNETLab import
+    // ------------------------------------------------------------------
+
+    openPnet() {
+      this.pnet = {
+        form: { url: "", username: "", password: "", lab: "", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        nodes: [],
+        links: [],
+        loading: false,
+        loaded: false,
+        error: "",
+        result: null,
+      };
+    },
+
+    closePnet() {
+      this.pnet = null;
+    },
+
+    _pnetSource() {
+      const f = this.pnet.form;
+      return { url: f.url, username: f.username, password: f.password, lab: f.lab, verify_tls: !!f.verify_tls };
+    },
+
+    async pnetPreview() {
+      const pnet = this.pnet;
+      pnet.error = "";
+      pnet.result = null;
+      pnet.loading = true;
+      try {
+        const data = await this.authFetch(this.topologyUrl("/import/pnetlab/preview"), {
+          method: "POST",
+          body: JSON.stringify(this._pnetSource()),
+        });
+        pnet.nodes = data.nodes.map((n) => ({ ...n, selected: n.supported && !n.exists }));
+        pnet.links = data.links;
+        pnet.loaded = true;
+      } catch (err) {
+        pnet.error = this.describeError(err);
+      } finally {
+        pnet.loading = false;
+      }
+    },
+
+    get pnetSelectedCount() {
+      return this.pnet ? this.pnet.nodes.filter((n) => n.selected).length : 0;
+    },
+
+    async pnetImport() {
+      const pnet = this.pnet;
+      pnet.error = "";
+      pnet.loading = true;
+      const body = {
+        ...this._pnetSource(),
+        nodes: pnet.nodes
+          .filter((n) => n.selected)
+          .map((n) => ({ id: n.id, hostname: n.hostname, management_ip: n.management_ip || null })),
+      };
+      if (pnet.form.ssh_user && pnet.form.ssh_pass) {
+        body.credential = { username: pnet.form.ssh_user, password: pnet.form.ssh_pass };
+      }
+      try {
+        pnet.result = await this.authFetch(this.topologyUrl("/import/pnetlab"), {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        await this.loadTopology();
+        await this.loadProjects();
+      } catch (err) {
+        pnet.error = this.describeError(err);
+      } finally {
+        pnet.loading = false;
       }
     },
 

@@ -130,8 +130,70 @@
             <section x-show="tab === 'devices'">
               <div class="section-bar">
                 <h3>Thiết bị (<span x-text="devices.length"></span>)</h3>
-                <button type="button" class="primary-btn" @click="openDeviceForm(null)" x-show="canEdit && !deviceFormOpen">+ Thêm thiết bị</button>
+                <div class="row-actions">
+                  <button type="button" @click="openPnet()" x-show="canEdit && !pnet">Nhập từ PNETLab</button>
+                  <button type="button" class="primary-btn" @click="openDeviceForm(null)" x-show="canEdit && !deviceFormOpen">+ Thêm thiết bị</button>
+                </div>
               </div>
+
+              <template x-if="pnet">
+                <div class="card">
+                  <h4>Nhập thiết bị từ PNETLab</h4>
+                  <p class="hint">Đọc danh sách node và dây nối của một lab (API tương thích EVE-NG). Chỉ đọc: không bật/tắt hay sửa lab.
+                    Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.</p>
+                  <form class="form-grid" @submit.prevent="pnetPreview()">
+                    <label>URL PNETLab <input type="text" x-model="pnet.form.url" required placeholder="http://172.16.0.5" /></label>
+                    <label>Tài khoản <input type="text" x-model="pnet.form.username" required autocomplete="off" /></label>
+                    <label>Mật khẩu <input type="password" x-model="pnet.form.password" required autocomplete="new-password" /></label>
+                    <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" required placeholder="/Course/Lab1.unl" /></label>
+                    <label class="check"><input type="checkbox" x-model="pnet.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
+                    <div class="form-actions">
+                      <button type="submit" class="primary-btn" :disabled="pnet.loading">Tải danh sách node</button>
+                      <button type="button" @click="closePnet()">Đóng</button>
+                    </div>
+                  </form>
+                  <p class="error-text" x-show="pnet.error" x-text="pnet.error"></p>
+
+                  <div x-show="pnet.loaded">
+                    <table class="data-table">
+                      <thead><tr><th></th><th>Node</th><th>Hostname</th><th>IP quản trị (sửa lại cho đúng)</th><th>Loại</th><th></th></tr></thead>
+                      <tbody>
+                        <template x-for="node in pnet.nodes" :key="node.id">
+                          <tr :class="{ muted: !node.supported }">
+                            <td><input type="checkbox" x-model="node.selected" :disabled="!node.supported" /></td>
+                            <td><span x-text="node.name"></span> <span class="pill" x-text="node.template"></span></td>
+                            <td><input type="text" x-model="node.hostname" :disabled="!node.supported" maxlength="64" /></td>
+                            <td><input type="text" x-model="node.management_ip" :disabled="!node.supported" /></td>
+                            <td x-text="node.supported ? node.device_type + ' / ' + node.role : 'không hỗ trợ'"></td>
+                            <td x-text="node.exists ? 'đã có' : ''"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                    <p class="hint">Phát hiện <span x-text="pnet.links.length"></span> dây nối giữa hai node. PNETLab không biết IP quản trị của
+                      thiết bị: IP gợi ý chỉ là chỗ trống trong dải của project, hãy nhập IP thật đã cấu hình trên thiết bị.</p>
+                    <form class="form-grid" @submit.prevent="pnetImport()">
+                      <label>SSH mặc định (tuỳ chọn) <input type="text" x-model="pnet.form.ssh_user" placeholder="tài khoản" autocomplete="off" /></label>
+                      <label>&nbsp;<input type="password" x-model="pnet.form.ssh_pass" placeholder="mật khẩu" autocomplete="new-password" /></label>
+                      <div class="form-actions">
+                        <button type="submit" class="primary-btn" :disabled="pnet.loading || !pnetSelectedCount">
+                          Nhập <span x-text="pnetSelectedCount"></span> thiết bị
+                        </button>
+                      </div>
+                    </form>
+                    <div x-show="pnet.result">
+                      <template x-for="item in (pnet.result ? pnet.result.devices : [])" :key="item.id">
+                        <p class="hint"><strong x-text="item.hostname || item.id"></strong>: <span x-text="item.status"></span>
+                          <span x-text="item.message ? '— ' + item.message : ''"></span></p>
+                      </template>
+                      <p class="ok-text" x-show="pnet.result">
+                        Dây nối đã tạo: <span x-text="pnet.result ? pnet.result.links.filter((l) => l.status === 'created').length : 0"></span>.
+                        Xem ở tab Sơ đồ mạng.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </template>
               <p class="error-text" x-show="deviceError" x-text="deviceError"></p>
               <p class="ok-text" x-show="deviceNotice" x-text="deviceNotice"></p>
 

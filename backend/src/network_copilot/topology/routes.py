@@ -5,7 +5,8 @@ from flask_jwt_extended import jwt_required
 from ..audit.service import record_event
 from ..auth.service import current_user, roles_required
 from ..projects import service as project_service
-from . import configgen, service
+from ..extensions import limiter
+from . import configgen, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -114,6 +115,36 @@ def _config_request():
         raise ValidationError(
             "Config request failed validation.", {"_root": [str(exc)]}
         ) from exc
+
+
+@bp.post("/import/pnetlab/preview")
+@jwt_required()
+@limiter.limit("10 per minute")
+def pnetlab_preview(project_id: int):
+    project = _project(project_id, "editor")
+    return jsonify(pnetlab_import.preview(project, request.get_json(silent=True) or {})), 200
+
+
+@bp.post("/import/pnetlab")
+@jwt_required()
+@limiter.limit("10 per minute")
+def pnetlab_import_route(project_id: int):
+    project = _project(project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    result = pnetlab_import.import_lab(project, payload)
+    created = [d["hostname"] for d in result["devices"] if d["status"] == "created"]
+    record_event(
+        action="topology.pnetlab_import",
+        result="success",
+        user_id=current_user().id,
+        details={
+            "lab": payload.get("lab"),
+            "url": payload.get("url"),
+            "devices": created,
+            "links": sum(1 for l in result["links"] if l["status"] == "created"),
+        },
+    )
+    return jsonify(result), 200
 
 
 @bp.post("/config-plan")
