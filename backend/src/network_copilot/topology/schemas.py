@@ -8,6 +8,9 @@ INTERFACE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z-]*\d[\d/.:]*$")
 
 LinkType = Literal["physical", "routed", "trunk"]
 
+# ASA interface names: a letter, then letters, digits, "_" or "-".
+NAMEIF_PATTERN = r"^[A-Za-z][A-Za-z0-9_-]*$"
+
 
 def normalize_interface(value: str) -> str:
     value = "".join(value.split())
@@ -34,6 +37,10 @@ class LinkSchema(BaseModel):
     allowed_vlans: str | None = Field(default=None, max_length=255)
     bring_up: bool = True
     description: str | None = Field(default=None, max_length=255)
+    nameif_a: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
+    security_a: int | None = Field(default=None, ge=0, le=100)
+    nameif_b: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
+    security_b: int | None = Field(default=None, ge=0, le=100)
 
     @field_validator("interface_a", "interface_b")
     @classmethod
@@ -53,6 +60,10 @@ class LinkUpdateSchema(BaseModel):
     allowed_vlans: str | None = Field(default=None, max_length=255)
     bring_up: bool | None = None
     description: str | None = Field(default=None, max_length=255)
+    nameif_a: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
+    security_a: int | None = Field(default=None, ge=0, le=100)
+    nameif_b: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
+    security_b: int | None = Field(default=None, ge=0, le=100)
 
 
 class Position(BaseModel):

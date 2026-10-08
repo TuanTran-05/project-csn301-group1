@@ -8,6 +8,7 @@ from ..extensions import db
 from ..projects.service import validate
 from .model import TopologyLink
 from .schemas import LayoutSchema, LinkSchema, LinkUpdateSchema, QuickDeviceSchema
+from .interfaces import normalize_label
 from .templates import get_template, next_free_interface, next_hostname, next_management_ip
 
 MIN_ROUTED_PREFIX = 8
@@ -192,14 +193,18 @@ def _finalize_fields(project, fields: dict, exclude_id: int | None = None) -> di
 def _assert_endpoints_free(
     project_id: int, endpoints: list[tuple[int, str]], exclude_id: int | None
 ) -> None:
+    def key(device_id, interface):
+        # Gi0/1 and GigabitEthernet0/1 are one port.
+        return device_id, (normalize_label(interface) or interface).lower()
+
     taken = {}
     for link in list_links(project_id):
         if link.id == exclude_id:
             continue
-        taken[(link.device_a_id, link.interface_a.lower())] = link
-        taken[(link.device_b_id, link.interface_b.lower())] = link
+        taken[key(link.device_a_id, link.interface_a)] = link
+        taken[key(link.device_b_id, link.interface_b)] = link
     for device_id, interface in endpoints:
-        if (device_id, interface.lower()) in taken:
+        if key(device_id, interface) in taken:
             raise ConflictError(
                 f"Interface {interface} on device {device_id} already has a link."
             )
@@ -264,6 +269,9 @@ def update_link(project, link_id: int, payload: dict) -> TopologyLink:
         link.bring_up = changes["bring_up"]
     if "description" in changes:
         link.description = changes["description"]
+    for key in ("nameif_a", "security_a", "nameif_b", "security_b"):
+        if key in changes:
+            setattr(link, key, changes[key])
     db.session.commit()
     return link
 

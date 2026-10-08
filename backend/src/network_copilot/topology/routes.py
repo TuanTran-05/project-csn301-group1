@@ -6,7 +6,7 @@ from ..audit.service import record_event
 from ..auth.service import current_user, roles_required
 from ..projects import service as project_service
 from ..extensions import limiter
-from . import configgen, discovery, pnetlab_import, service
+from . import configgen, design, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -145,6 +145,41 @@ def pnetlab_import_route(project_id: int):
         },
     )
     return jsonify(result), 200
+
+
+@bp.get("/design")
+@jwt_required()
+def get_design(project_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify(design.list_design(project)), 200
+
+
+@bp.post("/design/<kind>")
+@jwt_required()
+def add_design_item(project_id: int, kind: str):
+    project = _project(project_id, "editor")
+    item = design.create_item(project, kind, request.get_json(silent=True) or {})
+    record_event(
+        action="topology.design_add",
+        result="success",
+        user_id=current_user().id,
+        details={"kind": kind, **item.to_dict()},
+    )
+    return jsonify(item.to_dict()), 201
+
+
+@bp.delete("/design/<kind>/<int:item_id>")
+@jwt_required()
+def delete_design_item(project_id: int, kind: str, item_id: int):
+    project = _project(project_id, "editor")
+    design.delete_item(project, kind, item_id)
+    record_event(
+        action="topology.design_delete",
+        result="success",
+        user_id=current_user().id,
+        details={"kind": kind, "item_id": item_id},
+    )
+    return "", 204
 
 
 @bp.post("/discover")

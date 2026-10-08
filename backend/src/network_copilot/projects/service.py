@@ -206,7 +206,7 @@ def delete_project(project: Project) -> None:
     from ..chat.model import ChatMessage, ChatSession
     from ..devices.model import Device
     from ..devices.service import purge_devices
-    from ..topology.model import TopologyLink
+    from ..topology.model import DesignVlan, TopologyLink
 
     active = (
         db.session.query(ChangeBatch)
@@ -247,6 +247,10 @@ def delete_project(project: Project) -> None:
     db.session.query(TopologyLink).filter(
         TopologyLink.project_id == project.id
     ).delete(synchronize_session=False)
+    # Devices (and so every port/SVI that uses a VLAN) are gone by now.
+    db.session.query(DesignVlan).filter(DesignVlan.project_id == project.id).delete(
+        synchronize_session=False
+    )
     db.session.query(ProjectMember).filter(
         ProjectMember.project_id == project.id
     ).delete(synchronize_session=False)

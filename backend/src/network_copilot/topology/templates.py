@@ -106,14 +106,22 @@ def next_free_interface(project_id: int, device: Device) -> str:
         DEVICE_TEMPLATES[0],
     )
     prefix = template["interface_prefix"]
+    from .interfaces import normalize_label
+    from .model import DesignAccessPort
+
+    def canon(name):
+        return (normalize_label(name) or name).lower()
+
     used = set()
     for link in db.session.query(TopologyLink).filter(
         TopologyLink.project_id == project_id
     ):
         if link.device_a_id == device.id:
-            used.add(link.interface_a.lower())
+            used.add(canon(link.interface_a))
         if link.device_b_id == device.id:
-            used.add(link.interface_b.lower())
+            used.add(canon(link.interface_b))
+    for port in db.session.query(DesignAccessPort).filter_by(device_id=device.id):
+        used.add(canon(port.interface))
     number = 0
     while f"{prefix}{number}".lower() in used:
         number += 1

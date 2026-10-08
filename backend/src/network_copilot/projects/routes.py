@@ -1,9 +1,12 @@
-from flask import Blueprint, jsonify, request
+import json
+
+from flask import Blueprint, Response, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
 from ..auth.service import current_user
-from . import service
+from ..errors import ValidationError
+from . import exchange, service
 
 bp = Blueprint("projects", __name__, url_prefix="/api/projects")
 
@@ -131,3 +134,78 @@ def remove_member(project_id: int, user_id: int):
         details={"member_id": user_id},
     )
     return "", 204
+
+
+# -- import / export / clone ---------------------------------------------------
+
+
+@bp.get("/<int:project_id>/export")
+@jwt_required()
+def export_project(project_id: int):
+    """The project as a JSON document (no credentials)."""
+    user = current_user()
+    project = service.require_project(user, project_id, "viewer")
+    document = exchange.export_project(project)
+    record_event(action="project.export", result="success", user_id=user.id, project_id=project.id)
+    filename = "".join(c if c.isalnum() or c in "-_" else "_" for c in project.name) or "project"
+    return Response(
+        json.dumps(document, indent=2, ensure_ascii=False),
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.json"'},
+    )
+
+
+@bp.get("/<int:project_id>/devices.csv")
+@jwt_required()
+def export_devices_csv(project_id: int):
+    user = current_user()
+    project = service.require_project(user, project_id, "viewer")
+    return Response(
+        exchange.devices_csv(project),
+        mimetype="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="devices.csv"'},
+    )
+
+
+@bp.post("/import")
+@jwt_required()
+def import_project():
+    user = current_user()
+    payload = request.get_json(silent=True) or {}
+    document = payload.get("document")
+    if not isinstance(document, dict):
+        raise ValidationError("'document' must be an exported project document.")
+    project = exchange.import_project(user, document, payload.get("name") or None)
+    record_event(
+        action="project.import", result="success", user_id=user.id, project_id=project.id,
+        details={"name": project.name},
+    )
+    return jsonify(service.project_view(user, project)), 201
+
+
+@bp.post("/<int:project_id>/clone")
+@jwt_required()
+def clone_project(project_id: int):
+    user = current_user()
+    source = service.require_project(user, project_id, "viewer")
+    payload = request.get_json(silent=True) or {}
+    project = exchange.clone_project(user, source, payload.get("name") or None)
+    record_event(
+        action="project.clone", result="success", user_id=user.id, project_id=project.id,
+        details={"source_id": source.id},
+    )
+    return jsonify(service.project_view(user, project)), 201
+
+
+@bp.post("/<int:project_id>/devices/import-csv")
+@jwt_required()
+def import_devices_csv(project_id: int):
+    user = current_user()
+    project = service.require_project(user, project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    created = exchange.import_devices_csv(project, payload.get("csv"))
+    record_event(
+        action="device.csv_import", result="success", user_id=user.id, project_id=project.id,
+        details={"count": len(created), "devices": [d.hostname for d in created]},
+    )
+    return jsonify({"created": [d.to_dict() for d in created]}), 201
