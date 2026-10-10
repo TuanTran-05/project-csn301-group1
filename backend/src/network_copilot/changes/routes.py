@@ -37,7 +37,7 @@ def _parse(schema, payload: dict):
 
 
 @bp.post("/preview")
-@roles_required("ADMIN")
+@jwt_required()
 def preview():
     data = _parse(ChangePreviewSchema, request.get_json(silent=True) or {})
     user = current_user()
@@ -72,7 +72,7 @@ def get_change(change_id: int):
 
 
 @bp.post("/<int:change_id>/approve")
-@roles_required("ADMIN")
+@jwt_required()
 def approve(change_id: int):
     user = current_user()
     change = service.approve(change_id, user.id if user else None)
@@ -80,7 +80,7 @@ def approve(change_id: int):
 
 
 @bp.post("/<int:change_id>/apply")
-@roles_required("ADMIN")
+@jwt_required()
 @limiter.limit("10 per minute")
 def apply(change_id: int):
     user = current_user()

@@ -67,6 +67,7 @@ def _register_models() -> None:
     from .commands import model as _command_model  # noqa: F401
     from .credentials import model as _credential_model  # noqa: F401
     from .devices import model as _device_model  # noqa: F401
+    from .groups import model as _group_model  # noqa: F401
     from .monitoring import model as _monitoring_model  # noqa: F401
 
 
@@ -95,9 +96,11 @@ def _register_blueprints(app: Flask) -> None:
     from .commands.routes import bp as commands_bp
     from .dashboard.routes import bp as dashboard_bp
     from .devices.routes import bp as devices_bp
+    from .groups.routes import bp as groups_bp
     from .monitoring.routes import bp as monitoring_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(groups_bp)
     app.register_blueprint(devices_bp)
     app.register_blueprint(commands_bp)
     app.register_blueprint(monitoring_bp)

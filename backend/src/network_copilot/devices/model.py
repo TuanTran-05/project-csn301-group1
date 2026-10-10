@@ -37,6 +37,9 @@ class Device(db.Model):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    groups = db.relationship(
+        "Group", secondary="group_devices", back_populates="devices"
+    )
 
     def to_dict(self) -> dict:
         """Public representation. Credentials are never included."""

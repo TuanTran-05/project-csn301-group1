@@ -23,12 +23,15 @@ from ..audit.service import record_event
 from ..devices import service as device_service
 from ..devices.model import Device
 from ..errors import (
+    ForbiddenError,
     InvalidStateError,
     NotFoundError,
     PolicyViolationError,
     ValidationError,
 )
 from ..extensions import db
+from ..auth.model import User
+from ..groups.model import Group
 from .capabilities import assess_change
 from .verification import (
     build_verification_plan,
@@ -366,6 +369,8 @@ def create_preview(
 ) -> ChangeRequest:
     """Validate a change and store it as pending_approval. Never touches SSH."""
     device = device_service.get_device(device_id)
+    actor = _require_actor(user_id)
+    _authorize_device_access(actor, device)
 
     change = prepare_change(
         user_id,
@@ -432,6 +437,37 @@ def get_change(change_id: int) -> ChangeRequest:
     return change
 
 
+def _role_name(user: User) -> str:
+    return user.role.value if hasattr(user.role, "value") else str(user.role)
+
+
+def _require_actor(user_id: int | None) -> User:
+    actor = db.session.get(User, user_id) if user_id is not None else None
+    if actor is None or not actor.is_active:
+        raise ForbiddenError("An active authenticated user is required.")
+    return actor
+
+
+def _groups_for_device(user: User, device: Device, role: str) -> list[Group]:
+    memberships = (
+        user.teaching_groups if role == "TEACHER" else user.student_groups
+    )
+    device_group_ids = {group.id for group in device.groups}
+    return [group for group in memberships if group.id in device_group_ids]
+
+
+def _authorize_device_access(actor: User, device: Device) -> None:
+    role = _role_name(actor)
+    if role == "ADMIN":
+        return
+    if role not in {"TEACHER", "STUDENT"}:
+        raise ForbiddenError("This role cannot manage configuration changes.")
+    if not _groups_for_device(actor, device, role):
+        raise ForbiddenError(
+            "The device is not assigned to a group managed by this user."
+        )
+
+
 def list_changes(
     device_id: int | None = None,
     status: str | None = None,
@@ -472,6 +508,11 @@ def _reject_batch_child(change: ChangeRequest) -> None:
 def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     change = get_change(change_id)
     _reject_batch_child(change)
+    actor = _require_actor(user_id)
+    if _role_name(actor) == "TEACHER":
+        _authorize_device_access(actor, device_service.get_device(change.device_id))
+    elif _role_name(actor) != "ADMIN":
+        raise ForbiddenError("Only an Admin or the assigned Teacher can approve changes.")
     if change.status != "pending_approval":
         raise InvalidStateError(
             f"Only a change in 'pending_approval' can be approved; "
@@ -627,13 +668,61 @@ def apply(
     """Backup, configure, then verify. Order is fixed and never skipped."""
     change = get_change(change_id)
     _reject_batch_child(change)
+
+    actor = _require_actor(user_id)
+    role = _role_name(actor)
+    device = device_service.get_device(change.device_id)
+
+    if role == "STUDENT":
+        if change.requested_by_id != actor.id:
+            raise ForbiddenError("Students may only apply their own changes.")
+        groups = _groups_for_device(actor, device, role)
+        if not groups:
+            raise ForbiddenError(
+                "The device is not assigned to one of your groups."
+            )
+        if change.status != "pending_approval":
+            raise ForbiddenError(
+                "Students may apply only their own pending changes through "
+                "Smart Approval."
+            )
+
+        from ..commands.policy import analyze_risk
+
+        risk = analyze_risk(change.commands or [], device.role)
+        auto_approve_groups = [group for group in groups if group.is_auto_approve]
+        if not auto_approve_groups or risk != "LOW" or change.requires_confirmation:
+            raise ForbiddenError(
+                "Teacher approval is required because Smart Approval is disabled "
+                "for this group or the change contains a high-risk command."
+            )
+
+        change.status = "approved"
+        change.approved_by_id = None
+        change.approved_at = _now()
+        db.session.commit()
+        record_event(
+            action="change.approve",
+            result="success",
+            user_id=actor.id,
+            device_id=change.device_id,
+            message="Automatically approved by Smart Approval.",
+            details={
+                "change_id": change.id,
+                "risk_level": risk,
+                "approval_mode": "smart",
+            },
+        )
+    elif role == "TEACHER":
+        _authorize_device_access(actor, device)
+    elif role != "ADMIN":
+        raise ForbiddenError("This role cannot apply configuration changes.")
+
     if change.status != "approved":
         raise InvalidStateError(
             f"Only an approved change can be applied; change {change_id} is "
             f"'{change.status}'."
         )
-
-    device = device_service.get_device(change.device_id)
 
     if change.requires_confirmation:
         provided = (confirm_hostname or "").strip()

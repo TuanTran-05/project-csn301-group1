@@ -14,8 +14,9 @@ The rules below are enforced by code and covered by tests, not by convention:
 |---|---|
 | Unknown read-only commands are denied by default | `commands/policy.py` — allowlist only |
 | Destructive configuration commands are never silently blocked or silently executed: they become high-risk previews and require typed confirmation before Apply | `changes/service.py`, `changes/batch_service.py` |
-| Only `ADMIN` may approve or apply a change | `auth/service.py::roles_required` |
-| Every change is previewed and approved before it runs | `changes/service.py` |
+| `ADMIN` may apply any approved change; `TEACHER` is limited to devices in managed groups | `changes/service.py` |
+| A `STUDENT` change is auto-approved only for a managed group with Smart Approval enabled and a `LOW`-risk command set; otherwise a Teacher must approve it | `groups/model.py`, `commands/policy.py`, `changes/service.py` |
+| Every change is previewed and approved before it runs, including Smart Approval changes | `changes/service.py` |
 | A `show running-config` backup is taken before every apply | `backups/service.py` |
 | Verification runs after every apply; a failed check never reports success | `changes/service.py::run_verification` |
 | AI configuration proposals are validated and frozen into device-scoped changes before approval; the AI request itself never opens SSH | `ai/schemas.py`, `changes/batch_service.py` |
