@@ -47,5 +47,8 @@ def device_snapshots(device_id: int):
 @jwt_required()
 def refresh_device(device_id: int):
     device = device_service.get_device(device_id)
+    from ..auth.service import current_user
+    from ..governance.access import require
+    require(current_user(), "device.observe", device=device)
     snapshot = service.poll_device(device_id)
     return jsonify(_status_payload(device, snapshot)), 200

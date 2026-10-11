@@ -22,17 +22,22 @@ def _int_arg(name: str) -> int | None:
 @jwt_required()
 def execute_readonly():
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        raise ValidationError("Command payload must be a JSON object.")
     device_id = payload.get("device_id")
     command = payload.get("command")
 
-    if not isinstance(device_id, int):
+    if type(device_id) is not int:
         raise ValidationError("'device_id' is required and must be an integer.")
+    if payload.get("group_id") is not None and type(payload["group_id"]) is not int:
+        raise ValidationError("'group_id' must be an integer.")
 
     user = current_user()
     execution = service.execute_readonly(
         device_id=device_id,
         command=command,
         user_id=user.id if user else None,
+        group_id=payload.get("group_id"),
     )
     return jsonify(execution.to_dict()), 200
 

@@ -27,6 +27,10 @@ class Device(db.Model):
     status = db.Column(db.String(16), nullable=False, default="unknown")
     monitoring_enabled = db.Column(db.Boolean, nullable=False, default=True)
     description = db.Column(db.String(255))
+    environment = db.Column(db.String(32), nullable=False, default="physical_lab", server_default="physical_lab")
+    isolated = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    baseline_revision = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    recovery_instructions = db.Column(db.Text)
     last_seen_at = db.Column(db.DateTime)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -53,6 +57,10 @@ class Device(db.Model):
             "status": self.status,
             "monitoring_enabled": self.monitoring_enabled,
             "description": self.description,
+            "environment": self.environment,
+            "isolated": self.isolated,
+            "baseline_revision": self.baseline_revision,
+            "recovery_instructions": self.recovery_instructions,
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -142,7 +142,8 @@ def list_events(
         query = query.filter(AuditLog.created_at >= since)
     if until:
         query = query.filter(AuditLog.created_at <= until)
-    return (
+    from ..governance.visibility import events
+    return events(
         query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(min(max(limit, 1), 500))
         .all()

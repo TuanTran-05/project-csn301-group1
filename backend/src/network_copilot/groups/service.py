@@ -16,6 +16,9 @@ def set_auto_approve(group_id: int, user_id: int | None, enabled: bool) -> Group
     group = db.session.get(Group, group_id)
     if group is None:
         raise NotFoundError(f"Group {group_id} was not found.")
+    from ..governance.access import require, require_group
+    require_group(actor, group_id, manage=True)
+    require(actor, "config.approve", group_id)
 
     role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
     if role == "TEACHER":

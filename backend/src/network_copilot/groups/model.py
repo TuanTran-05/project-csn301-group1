@@ -56,6 +56,7 @@ class Group(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    archived = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     is_auto_approve = db.Column(
         db.Boolean, nullable=False, default=False, server_default=db.false()
     )

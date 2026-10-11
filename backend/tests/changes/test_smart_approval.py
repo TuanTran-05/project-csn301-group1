@@ -5,6 +5,12 @@ from network_copilot.changes import service as change_service
 from network_copilot.errors import ForbiddenError
 from network_copilot.extensions import db
 from network_copilot.groups.model import Group
+from network_copilot.governance.access import issue_grant
+
+
+@pytest.fixture(autouse=True)
+def classroom_administrator(admin_user):
+    return admin_user
 
 
 def _user(username, role):
@@ -24,6 +30,14 @@ def _group_with_student_and_device(
     if teacher is not None:
         group.teachers.append(teacher)
     db.session.add(group)
+    db.session.commit()
+    admin = db.session.query(User).filter_by(role=Role.ADMIN).one()
+    for member in [student] + ([teacher] if teacher else []):
+        actions = ["device.read", "config.create", "config.deploy"]
+        if member.role == Role.TEACHER:
+            actions.append("config.approve")
+        for action in actions:
+            issue_grant(admin, {"user_id": member.id, "group_id": group.id, "action": action})
     db.session.commit()
     return group
 
@@ -98,6 +112,7 @@ def test_student_high_risk_change_requires_teacher_approval_without_ssh(
         access_switch.id,
         ["write erase"],
         execution_mode="exec",
+        description="Reset my assigned isolated lab for the exercise.",
     )
 
     with pytest.raises(ForbiddenError, match="Teacher approval"):
@@ -130,9 +145,8 @@ def test_teacher_can_approve_and_apply_change_in_managed_group(
     )
 
     approved = change_service.approve(change.id, teacher.id)
-    applied = change_service.apply(change.id, teacher.id)
-
     assert approved.status == "approved"
+    applied = change_service.apply(change.id, teacher.id)
     assert applied.status == "success"
 
 
@@ -144,6 +158,9 @@ def test_teacher_can_toggle_auto_approval_for_managed_group(
     group.teachers.append(teacher)
     group.devices.append(access_switch)
     db.session.add(group)
+    db.session.commit()
+    admin = db.session.query(User).filter_by(role=Role.ADMIN).one()
+    issue_grant(admin, {"user_id": teacher.id, "group_id": group.id, "action": "config.approve"})
     db.session.commit()
     token = client.post(
         "/api/auth/login",

@@ -67,7 +67,10 @@ def chat():
     record_chat_message(
         user_id, username, "user", data.message, session_id=data.session_id
     )
-    result = AIService().handle(data.message, user_id, session_id=data.session_id)
+    options = {"session_id": data.session_id}
+    if data.group_id is not None:
+        options["group_id"] = data.group_id
+    result = AIService().handle(data.message, user_id, **options)
     record_chat_message(
         user_id,
         username,

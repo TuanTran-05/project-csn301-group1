@@ -218,7 +218,7 @@ def test_chat_endpoint_does_not_record_an_unauthenticated_attempt(client):
     assert db.session.query(ChatMessage).count() == 0
 
 
-def test_chat_endpoint_records_failure_for_valid_jwt_with_deleted_user(client, app):
+def test_deleted_user_token_is_revoked_before_chat_processing(client, app):
     with app.app_context():
         token = create_access_token(
             identity="999999",
@@ -231,10 +231,6 @@ def test_chat_endpoint_records_failure_for_valid_jwt_with_deleted_user(client, a
         json={},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 401
     rows = db.session.query(ChatMessage).order_by(ChatMessage.id).all()
-    assert len(rows) == 1
-    assert rows[0].role == "system"
-    assert rows[0].user_id is None
-    assert rows[0].username is None
-    assert rows[0].payload["error"] == "validation_error"
+    assert rows == []

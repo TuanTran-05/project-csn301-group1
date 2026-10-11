@@ -45,13 +45,19 @@ def list_devices(role: str | None = None, status: str | None = None) -> list[Dev
         query = query.filter(Device.role == role)
     if status:
         query = query.filter(Device.status == status)
-    return query.order_by(Device.hostname).all()
+    from ..governance.visibility import devices
+    return devices(query.order_by(Device.hostname).all())
 
 
 def get_device(device_id: int) -> Device:
     device = db.session.get(Device, device_id)
     if device is None:
         raise NotFoundError(f"Device {device_id} was not found.")
+    from ..governance.visibility import request_user
+    from ..governance.access import require
+    user = request_user()
+    if user:
+        require(user, "device.read", device=device)
     return device
 
 
@@ -61,6 +67,11 @@ def get_device_by_hostname(hostname: str) -> Device:
     )
     if device is None:
         raise NotFoundError(f"Device {hostname} was not found.")
+    from ..governance.visibility import request_user
+    from ..governance.access import require
+    user = request_user()
+    if user:
+        require(user, "device.read", device=device)
     return device
 
 
@@ -79,6 +90,12 @@ def update_device(device_id: int, payload: dict) -> Device:
     device = get_device(device_id)
     data = _validate(DeviceUpdateSchema, payload)
     changes = data.model_dump(exclude_unset=True)
+    from ..governance.model import DeviceLease
+    if db.session.get(DeviceLease, device_id):
+        raise ConflictError("Device is locked by a deployment.")
+    if any(value is None for key, value in changes.items() if key not in {"description", "recovery_instructions"}):
+        from ..errors import ValidationError
+        raise ValidationError("Required device fields cannot be null.")
 
     _assert_unique(
         changes.get("hostname"), changes.get("management_ip"), exclude_id=device_id
@@ -115,6 +132,16 @@ def _assert_no_active_batch(device_id: int) -> None:
 def delete_device(device_id: int) -> None:
     device = get_device(device_id)
     _assert_no_active_batch(device_id)
+    from ..changes.model import ChangeRequest
+    if db.session.query(ChangeRequest).filter_by(device_id=device_id).first():
+        raise ConflictError("Device has change history and must be retained for audit.")
+    from ..backups.model import ConfigBackup
+    from ..commands.model import CommandExecution
+    from ..monitoring.model import DeviceSnapshot
+    from ..governance.model import Assignment, Draft, Grant, Reservation
+    for model in (ConfigBackup, CommandExecution, DeviceSnapshot, Assignment, Draft, Reservation, Grant):
+        if db.session.query(model).filter_by(device_id=device_id).first():
+            raise ConflictError("Device has historical or teaching records; retain it for audit.")
     db.session.delete(device)
     db.session.commit()
 

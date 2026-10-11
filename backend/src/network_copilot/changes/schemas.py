@@ -7,6 +7,8 @@ class ChangePreviewSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     device_id: int
+    group_id: int | None = None
+    assignment_id: int | None = None
     commands: list[str] = Field(min_length=1)
     verification_commands: list[str] = Field(default_factory=list)
     description: str | None = Field(default=None, max_length=255)

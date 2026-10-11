@@ -56,6 +56,8 @@ def store_device_credential(
     username: str,
     password: str,
     enable_secret: str | None = None,
+    *,
+    commit: bool = True,
 ) -> DeviceCredential:
     cipher = get_cipher()
     record = (
@@ -72,7 +74,8 @@ def store_device_credential(
     record.enable_secret_encrypted = (
         cipher.encrypt(enable_secret) if enable_secret else None
     )
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return record
 
 

@@ -9,8 +9,8 @@ Design rules, enforced by tests:
   a Device.management_ip, so no address is hardcoded anywhere.
 * The model never executes anything. It returns a structured AIAction which the
   backend validates and freezes into the change workflow.
-* A `configure` intent can only ever produce a Preview. Applying stays a manual,
-  admin-only step.
+* A `configure` intent can only produce a Preview. Approval and deployment each
+  require separate scoped permissions enforced by the backend.
 * Troubleshooting runs in two phases: propose read-only diagnostics, then explain
   the collected output. A fix is never applied automatically.
 """
@@ -159,12 +159,21 @@ class AIService:
         return self._provider
 
     # -- context ----------------------------------------------------------
-    def build_context(self) -> dict:
+    def build_context(self, user_id=None, group_id=None) -> dict:
         """Safe lab context; per-session conversation is added by interpret()."""
         devices = db.session.query(Device).order_by(Device.hostname).all()
+        if user_id is not None:
+            from ..governance.visibility import devices as visible_devices
+            from ..governance.access import actor
+            devices = visible_devices(devices, actor(user_id))
+            if group_id is not None:
+                from ..governance.access import require_group
+                group = require_group(actor(user_id), group_id)
+                devices = [device for device in devices if device in group.devices]
         commands = sorted(
             rule.name for rule in ai_policy.rules
         )
+        from ..governance.model import ConfigTemplate, public
         return {
             "devices": [
                 {
@@ -176,8 +185,9 @@ class AIService:
                 for device in devices
             ],
             "supported_commands": commands,
+            "configuration_templates": [public(t) for t in db.session.query(ConfigTemplate).filter_by(enabled=True)],
             "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
-            "topology": build_topology(),
+            "topology": build_topology(devices),
         }
 
     # -- conversation history ---------------------------------------------
@@ -234,10 +244,18 @@ class AIService:
         return extract_json_object(raw)
 
     def interpret(
-        self, message: str, user_id: int | None, session_id: int | None = None
+        self, message: str, user_id: int | None, session_id: int | None = None, group_id: int | None = None
     ) -> AIAction:
         """Ask the model for a structured action. No side effects."""
-        context = self.build_context()
+        from ..governance.quotas import consume_ai
+        consume_ai(user_id, group_id)
+        if session_id is not None:
+            from ..chat.model import ChatSession
+            from ..governance.access import actor, role
+            session = db.session.get(ChatSession, session_id)
+            if session and role(actor(user_id)) != "ADMIN" and session.created_by_id != user_id:
+                raise ForbiddenError("This chat belongs to another account.")
+        context = self.build_context(user_id, group_id)
         context["conversation"] = self._recent_history(session_id, message)
         schema = build_ai_action_schema(
             device["hostname"] for device in context["devices"]
@@ -351,7 +369,7 @@ class AIService:
 
     # -- intent handlers --------------------------------------------------
     def _run_readonly(
-        self, operation: AIOperation, device: Device, user_id: int | None
+        self, operation: AIOperation, device: Device, user_id: int | None, group_id: int | None = None
     ) -> list[dict]:
         results = []
         for command in operation.commands:
@@ -360,6 +378,7 @@ class AIService:
                 command=command,
                 user_id=user_id,
                 source="ai",
+                group_id=group_id,
             )
             results.append(
                 {
@@ -379,12 +398,13 @@ class AIService:
         operation: AIOperation,
         device: Device,
         user_id: int | None,
+        group_id: int | None = None,
     ) -> dict:
         return {
             "intent": "monitor",
             "device": device.hostname,
             "explanation": action.explanation,
-            "results": self._run_readonly(operation, device, user_id),
+            "results": self._run_readonly(operation, device, user_id, group_id),
             "requires_approval": False,
         }
 
@@ -394,8 +414,9 @@ class AIService:
         operation: AIOperation,
         device: Device,
         user_id: int | None,
+        group_id: int | None = None,
     ) -> dict:
-        results = self._run_readonly(operation, device, user_id)
+        results = self._run_readonly(operation, device, user_id, group_id)
 
         # Phase 2: hand the collected output back to the model for analysis.
         # Outputs are redacted first in case a device echoed a secret.
@@ -433,13 +454,14 @@ class AIService:
             "requires_approval": False,
         }
 
-    def _handle_configure(self, action: AIAction, user_id: int | None) -> dict:
+    def _handle_configure(self, action: AIAction, user_id: int | None, group_id: int | None = None) -> dict:
         operations = [
             BatchOperation(
                 device_hostnames=list(operation.device_hostnames),
                 execution_mode=operation.execution_mode,
                 commands=list(operation.commands),
                 verification_commands=list(operation.verification_commands),
+                group_id=group_id,
             )
             for operation in action.operations
         ]
@@ -469,9 +491,9 @@ class AIService:
 
     # -- entry point ------------------------------------------------------
     def handle(
-        self, message: str, user_id: int | None, session_id: int | None = None
+        self, message: str, user_id: int | None, session_id: int | None = None, group_id: int | None = None
     ) -> dict:
-        action = self.interpret(message, user_id, session_id=session_id)
+        action = self.interpret(message, user_id, session_id=session_id, group_id=group_id)
 
         # A conversational turn touches nothing: no device is resolved, no
         # policy is evaluated, no SSH session is opened, and no audit row is
@@ -484,11 +506,12 @@ class AIService:
             }
 
         if action.intent == "configure":
-            self._require_admin(user_id)
-            return self._handle_configure(action, user_id)
+            return self._handle_configure(action, user_id, group_id)
 
         operation = self._readonly_operation(action)
         device = device_service.get_device_by_hostname(operation.device_hostnames[0])
+        from ..governance.access import actor, require
+        require(actor(user_id), "device.observe", group_id, device)
         self._guard_readonly(action, operation, device, user_id)
 
         record_event(
@@ -501,5 +524,5 @@ class AIService:
         )
 
         if action.intent == "monitor":
-            return self._handle_monitor(action, operation, device, user_id)
-        return self._handle_troubleshoot(action, operation, device, user_id)
+            return self._handle_monitor(action, operation, device, user_id, group_id)
+        return self._handle_troubleshoot(action, operation, device, user_id, group_id)

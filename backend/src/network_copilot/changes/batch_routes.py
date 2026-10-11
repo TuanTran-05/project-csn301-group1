@@ -25,7 +25,7 @@ def get_batch(batch_id: int):
 
 
 @bp.post("/<int:batch_id>/approve")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "TEACHER")
 def approve(batch_id: int):
     user = current_user()
     batch = batch_service.approve_batch(batch_id, user.id if user else None)
@@ -33,7 +33,7 @@ def approve(batch_id: int):
 
 
 @bp.post("/<int:batch_id>/apply")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "TEACHER", "STUDENT")
 @limiter.limit("10 per minute")
 def apply(batch_id: int):
     user = current_user()

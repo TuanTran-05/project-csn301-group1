@@ -48,6 +48,8 @@ def preview():
         verification_commands=data.verification_commands,
         description=data.description,
         execution_mode=data.execution_mode,
+        group_id=data.group_id,
+        assignment_id=data.assignment_id,
     )
     return jsonify(change.to_dict()), 201
 

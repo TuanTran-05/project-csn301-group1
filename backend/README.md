@@ -6,6 +6,13 @@ through a **Preview → Approve → Apply → Verify** workflow. An AI copilot c
 plain Vietnamese or English into a *proposal*, but it can never execute anything
 itself.
 
+The backend now supports scoped Admin/Teacher/Student permissions, delegation and
+expiry, mandatory Admin MFA, teaching groups, assignments, draft versions,
+reservations, notifications, and lab-provider adapters. See
+[the setup and API guide](../docs/scoped-backend.md) before upgrading. Existing
+Teacher/Student memberships no longer imply execution permission. Production and
+shared-lab deployments require a captured baseline and a current approval.
+
 ## Safety model
 
 The rules below are enforced by code and covered by tests, not by convention:
@@ -14,8 +21,8 @@ The rules below are enforced by code and covered by tests, not by convention:
 |---|---|
 | Unknown read-only commands are denied by default | `commands/policy.py` — allowlist only |
 | Destructive configuration commands are never silently blocked or silently executed: they become high-risk previews and require typed confirmation before Apply | `changes/service.py`, `changes/batch_service.py` |
-| `ADMIN` may apply any approved change; `TEACHER` is limited to devices in managed groups | `changes/service.py` |
-| A `STUDENT` change is auto-approved only for a managed group with Smart Approval enabled and a `LOW`-risk command set; otherwise a Teacher must approve it | `groups/model.py`, `commands/policy.py`, `changes/service.py` |
+| Every deployment rechecks account, explicit permission, group/device/environment scope, expiry, approval digest, baseline and maintenance; a per-device lease prevents concurrent writes | `governance/access.py`, `governance/workflow.py` |
+| A Student needs a separate deployment grant. Smart Approval applies only to Low Risk in the selected enabled group; otherwise an authorized Teacher/Admin must approve the exact configuration | `governance/workflow.py`, `changes/service.py` |
 | Every change is previewed and approved before it runs, including Smart Approval changes | `changes/service.py` |
 | A `show running-config` backup is taken before every apply | `backups/service.py` |
 | Verification runs after every apply; a failed check never reports success | `changes/service.py::run_verification` |

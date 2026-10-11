@@ -94,6 +94,12 @@ class ChangeRequest(db.Model):
     __tablename__ = "change_requests"
 
     id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("groups.id"))
+    assignment_id = db.Column(db.Integer, db.ForeignKey("assignments.id"))
+    approval_digest = db.Column(db.String(64))
+    baseline_revision = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    baseline_hash = db.Column(db.String(64))
+    rejection_reason = db.Column(db.String(512))
     device_id = db.Column(
         db.Integer, db.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False,
         index=True,
@@ -200,6 +206,12 @@ class ChangeRequest(db.Model):
             "verification_plan": self.verification_plan or [],
             "rollback_guidance": self.rollback_guidance or [],
             "requested_by_id": self.requested_by_id,
+            "group_id": self.group_id,
+            "assignment_id": self.assignment_id,
+            "baseline_revision": self.baseline_revision,
+            "baseline_hash": self.baseline_hash,
+            "approval_digest": self.approval_digest,
+            "rejection_reason": self.rejection_reason,
             "approved_by_id": self.approved_by_id,
             "batch_id": self.batch_id,
             "execution_mode": self.execution_mode,

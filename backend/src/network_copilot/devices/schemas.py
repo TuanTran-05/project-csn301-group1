@@ -51,6 +51,9 @@ class DeviceCreateSchema(BaseModel):
     role: DeviceRole
     ssh_port: int = Field(default=22, ge=1, le=65535)
     monitoring_enabled: bool = True
+    environment: Literal["virtual", "physical_lab", "production"] = "physical_lab"
+    isolated: bool = False
+    recovery_instructions: str | None = Field(default=None, max_length=10000)
     description: str | None = Field(default=None, max_length=255)
 
     _check_hostname = field_validator("hostname")(_validate_hostname)
@@ -66,6 +69,9 @@ class DeviceUpdateSchema(BaseModel):
     role: DeviceRole | None = None
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     monitoring_enabled: bool | None = None
+    environment: Literal["virtual", "physical_lab", "production"] | None = None
+    isolated: bool | None = None
+    recovery_instructions: str | None = Field(default=None, max_length=10000)
     description: str | None = Field(default=None, max_length=255)
 
     @field_validator("hostname")

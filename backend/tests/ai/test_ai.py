@@ -783,7 +783,7 @@ def test_chat_endpoint_requires_a_message(client, admin_headers, app):
     assert client.post("/api/ai/chat", headers=admin_headers, json={}).status_code == 422
 
 
-def test_viewer_can_ask_a_monitor_question(
+def test_legacy_viewer_cannot_monitor_without_explicit_permissions(
     client, viewer_headers, app, dist_switch, ssh_factory
 ):
     ssh_factory.set_client(dist_switch.hostname, default_output="ok")
@@ -791,7 +791,7 @@ def test_viewer_can_ask_a_monitor_question(
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "check ospf"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
 
 
 def test_viewer_cannot_create_a_configuration_preview(

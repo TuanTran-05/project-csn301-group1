@@ -19,6 +19,7 @@ from ..errors import InvalidStateError, NotFoundError, ValidationError
 from ..extensions import db
 from .model import ChangeBatch
 from .service import _apply_approved_change, _fail, _now, prepare_change
+from ..governance import workflow
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class BatchOperation:
     execution_mode: str
     commands: list[str]
     verification_commands: list[str]
+    group_id: int | None = None
 
 
 def _resolve_targets(hostnames: list[str]) -> list[Device]:
@@ -64,6 +66,14 @@ def create_batch_preview(
     resolved: dict[str, tuple[Device, BatchOperation]] = {}
     for operation in operations:
         devices = _resolve_targets(operation.device_hostnames)
+        if operation.device_hostnames == ["*"]:
+            from ..governance.access import actor, permitted
+            user = actor(user_id)
+            devices = [d for d in devices if permitted(user, "config.create", operation.group_id, d)]
+            if operation.group_id is not None:
+                from ..governance.access import require_group
+                group = require_group(user, operation.group_id)
+                devices = [d for d in devices if d in group.devices]
         for device in devices:
             previous = resolved.get(device.hostname)
             if previous and previous[1] != operation:
@@ -79,6 +89,17 @@ def create_batch_preview(
         # target. Catch it here instead of letting max() below raise a raw
         # ValueError.
         raise ValidationError("The batch did not resolve to any device.")
+
+    from ..auth.model import User
+    from ..changes.model import ChangeRequest
+    from ..governance.access import actor, policy
+    from ..errors import ConflictError
+    user = actor(user_id)
+    db.session.query(User).filter_by(id=user.id).update({"token_version": User.token_version})
+    pending = db.session.query(ChangeRequest).filter(ChangeRequest.requested_by_id == user.id,
+                                                    ChangeRequest.status.in_(["pending_approval", "approved", "running"])).count()
+    if pending + len(resolved) > policy().pending_change_limit:
+        raise ConflictError("Pending change quota reached.")
 
     batch = ChangeBatch(
         requested_by_id=user_id,
@@ -98,12 +119,15 @@ def create_batch_preview(
                     description,
                     source,
                     operation.execution_mode,
+                    group_id=operation.group_id,
                 )
             )
         batch.requires_confirmation = any(c.requires_confirmation for c in batch.changes)
         batch.risk_level = max((c.risk_level for c in batch.changes), key=_risk_rank)
         db.session.add(batch)
         db.session.flush()
+        for change in batch.changes:
+            workflow.notify_change(change, "change.pending")
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -115,11 +139,15 @@ def get_batch(batch_id: int) -> ChangeBatch:
     batch = db.session.get(ChangeBatch, batch_id)
     if batch is None:
         raise NotFoundError(f"Change batch {batch_id} was not found.")
+    from ..governance.visibility import check_change
+    for change in batch.changes:
+        check_change(change)
     return batch
 
 
 def list_batches(limit: int = 100) -> list[ChangeBatch]:
-    return (
+    from ..governance.visibility import batches
+    return batches(
         db.session.query(ChangeBatch)
         .order_by(ChangeBatch.created_at.desc(), ChangeBatch.id.desc())
         .limit(min(max(limit, 1), 500))
@@ -143,6 +171,8 @@ def approve_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
             f"batch {batch_id} is '{batch.status}'."
         )
     now = _now()
+    for change in batch.changes:
+        workflow.approve_allowed(change, user_id)
     batch.status = "approved"
     batch.approved_by_id = user_id
     batch.approved_at = now
@@ -151,6 +181,7 @@ def approve_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
             change.status = "approved"
             change.approved_by_id = user_id
             change.approved_at = now
+            workflow.notify_change(change, "change.approved")
     db.session.commit()
     record_event(
         action="batch.approve",
@@ -227,6 +258,10 @@ def apply_batch(
                 f"confirmation equal to {batch.confirmation_text!r}.",
                 {"confirmation_required": batch.confirmation_text},
             )
+
+    # Claim the batch atomically: only one concurrent apply request may move
+    for change in batch.changes:
+        workflow.deployment_allowed(change, user_id)
 
     # Claim the batch atomically: only one concurrent apply request may move
     # it from 'approved' to 'running'. A lost race (rowcount 0) means another

@@ -42,6 +42,7 @@ from .verification import (
 )
 from .model import ChangeBatch, ChangeRequest
 from .rollback import build_rollback_guidance
+from ..governance import workflow
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,8 @@ def prepare_change(
     description: str | None = None,
     source: str = "api",
     execution_mode: str = "config",
+    group_id: int | None = None,
+    assignment_id: int | None = None,
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
     body, requires_confirmation = validate_commands(commands, device)
@@ -355,6 +358,8 @@ def prepare_change(
         change.warnings = list(change.warnings or []) + [
             "The requested verification commands were replaced by the backend's frozen semantic plan."
         ]
+    change.assignment_id = assignment_id
+    workflow.bind(change, user_id, device, group_id)
     return change
 
 
@@ -366,11 +371,15 @@ def create_preview(
     description: str | None = None,
     source: str = "api",
     execution_mode: str = "config",
+    group_id: int | None = None,
+    assignment_id: int | None = None,
 ) -> ChangeRequest:
     """Validate a change and store it as pending_approval. Never touches SSH."""
     device = device_service.get_device(device_id)
     actor = _require_actor(user_id)
     _authorize_device_access(actor, device)
+    # Serialize quota checks for this account across concurrent previews.
+    db.session.query(User).filter_by(id=actor.id).update({"token_version": User.token_version})
 
     change = prepare_change(
         user_id,
@@ -380,8 +389,12 @@ def create_preview(
         description=description,
         source=source,
         execution_mode=execution_mode,
+        group_id=group_id,
+        assignment_id=assignment_id,
     )
     db.session.add(change)
+    db.session.flush()
+    workflow.notify_change(change, "change.pending")
     db.session.commit()
 
     if any("replaced by the backend" in warning for warning in (change.warnings or [])):
@@ -434,6 +447,8 @@ def get_change(change_id: int) -> ChangeRequest:
     change = db.session.get(ChangeRequest, change_id)
     if change is None:
         raise NotFoundError(f"Change request {change_id} was not found.")
+    from ..governance.visibility import check_change
+    check_change(change)
     return change
 
 
@@ -481,7 +496,8 @@ def list_changes(
         query = query.filter(ChangeRequest.status == status)
     if standalone_only:
         query = query.filter(ChangeRequest.batch_id.is_(None))
-    return (
+    from ..governance.visibility import changes as visible_changes
+    return visible_changes(
         query.order_by(ChangeRequest.created_at.desc(), ChangeRequest.id.desc())
         .limit(min(max(limit, 1), 500))
         .all()
@@ -509,6 +525,7 @@ def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     change = get_change(change_id)
     _reject_batch_child(change)
     actor = _require_actor(user_id)
+    workflow.approve_allowed(change, user_id)
     if _role_name(actor) == "TEACHER":
         _authorize_device_access(actor, device_service.get_device(change.device_id))
     elif _role_name(actor) != "ADMIN":
@@ -521,6 +538,7 @@ def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     change.status = "approved"
     change.approved_by_id = user_id
     change.approved_at = _now()
+    workflow.notify_change(change, "change.approved")
     db.session.commit()
     record_event(
         action="change.approve",
@@ -646,6 +664,7 @@ def _fail(change: ChangeRequest, message: str, user_id: int | None = None) -> Ch
     change.status = "failed"
     change.error_message = message[:512]
     change.applied_at = _now()
+    workflow.notify_change(change, "change.failed")
     db.session.commit()
     logger.warning("Change %s failed: %s", change.id, message)
     record_event(
@@ -673,7 +692,9 @@ def apply(
     role = _role_name(actor)
     device = device_service.get_device(change.device_id)
 
-    if role == "STUDENT":
+    from ..governance.access import require
+    require(actor, "config.deploy", change.group_id, device)
+    if role == "STUDENT" and change.status != "approved":
         if change.requested_by_id != actor.id:
             raise ForbiddenError("Students may only apply their own changes.")
         groups = _groups_for_device(actor, device, role)
@@ -690,8 +711,8 @@ def apply(
         from ..commands.policy import analyze_risk
 
         risk = analyze_risk(change.commands or [], device.role)
-        auto_approve_groups = [group for group in groups if group.is_auto_approve]
-        if not auto_approve_groups or risk != "LOW" or change.requires_confirmation:
+        auto_approve_groups = [group for group in groups if group.is_auto_approve and group.id == change.group_id]
+        if not auto_approve_groups or workflow.risk(change.commands, device) != "low" or risk != "LOW" or change.requires_confirmation:
             raise ForbiddenError(
                 "Teacher approval is required because Smart Approval is disabled "
                 "for this group or the change contains a high-risk command."
@@ -700,6 +721,7 @@ def apply(
         change.status = "approved"
         change.approved_by_id = None
         change.approved_at = _now()
+        change.approval_digest = workflow.digest(change)
         db.session.commit()
         record_event(
             action="change.approve",
@@ -715,7 +737,7 @@ def apply(
         )
     elif role == "TEACHER":
         _authorize_device_access(actor, device)
-    elif role != "ADMIN":
+    elif role not in {"ADMIN", "STUDENT"}:
         raise ForbiddenError("This role cannot apply configuration changes.")
 
     if change.status != "approved":
@@ -738,6 +760,25 @@ def apply(
 
 
 def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> ChangeRequest:
+    if change.status != "approved":
+        raise InvalidStateError("Only an approved change can be applied.")
+    if change.batch_id is not None:
+        parent = db.session.get(ChangeBatch, change.batch_id)
+        if parent is None or parent.status != "running":
+            raise InvalidStateError("A batch child requires its parent to be running.")
+    workflow.deployment_allowed(change, user_id)
+    workflow.claim(change, user_id)
+    try:
+        return _execute_locked_change(change, user_id)
+    except Exception:
+        db.session.rollback()
+        _fail(change, "Deployment interrupted; inspect device state before creating another preview.", user_id)
+        raise
+    finally:
+        workflow.release(change)
+
+
+def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> ChangeRequest:
     """Backup, run, then verify an already-authorized change.
 
     Callers must enforce confirmation themselves before reaching here -
@@ -751,7 +792,7 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
     from ..ssh.exceptions import SSHError
     from ..ssh.messages import friendly_error
 
-    if change.status != "approved":
+    if change.status != "running":
         raise InvalidStateError(
             f"Only an approved change can be applied; change {change.id} is "
             f"'{change.status}'."
@@ -801,6 +842,13 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
         )
 
     # 2. Push the configuration (or run the EXEC commands directly).
+    if change.baseline_hash and workflow.config_hash(backup.running_config) != change.baseline_hash:
+        return _fail(change, "Running configuration changed since preview; preview and approve again.", user_id)
+    # Re-read permissions after backup I/O; revocation must win before any write.
+    db.session.expire_all()
+    workflow.deployment_allowed(change, user_id)
+    device.baseline_revision += 1
+    db.session.commit()
     try:
         if change.execution_mode == "exec":
             result = client.run_exec(
@@ -840,6 +888,7 @@ def _apply_approved_change(change: ChangeRequest, user_id: int | None) -> Change
     change.status = "success"
     change.error_message = None
     change.applied_at = _now()
+    workflow.notify_change(change, "change.success")
     db.session.commit()
     device_service.set_device_status(device, "online")
     logger.info("Change %s applied and verified on %s.", change.id, device.hostname)
