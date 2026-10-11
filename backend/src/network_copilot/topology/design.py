@@ -63,7 +63,8 @@ class SviSchema(BaseModel):
     device_id: int
     vlan_id: int
     ip: str
-    prefix_length: int = Field(ge=8, le=30)
+    # "auto" picks the VLAN's existing subnet or a free one from the project pool.
+    prefix_length: int = Field(default=24, ge=8, le=30)
 
 
 class RouteSchema(BaseModel):
@@ -160,10 +161,27 @@ def _make_access_port(project, payload):
                             interface=data.interface, vlan_id=data.vlan_id)
 
 
+def _auto_svi(project, data) -> dict:
+    from . import ipam
+
+    peers = db.session.query(DesignSvi).filter_by(project_id=project.id, vlan_id=data.vlan_id).all()
+    if peers:
+        network = ipaddress.ip_network(f"{peers[0].ip}/{peers[0].prefix_length}", strict=False)
+    else:
+        network = ipam.next_lan(project, data.prefix_length)
+    used = {p.ip for p in peers}
+    for host in network.hosts():
+        if str(host) not in used:
+            return {"ip": str(host), "prefix_length": network.prefixlen}
+    raise ConflictError(f"{network} has no free address left.")
+
+
 def _make_svi(project, payload):
     data = validate(SviSchema, payload, "SVI")
     device = _device(project, data.device_id, roles=SWITCH_ROLES)
     _require_vlan(project, data.vlan_id)
+    if data.ip == "auto":
+        data = data.model_copy(update=_auto_svi(project, data))
     address = _ipv4(data.ip, "ip")
     network = ipaddress.ip_network(f"{address}/{data.prefix_length}", strict=False)
     if address in (network.network_address, network.broadcast_address):

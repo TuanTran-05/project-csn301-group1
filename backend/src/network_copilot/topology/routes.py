@@ -6,7 +6,7 @@ from ..audit.service import record_event
 from ..auth.service import current_user
 from ..projects import service as project_service
 from ..extensions import limiter
-from . import configgen, design, discovery, pnetlab_import, service
+from . import blueprints, configgen, design, ipam, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -36,6 +36,34 @@ def get_topology(project_id: int):
 def list_templates(project_id: int):
     _project(project_id, "viewer")
     return jsonify({"items": list(DEVICE_TEMPLATES)}), 200
+
+
+@bp.get("/blueprints")
+@jwt_required()
+def list_blueprints(project_id: int):
+    _project(project_id, "viewer")
+    return jsonify({"items": blueprints.catalog()}), 200
+
+
+@bp.post("/blueprints/<key>")
+@jwt_required()
+def build_blueprint(project_id: int, key: str):
+    project = _project(project_id, "editor")
+    result = blueprints.build(project, key, request.get_json(silent=True) or {})
+    record_event(
+        action="topology.blueprint",
+        result="success",
+        user_id=current_user().id,
+        details={"blueprint": key, "devices": len(result["devices"]), "links": len(result["links"])},
+    )
+    return jsonify(result), 201
+
+
+@bp.get("/ipam")
+@jwt_required()
+def get_ipam(project_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify(ipam.summary(project)), 200
 
 
 @bp.post("/quick-device")

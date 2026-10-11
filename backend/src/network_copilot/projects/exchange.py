@@ -41,6 +41,7 @@ class ProjectDoc(BaseModel):
     description: str | None = Field(default=None, max_length=255)
     management_network: str
     environment: str = "pnetlab"
+    addressing_pool: str | None = None
 
 
 class Document(BaseModel):
@@ -67,6 +68,7 @@ def export_project(project: Project) -> dict:
             "description": project.description,
             "management_network": project.management_network,
             "environment": project.environment,
+            "addressing_pool": project.addressing_pool,
         },
         "devices": [
             {
@@ -165,6 +167,7 @@ def import_project(user, payload: dict, name: str | None = None) -> Project:
             "description": doc.project.description,
             "management_network": doc.project.management_network,
             "environment": doc.project.environment,
+            "addressing_pool": doc.project.addressing_pool,
         },
     )
     try:

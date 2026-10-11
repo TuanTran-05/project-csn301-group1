@@ -99,6 +99,10 @@ def normalize_vlan_list(value: str) -> str:
 
 def _resolve_routed(project, fields: dict, exclude_id: int | None) -> None:
     """Validate the subnet of a routed link and fill in missing addresses."""
+    if fields.get("network") == "auto":
+        from . import ipam
+
+        fields["network"] = ipam.next_link_network(project)
     if not fields.get("network"):
         raise ValidationError(
             "A routed link needs a point-to-point network.",

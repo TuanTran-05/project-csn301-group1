@@ -37,6 +37,18 @@ def validate_management_network(value: str) -> str:
     return str(network)
 
 
+def validate_addressing_pool(value: str | None) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        network = ipaddress.ip_network(value, strict=False)
+    except ValueError as exc:
+        raise ValueError("addressing_pool must be a valid IPv4 CIDR") from exc
+    if network.version != 4 or not network.is_private or network.prefixlen < 8 or network.prefixlen > 24:
+        raise ValueError("addressing_pool must be a private IPv4 range between /8 and /24")
+    return str(network)
+
+
 class ProjectCreateSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -44,8 +56,11 @@ class ProjectCreateSchema(BaseModel):
     description: str | None = Field(default=None, max_length=255)
     management_network: str
     environment: Environment = "pnetlab"
+    # Range that automatic addressing (link /30s, LAN subnets) draws from.
+    addressing_pool: str | None = None
 
     _check_network = field_validator("management_network")(validate_management_network)
+    _check_pool = field_validator("addressing_pool")(validate_addressing_pool)
 
 
 class ProjectUpdateSchema(BaseModel):
@@ -55,6 +70,9 @@ class ProjectUpdateSchema(BaseModel):
     description: str | None = Field(default=None, max_length=255)
     management_network: str | None = None
     environment: Environment | None = None
+    addressing_pool: str | None = None
+
+    _check_pool = field_validator("addressing_pool")(validate_addressing_pool)
 
     @field_validator("management_network")
     @classmethod
