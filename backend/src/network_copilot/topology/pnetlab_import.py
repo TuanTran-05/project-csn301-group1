@@ -46,6 +46,13 @@ def classify(template: str | None) -> dict | None:
         return {"device_type": "cisco_ios", "role": "access"}
     if any(key in name for key in ("vios", "iol", "csr", "c7200", "c3725", "c3745", "c1710", "router")):
         return {"device_type": "cisco_ios", "role": "core"}
+    for words, kind, role in (
+        (("vpcs", "docker", "desktop", "win", "pc"), "pc", "host"),
+        (("linux", "ubuntu", "server", "centos", "debian"), "server", "server"),
+        (("cloud", "internet", "nat"), "cloud", "internet"),
+    ):
+        if any(word in name for word in words):
+            return {"device_type": "generic", "role": role, "kind": kind}
     return None
 
 
@@ -162,7 +169,8 @@ def preview(project, payload: dict) -> dict:
             "exists": hostname.upper() in existing,
             "device_type": kind["device_type"] if kind else None,
             "role": kind["role"] if kind else None,
-            "management_ip": next(ips) if kind else None,
+            "management_ip": next(ips) if kind and kind["device_type"] != "generic" else None,
+            "kind": kind.get("kind") if kind else None,
         }
         items.append(item)
     return {"nodes": items, "links": derive_links(nodes, topology), "positions": len(positions)}
@@ -186,15 +194,16 @@ def import_lab(project, payload: dict) -> dict:
         hostname = choice.hostname or hostname_for(node.get("name"), key)
         if kind is None:
             results.append({"id": key, "hostname": hostname, "status": "skipped",
-                            "message": f"Template {node.get('template')!r} is not a Cisco IOS/ASA node."})
+                            "message": f"Template {node.get('template')!r} is not a supported node type."})
             continue
         device_payload = {
             "hostname": hostname,
-            "management_ip": choice.management_ip or next(default_ips),
             "environment": "pnetlab",
             "description": f"Imported from PNETLab ({node.get('template')})",
             **kind,
         }
+        if kind["device_type"] != "generic":
+            device_payload["management_ip"] = choice.management_ip or next(default_ips)
         if key in positions:
             device_payload["pos_x"], device_payload["pos_y"] = (round(v) for v in positions[key])
         if request.credential:

@@ -18,7 +18,7 @@ from ..extensions import db
 from ..topology import service as topology_service
 from . import service as project_service
 from .model import Project
-from ..devices.model import Device
+from ..devices.model import UNMANAGED_KINDS, Device
 
 FORMAT = "network-copilot-project"
 VERSION = 1
@@ -30,6 +30,7 @@ MAX_CSV_ROWS = 1000
 DEVICE_COLUMNS = (
     "hostname", "management_ip", "device_type", "role", "environment",
     "ssh_port", "monitoring_enabled", "description",
+    "kind", "lifecycle", "data_ip", "data_gateway",
 )
 
 
@@ -77,6 +78,10 @@ def export_project(project: Project) -> dict:
                 "ssh_port": d.ssh_port,
                 "monitoring_enabled": d.monitoring_enabled,
                 "description": d.description,
+                "kind": d.kind,
+                "lifecycle": d.lifecycle,
+                "data_ip": d.data_ip,
+                "data_gateway": d.data_gateway,
                 "pos_x": d.pos_x,
                 "pos_y": d.pos_y,
             }
@@ -227,7 +232,7 @@ def import_devices_csv(project: Project, text: str) -> list[Device]:
     reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     fields = [f.strip() for f in (reader.fieldnames or [])]
     reader.fieldnames = fields
-    if "hostname" not in fields or "management_ip" not in fields:
+    if "hostname" not in fields or ("management_ip" not in fields and "kind" not in fields):
         raise ValidationError("The CSV needs at least the columns hostname and management_ip.")
     unknown = set(fields) - set(DEVICE_COLUMNS) - {"username", "password", "enable_secret"}
     if unknown:
@@ -247,8 +252,12 @@ def import_devices_csv(project: Project, text: str) -> list[Device]:
             continue
         payload = {k: v for k, v in row.items() if k in DEVICE_COLUMNS and v != ""}
         # Only hostname and IP are required in a CSV; the rest has sensible defaults.
-        payload.setdefault("device_type", "cisco_ios")
-        payload.setdefault("role", "access")
+        if payload.get("kind") in UNMANAGED_KINDS:
+            payload.setdefault("device_type", "generic")
+            payload.setdefault("role", "host")
+        else:
+            payload.setdefault("device_type", "cisco_ios")
+            payload.setdefault("role", "access")
         if "ssh_port" in payload:
             try:
                 payload["ssh_port"] = int(payload["ssh_port"])
@@ -273,11 +282,12 @@ def import_devices_csv(project: Project, text: str) -> list[Device]:
         if host_key in existing_hosts or host_key in seen_hosts:
             problems[f"line {number}"] = [f"hostname {data.hostname} is already used"]
             continue
-        if data.management_ip in existing_ips or data.management_ip in seen_ips:
+        if data.management_ip and (data.management_ip in existing_ips or data.management_ip in seen_ips):
             problems[f"line {number}"] = [f"management_ip {data.management_ip} is already used"]
             continue
         seen_hosts.add(host_key)
-        seen_ips.add(data.management_ip)
+        if data.management_ip:
+            seen_ips.add(data.management_ip)
         prepared.append(payload)
 
     if problems:
