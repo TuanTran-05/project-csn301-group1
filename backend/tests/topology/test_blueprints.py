@@ -72,3 +72,54 @@ def test_auto_svi_shares_a_vlan_subnet_and_follows_the_pool(client, admin_header
 def test_invalid_pool_is_rejected(client, admin_headers, project):
     res = client.put(f"/api/projects/{project.id}", headers=admin_headers, json={"addressing_pool": "8.8.8.0/24"})
     assert res.status_code == 422
+
+
+def codes(client, headers, base):
+    return {i["code"] for i in client.get(f"{base}/lint", headers=headers).get_json()["issues"]}
+
+
+def test_lint_reports_isolated_planned_and_missing_routing(client, admin_headers, base):
+    client.post(f"{base}/blueprints/ring", headers=admin_headers, json={"params": {"routers": 3}})
+    client.post(f"{base}/quick-device", headers=admin_headers, json={"template": "router", "planned": True})
+    found = codes(client, admin_headers, base)
+    assert {"isolated", "planned", "no_routing"} <= found
+
+
+def test_lint_is_clean_for_a_routed_design_with_ospf(client, admin_headers, base):
+    body = client.post(f"{base}/blueprints/ring", headers=admin_headers, json={"params": {"routers": 3}}).get_json()
+    for device in body["devices"]:
+        client.post(f"{base}/design/ospf", headers=admin_headers, json={"device_id": device["id"], "process_id": 1})
+    result = client.get(f"{base}/lint", headers=admin_headers).get_json()
+    assert result["ok"] and "no_routing" not in {i["code"] for i in result["issues"]}
+
+
+def test_lint_flags_duplicate_host_addresses(client, admin_headers, base):
+    ids = [client.post(f"{base}/quick-device", headers=admin_headers, json={"template": "pc"}).get_json()["id"]
+           for _ in range(2)]
+    for device_id in ids:
+        client.put(f"/api/devices/{device_id}", headers=admin_headers, json={"data_ip": "10.1.1.5"})
+    result = client.get(f"{base}/lint", headers=admin_headers).get_json()
+    assert not result["ok"] and "duplicate_ip" in {i["code"] for i in result["issues"]}
+
+
+def test_notes_crud_and_validation(client, admin_headers, base, viewer_headers):
+    made = client.post(f"{base}/notes", headers=admin_headers,
+                       json={"kind": "group", "text": "Building A", "x": 40, "y": 40, "width": 300, "height": 200,
+                             "color": "#3366cc"})
+    assert made.status_code == 201
+    note_id = made.get_json()["id"]
+    assert client.put(f"{base}/notes/{note_id}", headers=admin_headers, json={"text": "HQ"}).get_json()["text"] == "HQ"
+    assert client.get(f"{base}", headers=admin_headers).get_json()["notes"][0]["text"] == "HQ"
+    assert client.post(f"{base}/notes", headers=admin_headers, json={"text": "x", "color": "red"}).status_code == 422
+    assert client.post(f"{base}/notes", headers=viewer_headers, json={"text": "x"}).status_code == 403
+    assert client.delete(f"{base}/notes/{note_id}", headers=admin_headers).status_code == 204
+    assert client.delete(f"{base}/notes/{note_id}", headers=admin_headers).status_code == 404
+
+
+def test_notes_survive_export_and_clone(client, admin_headers, base, project):
+    client.post(f"{base}/notes", headers=admin_headers, json={"text": "Remember", "x": 5, "y": 6})
+    doc = client.get(f"/api/projects/{project.id}/export", headers=admin_headers).get_json()
+    assert doc["notes"][0]["text"] == "Remember"
+    copy = client.post(f"/api/projects/{project.id}/clone", headers=admin_headers, json={}).get_json()
+    topo = client.get(f"/api/projects/{copy['id']}/topology", headers=admin_headers).get_json()
+    assert [n["text"] for n in topo["notes"]] == ["Remember"]

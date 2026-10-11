@@ -6,7 +6,7 @@ from ..audit.service import record_event
 from ..auth.service import current_user
 from ..projects import service as project_service
 from ..extensions import limiter
-from . import blueprints, configgen, design, ipam, discovery, pnetlab_import, service
+from . import blueprints, configgen, design, ipam, lint, notes, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -57,6 +57,44 @@ def build_blueprint(project_id: int, key: str):
         details={"blueprint": key, "devices": len(result["devices"]), "links": len(result["links"])},
     )
     return jsonify(result), 201
+
+
+@bp.get("/notes")
+@jwt_required()
+def list_notes(project_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify({"items": [n.to_dict() for n in notes.list_notes(project.id)]}), 200
+
+
+@bp.post("/notes")
+@jwt_required()
+def create_note(project_id: int):
+    project = _project(project_id, "editor")
+    note = notes.create_note(project, request.get_json(silent=True) or {})
+    return jsonify(note.to_dict()), 201
+
+
+@bp.put("/notes/<int:note_id>")
+@jwt_required()
+def update_note(project_id: int, note_id: int):
+    project = _project(project_id, "editor")
+    note = notes.update_note(project, note_id, request.get_json(silent=True) or {})
+    return jsonify(note.to_dict()), 200
+
+
+@bp.delete("/notes/<int:note_id>")
+@jwt_required()
+def delete_note(project_id: int, note_id: int):
+    project = _project(project_id, "editor")
+    notes.delete_note(project, note_id)
+    return "", 204
+
+
+@bp.get("/lint")
+@jwt_required()
+def lint_design(project_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify(lint.lint(project)), 200
 
 
 @bp.get("/ipam")

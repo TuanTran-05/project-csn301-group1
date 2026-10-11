@@ -241,3 +241,40 @@ class DesignOspf(db.Model):
         return {"id": self.id, "device_id": self.device_id,
                 "hostname": self.device.hostname if self.device else None,
                 "process_id": self.process_id, "router_id": self.router_id}
+
+
+NOTE_KINDS = ("note", "group")
+
+
+class TopologyNote(db.Model):
+    """A sticky note or a labelled rectangle drawn on the canvas.
+
+    Purely documentation: it never reaches a device. Groups are drawn behind
+    the devices (zones, buildings, sites); notes sit on top.
+    """
+
+    __tablename__ = "topology_notes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind = db.Column(db.String(8), nullable=False, default="note", server_default="note")
+    text = db.Column(db.String(500), nullable=False)
+    x = db.Column(db.Float, nullable=False, default=0, server_default="0")
+    y = db.Column(db.Float, nullable=False, default=0, server_default="0")
+    width = db.Column(db.Float, nullable=False, default=160, server_default="160")
+    height = db.Column(db.Float, nullable=False, default=90, server_default="90")
+    color = db.Column(db.String(16))
+
+    __table_args__ = (
+        in_check("kind", NOTE_KINDS, "kind_valid"),
+        db.CheckConstraint("width > 0 AND height > 0", name="size_positive"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "kind": self.kind, "text": self.text,
+            "x": self.x, "y": self.y, "width": self.width, "height": self.height,
+            "color": self.color,
+        }

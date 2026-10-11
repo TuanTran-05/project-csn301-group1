@@ -35,6 +35,9 @@ def get_link(project_id: int, link_id: int) -> TopologyLink:
     return link
 
 
+from . import notes as notes_module  # noqa: E402
+
+
 def get_topology(project) -> dict:
     devices = (
         db.session.query(Device)
@@ -46,6 +49,7 @@ def get_topology(project) -> dict:
         "project": project.to_dict(),
         "nodes": [device.to_dict() for device in devices],
         "links": [link.to_dict() for link in list_links(project.id)],
+        "notes": [n.to_dict() for n in notes_module.list_notes(project.id)],
     }
 
 

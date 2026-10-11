@@ -53,6 +53,7 @@ class Document(BaseModel):
     devices: list[dict] = Field(default_factory=list, max_length=MAX_DEVICES)
     links: list[dict] = Field(default_factory=list, max_length=MAX_LINKS)
     design: dict = Field(default_factory=dict)
+    notes: list[dict] = Field(default_factory=list, max_length=200)
 
 
 # -- export -------------------------------------------------------------------
@@ -113,6 +114,9 @@ def export_project(project: Project) -> dict:
     from ..topology import design
 
     doc["design"] = design.export_design(project)
+    from ..topology import notes
+
+    doc["notes"] = [{k: v for k, v in n.to_dict().items() if k != "id"} for n in notes.list_notes(project.id)]
     return doc
 
 
@@ -211,6 +215,10 @@ def import_project(user, payload: dict, name: str | None = None) -> Project:
         from ..topology import design
 
         design.import_design(project, doc.design, {h: d for h, d in by_hostname.items()})
+        from ..topology import notes
+
+        for item in doc.notes:
+            notes.create_note(project, item)
     except AppError:
         db.session.rollback()
         project_service.delete_project(project)
