@@ -143,7 +143,7 @@ def build_topology(project_id: int | None = None) -> dict:
     Built from one project's devices when ``project_id`` is given, so another
     project's subnets, VLANs and routes never reach the model.
     """
-    devices = device_service.list_devices(project_id=project_id)
+    devices = device_service.list_devices(project_id=project_id, deployable=True)
     snapshots = {device.id: latest_snapshot(device.id) for device in devices}
     management_ips = _management_ips(devices)
 

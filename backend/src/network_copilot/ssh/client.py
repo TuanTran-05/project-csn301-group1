@@ -358,6 +358,10 @@ def build_client_for_device(device):
     """Build an SSH client for a device, honouring a test/override factory."""
     from flask import current_app
 
+    # Unmanaged and merely planned devices have no address or login to use.
+    from ..devices.service import ensure_deployable
+
+    ensure_deployable(device)
     factory = current_app.config.get("SSH_CLIENT_FACTORY")
     if factory is not None:
         return factory(device)

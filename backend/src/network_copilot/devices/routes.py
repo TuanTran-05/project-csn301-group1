@@ -64,6 +64,22 @@ def update_device(device_id: int):
     return jsonify(device.to_dict()), 200
 
 
+@bp.post("/<int:device_id>/provision")
+@jwt_required()
+def provision_device(device_id: int):
+    """Give a planned device its management IP (and optionally its SSH login)."""
+    project = write_project()
+    device = service.provision_device(device_id, request.get_json(silent=True) or {}, project)
+    record_event(
+        action="device.provision",
+        result="success",
+        user_id=_current_user_id(),
+        device_id=device.id,
+        details={"hostname": device.hostname, "management_ip": device.management_ip},
+    )
+    return jsonify(device.to_dict()), 200
+
+
 @bp.delete("/<int:device_id>")
 @jwt_required()
 def delete_device(device_id: int):
@@ -112,7 +128,7 @@ def get_backup(device_id: int, backup_id: int):
 @jwt_required()
 def test_connection(device_id: int):
     project = write_project()
-    device = service.get_device(device_id, project.id)
+    device = service.ensure_deployable(service.get_device(device_id, project.id))
     reachable, detail = service.check_reachability(device)
     record_event(
         action="device.test_connection",

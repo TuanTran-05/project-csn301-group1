@@ -65,7 +65,7 @@ def execute_readonly(
         raise ValidationError("A non-empty 'command' is required.")
 
     # Raises NotFoundError when the device does not exist.
-    device = device_service.get_device(device_id, project_id)
+    device = device_service.ensure_deployable(device_service.get_device(device_id, project_id))
 
     decision = policy_for_source(source).evaluate(command, device.role)
     if not decision.allowed:

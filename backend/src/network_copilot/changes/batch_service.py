@@ -46,7 +46,12 @@ def _resolve_targets(
     if project_id is not None:
         query = query.filter(Device.project_id == project_id)
     if hostnames == ["*"]:
-        return query.order_by(Device.hostname, Device.id).all()
+        # "Every device" means every one the backend can configure.
+        return (
+            query.filter(Device.managed.is_(True), Device.lifecycle == "provisioned")
+            .order_by(Device.hostname, Device.id)
+            .all()
+        )
     if "*" in hostnames:
         raise ValidationError("'*' cannot be mixed with explicit hostnames.")
     unique = sorted(set(hostnames))

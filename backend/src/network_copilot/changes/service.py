@@ -301,6 +301,7 @@ def prepare_change(
     execution_mode: str = "config",
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
+    device_service.ensure_deployable(device)
     body, requires_confirmation = validate_commands(commands, device)
     validate_execution_mode(body, execution_mode)
 

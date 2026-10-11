@@ -542,7 +542,8 @@ document.addEventListener("alpine:init", () => {
       const generation = this._deviceRefreshGeneration;
       const data = await this.authFetch("/api/devices");
       if (generation === this._deviceRefreshGeneration) {
-        this.devices = data.items;
+        // The chat only talks about devices the backend can reach.
+        this.devices = data.items.filter((device) => device.deployable !== false);
       }
     },
 

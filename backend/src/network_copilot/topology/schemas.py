@@ -90,6 +90,8 @@ class QuickDeviceSchema(BaseModel):
     y: float | None = Field(default=None, ge=-100000, le=100000)
     environment: Literal["pnetlab", "physical"] | None = None
     credential: dict | None = None
+    # Design only: no management IP or SSH login yet.
+    planned: bool = False
 
 
 class ConfigRequestSchema(BaseModel):

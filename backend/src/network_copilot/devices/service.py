@@ -55,6 +55,7 @@ def list_devices(
     role: str | None = None,
     status: str | None = None,
     project_id: int | None = None,
+    deployable: bool = False,
 ) -> list[Device]:
     """Devices, optionally restricted to one project.
 
@@ -66,11 +67,28 @@ def list_devices(
     query = db.session.query(Device).options(db.selectinload(Device.credential))
     if project_id is not None:
         query = query.filter(Device.project_id == project_id)
+    if deployable:
+        # Only devices the backend can open a session to: managed and provisioned.
+        query = query.filter(Device.managed.is_(True), Device.lifecycle == "provisioned")
     if role:
         query = query.filter(Device.role == role)
     if status:
         query = query.filter(Device.status == status)
     return query.order_by(Device.hostname, Device.id).all()
+
+
+def ensure_deployable(device: Device) -> Device:
+    """The device if the backend can talk to it, else a clear validation error."""
+    if not device.managed:
+        raise ValidationError(
+            f"{device.hostname} is an unmanaged {device.kind}; the backend never connects to it."
+        )
+    if device.lifecycle != "provisioned":
+        raise ValidationError(
+            f"{device.hostname} is only planned; provision it (give it a management "
+            "IP) before using it."
+        )
+    return device
 
 
 def get_device(device_id: int, project_id: int | None = None) -> Device:
@@ -100,6 +118,7 @@ def create_device(payload: dict, project) -> Device:
     _assert_unique(project.id, data.hostname, data.management_ip)
 
     fields = data.model_dump(exclude={"credential"})
+    fields["managed"] = data.device_type != "generic"
     credential = data.credential
     if credential is not None:
         _require_cipher()
@@ -128,9 +147,58 @@ def update_device(device_id: int, payload: dict, project) -> Device:
 
     if data.credential is not None:
         _require_cipher()
+    _check_update_allowed(device, changes, data.credential)
 
     for field, value in changes.items():
         setattr(device, field, value)
+    if data.credential is not None:
+        _store_credential(device, data.credential)
+    db.session.commit()
+    return device
+
+
+def _check_update_allowed(device: Device, changes: dict, credential) -> None:
+    """An edit may not turn a managed device into an unmanaged one (or back), and
+    unmanaged devices have no management address or login."""
+    new_type = changes.get("device_type", device.device_type)
+    if (new_type == "generic") != (not device.managed):
+        raise ValidationError("A device cannot switch between managed and unmanaged; create a new one.")
+    managed_roles = ("isp", "firewall", "core", "distribution", "access", "dmz", "management")
+    new_role = changes.get("role", device.role)
+    if device.managed and new_role not in managed_roles:
+        raise ValidationError(f"role {new_role} is for unmanaged devices.")
+    if not device.managed:
+        if new_role in managed_roles:
+            raise ValidationError(f"role {new_role} needs a managed device.")
+        if changes.get("management_ip") or credential is not None:
+            raise ValidationError("An unmanaged device has no management IP or SSH login.")
+    if changes.get("kind"):
+        kinds_ok = ("pc", "server", "cloud", "ap", "segment") if not device.managed else (
+            "router", "l3_switch", "switch", "firewall")
+        if changes["kind"] not in kinds_ok:
+            raise ValidationError(f"kind {changes['kind']} does not fit this device.")
+
+
+def provision_device(device_id: int, payload: dict, project) -> Device:
+    """Planned -> provisioned: give a designed device its management address."""
+    device = get_device(device_id, project.id)
+    if not device.managed:
+        raise ValidationError("Unmanaged devices are never provisioned.")
+    if device.lifecycle == "provisioned":
+        raise ConflictError(f"{device.hostname} is already provisioned.")
+    data = _validate(DeviceUpdateSchema, {
+        k: payload[k] for k in ("management_ip", "ssh_port", "credential") if k in payload
+    }, project)
+    if not data.management_ip:
+        raise ValidationError("management_ip is required to provision a device.",
+                              {"management_ip": ["Required."]})
+    _assert_unique(project.id, None, data.management_ip, exclude_id=device.id)
+    if data.credential is not None:
+        _require_cipher()
+    device.management_ip = data.management_ip
+    if data.ssh_port:
+        device.ssh_port = data.ssh_port
+    device.lifecycle = "provisioned"
     if data.credential is not None:
         _store_credential(device, data.credential)
     db.session.commit()

@@ -51,7 +51,7 @@ def _ospf_entry(device) -> dict:
 
 
 def build_summary(project_id: int | None = None) -> dict:
-    devices = device_service.list_devices(project_id=project_id)
+    devices = device_service.list_devices(project_id=project_id, deployable=True)
     ospf_devices = [device for device in devices if device.role in ROUTING_ROLES]
 
     return {

@@ -8,43 +8,32 @@ from ..extensions import db
 
 # What a freshly dropped device looks like. The operator can edit everything
 # afterwards; the template only saves typing.
+def _managed(key, label, kind, device_type, role, prefix, ports):
+    return {
+        "key": key, "label": label, "kind": kind, "managed": True, "ports": ports,
+        "device_type": device_type, "role": role, "prefix": prefix,
+        "interface_prefix": "GigabitEthernet0/",
+    }
+
+
+def _unmanaged(key, label, role, prefix, ports, interface_prefix="Ethernet0/"):
+    return {
+        "key": key, "label": label, "kind": key, "managed": False, "ports": ports,
+        "device_type": "generic", "role": role, "prefix": prefix,
+        "interface_prefix": interface_prefix,
+    }
+
+
 DEVICE_TEMPLATES = (
-    {
-        "key": "router",
-        "ports": 8,
-        "label": "Router",
-        "device_type": "cisco_ios",
-        "role": "core",
-        "prefix": "R",
-        "interface_prefix": "GigabitEthernet0/",
-    },
-    {
-        "key": "switch_l3",
-        "ports": 24,
-        "label": "Switch L3",
-        "device_type": "cisco_ios",
-        "role": "distribution",
-        "prefix": "DSW",
-        "interface_prefix": "GigabitEthernet0/",
-    },
-    {
-        "key": "switch",
-        "ports": 24,
-        "label": "Switch L2",
-        "device_type": "cisco_ios",
-        "role": "access",
-        "prefix": "SW",
-        "interface_prefix": "GigabitEthernet0/",
-    },
-    {
-        "key": "firewall",
-        "ports": 8,
-        "label": "Firewall ASA",
-        "device_type": "cisco_asa",
-        "role": "firewall",
-        "prefix": "FW",
-        "interface_prefix": "GigabitEthernet0/",
-    },
+    _managed("router", "Router", "router", "cisco_ios", "core", "R", 8),
+    _managed("switch_l3", "Switch L3", "l3_switch", "cisco_ios", "distribution", "DSW", 24),
+    _managed("switch", "Switch L2", "switch", "cisco_ios", "access", "SW", 24),
+    _managed("firewall", "Firewall ASA", "firewall", "cisco_asa", "firewall", "FW", 8),
+    _unmanaged("pc", "PC / Laptop", "host", "PC", 1),
+    _unmanaged("server", "Server", "server", "SRV", 2),
+    _unmanaged("cloud", "Cloud / Internet", "internet", "CLOUD", 8),
+    _unmanaged("ap", "Access Point", "wireless", "AP", 2),
+    _unmanaged("segment", "Shared segment", "segment", "SEG", 48, "Port"),
 )
 
 # Management addresses are suggested from the 10th host upward, leaving the
@@ -54,6 +43,9 @@ FIRST_SUGGESTED_HOST = 10
 
 def template_for_device(device) -> dict:
     """The template a device most resembles (decides its port inventory)."""
+    kind = getattr(device, "kind", None)
+    if kind in _BY_KIND:
+        return _BY_KIND[kind]
     if device.device_type == "cisco_asa" or device.role == "firewall":
         return get_template("firewall")
     if device.role == "core":
@@ -61,6 +53,9 @@ def template_for_device(device) -> dict:
     if device.role == "distribution":
         return get_template("switch_l3")
     return get_template("switch")
+
+
+_BY_KIND = {t["kind"]: t for t in DEVICE_TEMPLATES}
 
 
 def port_inventory(project_id: int, device) -> list[dict]:
@@ -140,14 +135,7 @@ def next_free_interface(project_id: int, device: Device) -> str:
     """Lowest unused ``GigabitEthernet0/<n>`` on a device."""
     from .model import TopologyLink
 
-    template = next(
-        (
-            t
-            for t in DEVICE_TEMPLATES
-            if t["device_type"] == device.device_type
-        ),
-        DEVICE_TEMPLATES[0],
-    )
+    template = template_for_device(device)
     prefix = template["interface_prefix"]
     from .interfaces import normalize_label
     from .model import DesignAccessPort

@@ -24,6 +24,8 @@ class Project(db.Model):
     # Declared per project so labs and real networks can use their own ranges.
     management_network = db.Column(db.String(43), nullable=False)
     environment = db.Column(db.String(16), nullable=False, default="pnetlab")
+    # The block link and VLAN subnets are carved from (e.g. 10.0.0.0/16).
+    addressing_pool = db.Column(db.String(43))
     owner_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -53,6 +55,7 @@ class Project(db.Model):
             "description": self.description,
             "management_network": self.management_network,
             "environment": self.environment,
+            "addressing_pool": self.addressing_pool,
             "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -192,7 +192,7 @@ def _assert_devices_fit(project: Project, network) -> None:
     outside = [
         device.hostname
         for device in db.session.query(Device).filter(Device.project_id == project.id)
-        if ipaddress.ip_address(device.management_ip) not in network
+        if device.management_ip and ipaddress.ip_address(device.management_ip) not in network
     ]
     if outside:
         raise ConflictError(

@@ -166,7 +166,9 @@ class AIService:
         is given (routes always give it), so the model can neither see nor
         name a device that belongs to another project.
         """
-        query = db.session.query(Device)
+        query = db.session.query(Device).filter(
+            Device.managed.is_(True), Device.lifecycle == "provisioned"
+        )
         if project_id is not None:
             query = query.filter(Device.project_id == project_id)
         devices = query.order_by(Device.hostname, Device.id).all()

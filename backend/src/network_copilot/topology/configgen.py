@@ -129,6 +129,8 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
     for link in links:
         for side in ("a", "b"):
             device, *_rest = _ends(link, side)
+            if not device.managed:
+                continue  # a PC or cloud is cabled but never configured
             item = entry(device)
             item["link_ids"].append(link.id)
             if device.device_type == "cisco_ios":
@@ -194,6 +196,13 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
         device = item["device"]
         commands = (item["vlans"] + item["ports"] + item["links"] + item["svis"]
                     + item["routes"] + item["ospf"])
+        if device.lifecycle == "planned":
+            skipped.append({
+                "device_id": device.id, "hostname": device.hostname,
+                "reason": "Planned only: give it a management IP (provision it) first.",
+                "planned_commands": commands,
+            })
+            continue
         if not commands:
             skipped.append({
                 "device_id": device.id, "hostname": device.hostname,

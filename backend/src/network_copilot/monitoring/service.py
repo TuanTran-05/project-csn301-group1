@@ -128,7 +128,11 @@ def poll_all_enabled_devices(max_workers: int | None = None) -> list[DeviceSnaps
     cycle_started = time.monotonic()
     devices = (
         db.session.query(Device)
-        .filter(Device.monitoring_enabled.is_(True))
+        .filter(
+            Device.monitoring_enabled.is_(True),
+            Device.managed.is_(True),
+            Device.lifecycle == "provisioned",
+        )
         .order_by(Device.id)
         .all()
     )

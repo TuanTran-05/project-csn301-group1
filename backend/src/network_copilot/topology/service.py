@@ -320,14 +320,19 @@ def quick_add_device(project, payload: dict) -> Device:
     template = get_template(data.template)
     device_payload = {
         "hostname": next_hostname(project.id, template["prefix"]),
-        "management_ip": next_management_ip(project),
         "device_type": template["device_type"],
         "role": template["role"],
+        "kind": template["kind"],
         "environment": data.environment
         or ("physical" if project.environment == "physical" else "pnetlab"),
     }
-    if data.credential:
-        device_payload["credential"] = data.credential
+    if template["managed"]:
+        if data.planned:
+            device_payload["lifecycle"] = "planned"
+        else:
+            device_payload["management_ip"] = next_management_ip(project)
+        if data.credential and not data.planned:
+            device_payload["credential"] = data.credential
     if data.x is not None and data.y is not None:
         device_payload["pos_x"] = data.x
         device_payload["pos_y"] = data.y
@@ -368,14 +373,19 @@ def duplicate_devices(project, payload: dict) -> dict:
             prefix = re.sub(r"[-_]?\d+$", "", original.hostname) or get_template_prefix(original)
             payload_out = {
                 "hostname": next_hostname(project.id, prefix),
-                "management_ip": next_management_ip(project),
                 "device_type": original.device_type,
                 "role": original.role,
+                "kind": original.kind,
+                "lifecycle": original.lifecycle,
                 "environment": original.environment,
                 "ssh_port": original.ssh_port,
                 "monitoring_enabled": original.monitoring_enabled,
                 "description": original.description,
             }
+            if original.deployable:
+                payload_out["management_ip"] = next_management_ip(project)
+            if not original.managed:
+                payload_out["data_gateway"] = original.data_gateway
             if original.pos_x is not None:
                 payload_out["pos_x"] = original.pos_x + offset_x
                 payload_out["pos_y"] = (original.pos_y or 0) + offset_y

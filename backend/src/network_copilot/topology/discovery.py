@@ -45,7 +45,7 @@ def _endpoint_key(hostname: str, interface: str) -> tuple[str, str]:
 
 def discover(project) -> dict:
     devices = [
-        d for d in device_service.list_devices(project_id=project.id)
+        d for d in device_service.list_devices(project_id=project.id, deployable=True)
         if d.device_type == "cisco_ios"
     ]
     if not devices:
