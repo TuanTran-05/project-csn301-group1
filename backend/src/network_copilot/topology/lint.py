@@ -37,6 +37,18 @@ def lint(project) -> dict:
             trunks_by[link.device_a_id].append(link)
             trunks_by[link.device_b_id].append(link)
 
+    channels = defaultdict(list)
+    for link in links:
+        if link.channel_id:
+            channels[(frozenset((link.device_a_id, link.device_b_id)), link.channel_id)].append(link)
+    for (pair, number), members in channels.items():
+        if len(members) == 1:
+            issues.append(_issue(
+                "info", "channel_single",
+                f"Port-channel {number} has only one member link; add a parallel cable to bundle.",
+                link=members[0],
+            ))
+
     ospf = {row.device_id for row in db.session.query(DesignOspf).filter_by(project_id=project.id)}
     statics = {row.device_id for row in db.session.query(DesignStaticRoute).filter_by(project_id=project.id)}
     vlans = {row.vlan_id for row in db.session.query(DesignVlan).filter_by(project_id=project.id)}

@@ -579,6 +579,9 @@
                         <label>VLAN cho phép (tuỳ chọn)
                           <input type="text" x-model="linkForm.allowed_vlans" placeholder="10,20,30-40" />
                         </label>
+                        <label>Port-channel (1-48, tuỳ chọn)
+                          <input type="number" min="1" max="48" x-model="linkForm.channel_id" placeholder="cùng số cho các dây song song" />
+                        </label>
                       </div>
                     </template>
 
@@ -738,6 +741,51 @@
                   <input type="text" x-model="designForms.svis.ip" placeholder="192.168.10.1" required />
                   <input type="number" min="8" max="30" x-model="designForms.svis.prefix_length" title="Độ dài prefix" required />
                   <button type="submit" class="primary-btn">Thêm SVI</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>Loopback</h4>
+                <table class="data-table" x-show="design.loopbacks.length">
+                  <thead><tr><th>Thiết bị</th><th>Cổng</th><th>Địa chỉ</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.loopbacks" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td x-text="'Loopback' + item.number"></td><td><code x-text="item.ip + '/32'"></code></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('loopbacks', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('loopbacks')" x-show="canEdit">
+                  <select x-model="designForms.loopbacks.device_id" required>
+                    <option value="">Thiết bị…</option>
+                    <template x-for="d in devices.filter((x) => x.device_type === 'cisco_ios')" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <input type="number" min="0" max="99" x-model="designForms.loopbacks.number" title="Số Loopback" required />
+                  <input type="text" x-model="designForms.loopbacks.ip" placeholder="1.1.1.1" required />
+                  <button type="submit" class="primary-btn">Thêm loopback</button>
+                </form>
+              </div>
+
+              <div class="card">
+                <h4>Router-on-a-stick (subinterface)</h4>
+                <table class="data-table" x-show="design.subinterfaces.length">
+                  <thead><tr><th>Thiết bị</th><th>Cổng</th><th>VLAN</th><th>Địa chỉ</th><th></th></tr></thead>
+                  <tbody><template x-for="item in design.subinterfaces" :key="item.id">
+                    <tr><td x-text="item.hostname"></td><td x-text="item.interface + '.' + item.vlan_id"></td><td x-text="item.vlan_id"></td><td><code x-text="item.ip + '/' + item.prefix_length"></code></td>
+                      <td class="row-actions"><button type="button" class="danger-btn" x-show="canEdit" @click="deleteDesign('subinterfaces', item.id)">Xoá</button></td></tr>
+                  </template></tbody>
+                </table>
+                <form class="inline-form" @submit.prevent="addDesign('subinterfaces')" x-show="canEdit">
+                  <select x-model="designForms.subinterfaces.device_id" required>
+                    <option value="">Router…</option>
+                    <template x-for="d in devices.filter((x) => x.kind === 'router' && x.device_type === 'cisco_ios')" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
+                  </select>
+                  <input type="text" x-model="designForms.subinterfaces.interface" placeholder="Gi0/0" required />
+                  <select x-model="designForms.subinterfaces.vlan_id" required>
+                    <option value="">VLAN…</option>
+                    <template x-for="v in design.vlans" :key="v.id"><option :value="v.vlan_id" x-text="v.vlan_id + ' ' + v.name"></option></template>
+                  </select>
+                  <input type="text" x-model="designForms.subinterfaces.ip" placeholder="192.168.10.1" required />
+                  <input type="number" min="8" max="30" x-model="designForms.subinterfaces.prefix_length" title="Độ dài prefix" required />
+                  <button type="submit" class="primary-btn">Thêm subinterface</button>
                 </form>
               </div>
 

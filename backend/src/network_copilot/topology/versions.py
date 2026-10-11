@@ -19,7 +19,7 @@ from ..extensions import db
 from ..projects import exchange
 from ..projects.service import validate
 from .model import (
-    DesignAccessPort, DesignOspf, DesignStaticRoute, DesignSvi, DesignVlan,
+    DesignAccessPort, DesignLoopback, DesignOspf, DesignStaticRoute, DesignSubif, DesignSvi, DesignVlan,
     TopologyLink, TopologyNote, TopologyVersion,
 )
 
@@ -115,7 +115,7 @@ def diff(project, version: TopologyVersion) -> dict:
     new_links = {_link_key(l): l for l in new["links"]}
     link_changed = [k for k in old_links.keys() & new_links.keys()
                     if any(old_links[k].get(f) != new_links[k].get(f)
-                           for f in ("link_type", "network", "ip_a", "ip_b", "allowed_vlans"))]
+                           for f in ("link_type", "network", "ip_a", "ip_b", "allowed_vlans", "channel_id"))]
     return {
         "devices": {
             "missing_now": sorted(old_devices[k]["hostname"] for k in old_devices.keys() - new_devices.keys()),
@@ -136,7 +136,7 @@ def diff(project, version: TopologyVersion) -> dict:
 
 
 def _clear_cabling(project) -> None:
-    for model in (DesignAccessPort, DesignSvi, DesignStaticRoute, DesignOspf):
+    for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf):
         db.session.query(model).filter_by(project_id=project.id).delete()
     db.session.query(DesignVlan).filter_by(project_id=project.id).delete()
     db.session.query(TopologyLink).filter_by(project_id=project.id).delete()

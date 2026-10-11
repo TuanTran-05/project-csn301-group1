@@ -37,6 +37,7 @@ class LinkSchema(BaseModel):
     allowed_vlans: str | None = Field(default=None, max_length=255)
     bring_up: bool = True
     description: str | None = Field(default=None, max_length=255)
+    channel_id: int | None = Field(default=None, ge=1, le=48)
     nameif_a: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
     security_a: int | None = Field(default=None, ge=0, le=100)
     nameif_b: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
@@ -60,6 +61,7 @@ class LinkUpdateSchema(BaseModel):
     allowed_vlans: str | None = Field(default=None, max_length=255)
     bring_up: bool | None = None
     description: str | None = Field(default=None, max_length=255)
+    channel_id: int | None = Field(default=None, ge=1, le=48)
     nameif_a: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)
     security_a: int | None = Field(default=None, ge=0, le=100)
     nameif_b: str | None = Field(default=None, pattern=NAMEIF_PATTERN, max_length=48)

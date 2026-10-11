@@ -49,12 +49,16 @@ class TopologyLink(db.Model):
     nameif_b = db.Column(db.String(48))
     security_b = db.Column(db.Integer)
     description = db.Column(db.String(255))
+    # Trunk links sharing a channel_id between the same two devices are the
+    # members of one port-channel (LACP).
+    channel_id = db.Column(db.Integer)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     __table_args__ = (
         in_check("link_type", LINK_TYPES, "link_type_valid"),
+        db.CheckConstraint("channel_id IS NULL OR channel_id BETWEEN 1 AND 48", name="channel_range"),
         db.CheckConstraint("device_a_id <> device_b_id", name="distinct_devices"),
         db.CheckConstraint(
             "(security_a IS NULL OR security_a BETWEEN 0 AND 100) AND "
@@ -92,6 +96,7 @@ class TopologyLink(db.Model):
             "nameif_b": self.nameif_b,
             "security_b": self.security_b,
             "description": self.description,
+            "channel_id": self.channel_id,
         }
 
 
@@ -185,6 +190,65 @@ class DesignSvi(db.Model):
         return {"id": self.id, "device_id": self.device_id,
                 "hostname": self.device.hostname if self.device else None,
                 "vlan_id": self.vlan_id, "ip": self.ip, "prefix_length": self.prefix_length}
+
+
+class DesignLoopback(db.Model):
+    """A /32 loopback: a stable router address that OSPF advertises."""
+
+    __tablename__ = "design_loopbacks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    device_id = db.Column(
+        db.Integer, db.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    number = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    ip = db.Column(db.String(45), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("device_id", "number", name="uq_design_loopbacks_number"),
+        db.UniqueConstraint("project_id", "ip", name="uq_design_loopbacks_ip"),
+        db.CheckConstraint("number BETWEEN 0 AND 99", name="number_range"),
+    )
+
+    device = db.relationship("Device")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "device_id": self.device_id,
+                "hostname": self.device.hostname if self.device else None,
+                "number": self.number, "ip": self.ip}
+
+
+class DesignSubif(db.Model):
+    """A dot1Q subinterface (router-on-a-stick): one VLAN on a router port."""
+
+    __tablename__ = "design_subifs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, nullable=False, index=True)
+    device_id = db.Column(
+        db.Integer, db.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    interface = db.Column(db.String(40), nullable=False)
+    vlan_id = db.Column(db.Integer, nullable=False)
+    ip = db.Column(db.String(45), nullable=False)
+    prefix_length = db.Column(db.Integer, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("device_id", "interface", "vlan_id", name="uq_design_subifs_vlan"),
+        db.CheckConstraint("prefix_length BETWEEN 8 AND 30", name="prefix_range"),
+        _vlan_fk("design_subifs"),
+    )
+
+    device = db.relationship("Device")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "device_id": self.device_id,
+                "hostname": self.device.hostname if self.device else None,
+                "interface": self.interface, "vlan_id": self.vlan_id,
+                "ip": self.ip, "prefix_length": self.prefix_length}
 
 
 class DesignStaticRoute(db.Model):

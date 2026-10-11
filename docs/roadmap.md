@@ -24,7 +24,25 @@ trên công sức; mục đã làm được đánh dấu ✅.
 - ✅ **Chat cập nhật tức thì** bằng SSE (trễ ≈ 2 giây thay vì tới 7 giây), polling chỉ
   còn là dự phòng; monitoring chạy song song có giới hạn và báo khi vòng poll quá hạn.
 
+## Đã làm thêm (vòng 3: đa dạng topology và trải nghiệm vẽ)
+
+Xem `docs/topology-research.md`. Giai đoạn A (canvas): zoom/pan/minimap, bố cục tự
+động, bảng thuộc tính, menu chuột phải, sao chép/dán, nhân bản. Giai đoạn B:
+- ✅ Thiết bị không quản trị (PC, server, cloud, AP, segment) và vòng đời
+  *kế hoạch → triển khai* cho thiết bị Cisco.
+- ✅ Mẫu topology (star, branch, campus, DMZ, ring, hub-and-spoke), cấp địa chỉ tự
+  động (`auto`), kiểm tra thiết kế, ghi chú và khung nhóm.
+Giai đoạn C:
+- ✅ Phiên bản sơ đồ (lưu, so sánh, khôi phục), cập nhật tức thì khi người khác sửa.
+- ✅ Port-channel, loopback, router-on-a-stick.
+- ✅ Hạn mức (project/thiết bị/dây), giới hạn tần suất, gợi ý user khi chia sẻ, rời project.
+- Đoạn mạng dùng chung: dùng thiết bị loại *segment* (không quản trị) làm hub/LAN
+  chung; chưa kiểm tra tự động rằng mọi thiết bị cắm vào cùng một subnet.
+
 ### Giới hạn đã biết
+
+- Khôi phục phiên bản không phục hồi thông tin SSH của thiết bị đã bị xoá (phiên bản
+  không chứa mật khẩu); thiết bị còn tồn tại thì giữ nguyên.
 
 - PNETLab: mã dựa trên API EVE-NG công khai. Bản PNETLab khác (đường dẫn đăng nhập,
   định dạng `left/top`, tên nhãn cổng) có thể cần chỉnh nhỏ trong `integrations/pnetlab.py`.

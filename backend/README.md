@@ -101,6 +101,34 @@ Open <http://127.0.0.1:5000/projects>.
   for the typed confirmation. ASA devices are listed as skipped (they need a
   `nameif`/security level the design does not carry).
 
+- **Device kinds and lifecycle.** Besides managed Cisco devices (router, L3
+  switch, switch, firewall) the palette has **unmanaged** PC, server, cloud, access
+  point and shared segment: they are drawn, cabled and given a data IP/gateway, but
+  the backend never SSHes to them, polls them or configures them. A managed device
+  can be added as **planned** (no management IP or login yet); it is skipped by
+  polling, chat targeting and configuration (its commands are listed as
+  `planned_commands`) until **Triển khai** (`POST /api/devices/<id>/provision`).
+  Only managed, provisioned devices are `deployable`.
+- **Blueprints, addressing and checks.** *Mẫu* builds a whole topology in one call
+  (devices, cables, positions, `/30`s). Routed links take `network: "auto"` and SVIs
+  / subinterfaces `ip: "auto"` from the project's *addressing pool* (default
+  `10.100.0.0/16`, set in project settings). *Kiểm tra* lists design problems and
+  addressing use. Notes and group boxes document the diagram (never sent to a device).
+- **Versions.** *Phiên bản* saves the diagram and design (no credentials), compares
+  a version with the current state and restores it. Restore keeps devices that still
+  exist (matched by hostname) so their SSH logins survive, recreates missing ones,
+  replaces links, design and notes, and optionally prunes extra devices; the state
+  before a restore is saved automatically. Other people's edits to the diagram show
+  up within a few seconds (a `topology` fingerprint in `/state`).
+- **Port-channels, loopbacks, router-on-a-stick.** Parallel trunk links sharing a
+  `channel_id` generate `interface Port-channelN` + `channel-group N mode active`;
+  loopbacks (`/32`) and dot1Q subinterfaces are design items and are advertised by
+  OSPF.
+- **Limits.** `MAX_PROJECTS_PER_USER` (20, admins exempt), `MAX_DEVICES_PER_PROJECT`
+  (300), `MAX_LINKS_PER_PROJECT` (1000); 0 turns a limit off. Blueprints, versions,
+  restores, imports and CSV imports are rate limited. A shared user can leave a
+  project; owners get username suggestions when sharing.
+
 Approving and applying a change is still ADMIN-only, in every project.
 
 ### User administration
@@ -373,8 +401,18 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
 | POST | `/api/projects/<pid>/topology/import/pnetlab/preview` · `/import/pnetlab` | editor | Read / import a PNETLab lab (10 req/min) |
 | POST | `/api/projects/<pid>/topology/discover` · `/discover/apply` | editor | CDP/LLDP discovery and drift; add found cables |
-| GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, routes, OSPF |
-| POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis`, `routes`, `ospf` |
+| GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, loopbacks, subinterfaces, routes, OSPF |
+| POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis` (`ip: "auto"`), `loopbacks`, `subinterfaces`, `routes`, `ospf` |
+| GET / POST | `/api/projects/<pid>/topology/blueprints[/<key>]` | viewer / editor | Ready-made topologies (star, branch, campus, dmz, ring, hub_spoke); `planned: true` builds Cisco devices without IPs (20 req/min) |
+| GET | `/api/projects/<pid>/topology/ipam` | viewer | Addressing pool, used ranges, next free /30 and LAN |
+| GET | `/api/projects/<pid>/topology/lint` | viewer | Design checks (isolated devices, missing routing, duplicate IPs, single-member port-channels…) |
+| GET/POST/PUT/DELETE | `/api/projects/<pid>/topology/notes[/<id>]` | viewer / editor | Notes and group boxes drawn on the canvas |
+| GET/POST/DELETE | `/api/projects/<pid>/topology/versions[/<id>]` | viewer / editor | Saved versions of the diagram and design (max 30) |
+| GET | `/api/projects/<pid>/topology/versions/<id>/diff` | viewer | What restoring a version would change |
+| POST | `/api/projects/<pid>/topology/versions/<id>/restore` | editor | Restore (`prune` removes extra devices); the current state is saved first (10 req/min) |
+| POST | `/api/devices/<id>/provision` | editor | Turn a planned Cisco device into a provisioned one (management IP, SSH login) |
+| GET | `/api/projects/<pid>/share-candidates?q=` | owner | Usernames to share with (2+ characters) |
+| DELETE | `/api/projects/<pid>/membership` | shared user | Leave a project you were shared into |
 | GET | `/api/projects/<pid>/export` · `/devices.csv` | viewer | Project JSON / device CSV (no credentials) |
 | POST | `/api/projects/import` · `/api/projects/<pid>/clone` | not VIEWER | New project from a JSON document / copy a project |
 | POST | `/api/projects/<pid>/devices/import-csv` | editor | Add devices from CSV (all or nothing) |

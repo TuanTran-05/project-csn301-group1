@@ -13,6 +13,9 @@ erDiagram
     projects ||--o{ project_members : shares
     projects ||--o{ devices : contains
     projects ||--o{ topology_links : draws
+    projects ||--o{ topology_notes : annotates
+    projects ||--o{ topology_versions : snapshots
+    projects ||--o{ design_loopbacks : designs
     projects ||--o{ chat_sessions : has
     projects ||--o{ change_batches : groups
     projects ||--o{ audit_logs : "scopes (optional)"
@@ -89,6 +92,18 @@ and `token_version`. Every JWT embeds the `token_version` it was issued with;
 changing a password, role or active flag bumps it, which revokes all earlier
 tokens at once. The role used for authorisation is read from this table, never
 from the token.
+
+## Topology extras
+
+* `devices` carries `kind`, `managed`, `lifecycle`, `data_ip`, `data_gateway`;
+  `management_ip` is nullable. CHECKs tie them together: `managed` is true exactly
+  when `device_type <> 'generic'`, and a provisioned device has a management IP.
+* `topology_links.channel_id` (1-48) groups parallel trunk links into a port-channel.
+* `design_loopbacks` and `design_subifs` hold loopback and router-on-a-stick items
+  (subinterfaces reference `design_vlans` like SVIs do).
+* `topology_notes` stores canvas notes/groups; `topology_versions` stores exported
+  project documents (JSON text, no credentials), at most 30 per project.
+* `projects.addressing_pool` is the range automatic addressing draws from.
 
 ## Known limits
 

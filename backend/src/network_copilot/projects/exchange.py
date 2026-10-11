@@ -103,6 +103,7 @@ def export_project(project: Project) -> dict:
                 "allowed_vlans": link.allowed_vlans,
                 "bring_up": link.bring_up,
                 "description": link.description,
+                "channel_id": link.channel_id,
                 "nameif_a": link.nameif_a,
                 "security_a": link.security_a,
                 "nameif_b": link.nameif_b,
@@ -163,7 +164,7 @@ def populate_cabling(project: Project, doc, by_hostname: dict) -> None:
         fields = {
             k: item.get(k)
             for k in ("interface_a", "interface_b", "link_type", "network", "ip_a",
-                      "ip_b", "allowed_vlans", "bring_up", "description")
+                      "ip_b", "allowed_vlans", "bring_up", "description", "channel_id")
             if item.get(k) is not None
         }
         try:

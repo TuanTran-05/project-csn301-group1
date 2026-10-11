@@ -74,12 +74,14 @@ const EMPTY_DEVICE_FORM = () => ({
   enable_secret: "",
 });
 
-const EMPTY_DESIGN = () => ({ vlans: [], access_ports: [], svis: [], routes: [], ospf: [] });
+const EMPTY_DESIGN = () => ({ vlans: [], access_ports: [], svis: [], loopbacks: [], subinterfaces: [], routes: [], ospf: [] });
 
 const EMPTY_DESIGN_FORMS = () => ({
   vlans: { vlan_id: "", name: "" },
   "access-ports": { device_id: "", interface: "", vlan_id: "" },
   svis: { device_id: "", vlan_id: "", ip: "", prefix_length: 24 },
+  loopbacks: { device_id: "", number: 0, ip: "" },
+  subinterfaces: { device_id: "", interface: "", vlan_id: "", ip: "", prefix_length: 24 },
   routes: { device_id: "", network: "", next_hop: "" },
   ospf: { device_id: "", process_id: 1, router_id: "" },
 });
@@ -95,6 +97,7 @@ const EMPTY_LINK_FORM = () => ({
   ip_a: "",
   ip_b: "",
   allowed_vlans: "",
+  channel_id: "",
   bring_up: true,
   description: "",
   nameif_a: "",
@@ -833,7 +836,7 @@ document.addEventListener("alpine:init", () => {
     async addDesign(kind) {
       this.designError = "";
       const form = { ...this.designForms[kind] };
-      const numeric = ["device_id", "vlan_id", "prefix_length", "process_id"];
+      const numeric = ["device_id", "vlan_id", "prefix_length", "process_id", "number"];
       for (const key of Object.keys(form)) {
         if (numeric.includes(key)) form[key] = form[key] === "" ? null : Number(form[key]);
         else if (form[key] === "") delete form[key];
@@ -1048,7 +1051,7 @@ document.addEventListener("alpine:init", () => {
       let middle = "";
       if (link.link_type === "routed" && link.network) middle = link.network;
       else if (link.link_type === "trunk") {
-        middle = link.allowed_vlans ? `trunk ${link.allowed_vlans}` : "trunk";
+        middle = (link.allowed_vlans ? `trunk ${link.allowed_vlans}` : "trunk") + (link.channel_id ? ` · Po${link.channel_id}` : "");
       }
       const ifaceA = esc(this.shortInterface(link.interface_a));
       const ifaceB = esc(this.shortInterface(link.interface_b));
@@ -1454,6 +1457,7 @@ document.addEventListener("alpine:init", () => {
         security_a: link.security_a,
         nameif_b: link.nameif_b,
         security_b: link.security_b,
+        channel_id: link.channel_id,
       };
     },
 
@@ -1608,6 +1612,7 @@ document.addEventListener("alpine:init", () => {
         ip_a: link.ip_a || "",
         ip_b: link.ip_b || "",
         allowed_vlans: link.allowed_vlans || "",
+        channel_id: link.channel_id || "",
         bring_up: link.bring_up,
         description: link.description || "",
         nameif_a: link.nameif_a || "",
@@ -1638,7 +1643,10 @@ document.addEventListener("alpine:init", () => {
         payload.ip_a = form.ip_a.trim() || null;
         payload.ip_b = form.ip_b.trim() || null;
       }
-      if (typed === "trunk") payload.allowed_vlans = form.allowed_vlans.trim() || null;
+      if (typed === "trunk") {
+        payload.allowed_vlans = form.allowed_vlans.trim() || null;
+        payload.channel_id = form.channel_id === "" || form.channel_id === null ? null : Number(form.channel_id);
+      }
       // Firewall interface names / trust levels (only meaningful for an ASA end).
       for (const side of ["a", "b"]) {
         payload[`nameif_${side}`] = String(form[`nameif_${side}`] || "").trim() || null;

@@ -274,8 +274,10 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
     from ..monitoring.model import DeviceSnapshot
     from ..topology.model import (
         DesignAccessPort,
+        DesignLoopback,
         DesignOspf,
         DesignStaticRoute,
+        DesignSubif,
         DesignSvi,
         TopologyLink,
     )
@@ -302,7 +304,7 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
     db.session.query(AuditLog).filter(where(AuditLog)).update(
         {AuditLog.device_id: None}, synchronize_session=False
     )
-    for model in (DesignAccessPort, DesignSvi, DesignStaticRoute, DesignOspf):
+    for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf):
         db.session.query(model).filter(where(model)).delete(synchronize_session=False)
     db.session.query(TopologyLink).filter(
         db.or_(

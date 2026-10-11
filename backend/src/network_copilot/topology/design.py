@@ -12,7 +12,9 @@ from ..projects.service import validate
 
 from .model import (
     DesignAccessPort,
+    DesignLoopback,
     DesignOspf,
+    DesignSubif,
     DesignStaticRoute,
     DesignSvi,
     DesignVlan,
@@ -65,6 +67,30 @@ class SviSchema(BaseModel):
     ip: str
     # "auto" picks the VLAN's existing subnet or a free one from the project pool.
     prefix_length: int = Field(default=24, ge=8, le=30)
+
+
+class LoopbackSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    device_id: int
+    number: int = Field(default=0, ge=0, le=99)
+    ip: str
+
+
+class SubifSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    device_id: int
+    interface: str = Field(min_length=1, max_length=40)
+    vlan_id: int
+    ip: str
+    prefix_length: int = Field(default=24, ge=8, le=30)
+
+    @field_validator("interface")
+    @classmethod
+    def check_interface(cls, value: str) -> str:
+        value = normalize_interface(value)
+        return normalize_label(value) or value
 
 
 class RouteSchema(BaseModel):
@@ -128,6 +154,9 @@ def _used_networks(project, exclude_svi_vlan: int | None = None):
     for svi in db.session.query(DesignSvi).filter_by(project_id=project.id):
         taken.append((ipaddress.ip_network(f"{svi.ip}/{svi.prefix_length}", strict=False),
                       f"VLAN {svi.vlan_id} on {svi.device.hostname}", svi.vlan_id))
+    for sub in db.session.query(DesignSubif).filter_by(project_id=project.id):
+        taken.append((ipaddress.ip_network(f"{sub.ip}/{sub.prefix_length}", strict=False),
+                      f"VLAN {sub.vlan_id} on {sub.device.hostname} {sub.interface}", sub.vlan_id))
     return taken
 
 
@@ -198,6 +227,47 @@ def _make_svi(project, payload):
                      ip=str(address), prefix_length=data.prefix_length)
 
 
+def _make_loopback(project, payload):
+    data = validate(LoopbackSchema, payload, "Loopback")
+    device = _device(project, data.device_id)
+    address = _ipv4(data.ip, "ip")
+    if db.session.query(DesignLoopback).filter_by(device_id=device.id, number=data.number).first():
+        raise ConflictError(f"{device.hostname} already has Loopback{data.number}.")
+    if db.session.query(DesignLoopback).filter_by(project_id=project.id, ip=str(address)).first():
+        raise ConflictError(f"{address} is already a loopback address in this project.")
+    host = ipaddress.ip_network(f"{address}/32")
+    for other, owner, _vlan in _used_networks(project):
+        if host.overlaps(other):
+            raise ConflictError(f"{address} falls inside {other} used by {owner}.")
+    return DesignLoopback(project_id=project.id, device_id=device.id, number=data.number, ip=str(address))
+
+
+def _make_subif(project, payload):
+    data = validate(SubifSchema, payload, "Subinterface")
+    device = _device(project, data.device_id)
+    if device.kind != "router" or device.role in SWITCH_ROLES:
+        raise ValidationError(f"{device.hostname} is not a router; subinterfaces are for router-on-a-stick.")
+    _require_vlan(project, data.vlan_id)
+    for link in db.session.query(TopologyLink).filter_by(project_id=project.id):
+        for dev, iface in ((link.device_a_id, link.interface_a), (link.device_b_id, link.interface_b)):
+            if dev == device.id and same_interface(iface, data.interface) and link.link_type == "routed":
+                raise ValidationError(f"{data.interface} is a routed link; subinterfaces need a plain or trunk port.")
+    address = _ipv4(data.ip, "ip")
+    network = ipaddress.ip_network(f"{address}/{data.prefix_length}", strict=False)
+    if address in (network.network_address, network.broadcast_address):
+        raise ValidationError("ip must be a host address, not the network or broadcast address.")
+    if db.session.query(DesignSubif).filter_by(
+            device_id=device.id, interface=data.interface, vlan_id=data.vlan_id).first():
+        raise ConflictError(f"{device.hostname} {data.interface} already carries VLAN {data.vlan_id}.")
+    for other, owner, other_vlan in _used_networks(project):
+        if other_vlan == data.vlan_id and other == network:
+            continue
+        if network.overlaps(other):
+            raise ConflictError(f"{network} overlaps {other} used by {owner}.")
+    return DesignSubif(project_id=project.id, device_id=device.id, interface=data.interface,
+                       vlan_id=data.vlan_id, ip=str(address), prefix_length=data.prefix_length)
+
+
 def _make_route(project, payload):
     data = validate(RouteSchema, payload, "Route")
     device = _device(project, data.device_id, allow_asa=True)
@@ -234,6 +304,8 @@ KINDS = {
     "vlans": (DesignVlan, _make_vlan),
     "access-ports": (DesignAccessPort, _make_access_port),
     "svis": (DesignSvi, _make_svi),
+    "loopbacks": (DesignLoopback, _make_loopback),
+    "subinterfaces": (DesignSubif, _make_subif),
     "routes": (DesignStaticRoute, _make_route),
     "ospf": (DesignOspf, _make_ospf),
 }
@@ -264,6 +336,8 @@ def delete_item(project, kind: str, item_id: int) -> None:
              for p in db.session.query(DesignAccessPort).filter_by(project_id=project.id, vlan_id=item.vlan_id)]
             + [f"SVI on {s.device.hostname}"
                for s in db.session.query(DesignSvi).filter_by(project_id=project.id, vlan_id=item.vlan_id)]
+            + [f"subinterface {s.interface} on {s.device.hostname}"
+               for s in db.session.query(DesignSubif).filter_by(project_id=project.id, vlan_id=item.vlan_id)]
         )
         if users:
             raise ConflictError(f"VLAN {item.vlan_id} is still used.", {"used_by": users})
@@ -279,6 +353,8 @@ def list_design(project) -> dict:
         "vlans": sorted(rows(DesignVlan), key=lambda v: v["vlan_id"]),
         "access_ports": rows(DesignAccessPort),
         "svis": rows(DesignSvi),
+        "loopbacks": rows(DesignLoopback),
+        "subinterfaces": rows(DesignSubif),
         "routes": rows(DesignStaticRoute),
         "ospf": rows(DesignOspf),
     }
@@ -295,6 +371,10 @@ def export_design(project) -> dict:
                          for p in design["access_ports"]],
         "svis": [{"hostname": s["hostname"], "vlan_id": s["vlan_id"], "ip": s["ip"],
                   "prefix_length": s["prefix_length"]} for s in design["svis"]],
+        "loopbacks": [{"hostname": l["hostname"], "number": l["number"], "ip": l["ip"]}
+                      for l in design["loopbacks"]],
+        "subinterfaces": [{"hostname": s["hostname"], "interface": s["interface"], "vlan_id": s["vlan_id"],
+                           "ip": s["ip"], "prefix_length": s["prefix_length"]} for s in design["subinterfaces"]],
         "routes": [{"hostname": r["hostname"], "network": f"{r['network']}/{r['prefix_length']}",
                     "next_hop": r["next_hop"]} for r in design["routes"]],
         "ospf": [{"hostname": o["hostname"], "process_id": o["process_id"], "router_id": o["router_id"]}
@@ -318,6 +398,13 @@ def import_design(project, design: dict, by_hostname: dict) -> None:
     for item in design.get("svis", []):
         create_item(project, "svis", {"device_id": device_id(item), "vlan_id": item.get("vlan_id"),
                     "ip": item.get("ip"), "prefix_length": item.get("prefix_length")})
+    for item in design.get("loopbacks", []):
+        create_item(project, "loopbacks", {"device_id": device_id(item), "number": item.get("number", 0),
+                    "ip": item.get("ip")})
+    for item in design.get("subinterfaces", []):
+        create_item(project, "subinterfaces", {"device_id": device_id(item), "interface": item.get("interface"),
+                    "vlan_id": item.get("vlan_id"), "ip": item.get("ip"),
+                    "prefix_length": item.get("prefix_length", 24)})
     for item in design.get("routes", []):
         create_item(project, "routes", {"device_id": device_id(item), "network": item.get("network"),
                     "next_hop": item.get("next_hop")})

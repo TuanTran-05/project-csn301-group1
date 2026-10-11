@@ -22,7 +22,9 @@ from ..extensions import db
 from .design import SWITCH_ROLES
 from .model import (
     DesignAccessPort,
+    DesignLoopback,
     DesignOspf,
+    DesignSubif,
     DesignStaticRoute,
     DesignSvi,
     DesignVlan,
@@ -50,8 +52,10 @@ def _ios_link_commands(link, side: str) -> list[str]:
         commands.append(f"ip address {address} {network.netmask}")
     elif link.link_type == "trunk":
         commands.append("switchport mode trunk")
-        if link.allowed_vlans:
+        if link.allowed_vlans and not link.channel_id:
             commands.append(f"switchport trunk allowed vlan {link.allowed_vlans}")
+        if link.channel_id:
+            commands.append(f"channel-group {link.channel_id} mode active")
     if link.bring_up:
         commands.append("no shutdown")
     return commands
@@ -79,7 +83,15 @@ def _asa_link_commands(link, side: str) -> list[str]:
     return commands
 
 
-def _ospf_networks(device, links, svis) -> list[ipaddress.IPv4Network]:
+def _port_channel_commands(link) -> list[str]:
+    commands = [f"interface Port-channel{link.channel_id}",
+                f"description PORT-CHANNEL {link.channel_id}", "switchport mode trunk"]
+    if link.allowed_vlans:
+        commands.append(f"switchport trunk allowed vlan {link.allowed_vlans}")
+    return commands
+
+
+def _ospf_networks(device, links, svis, extra=()) -> list[ipaddress.IPv4Network]:
     networks = set()
     for link in links:
         if link.network and device.id in (link.device_a_id, link.device_b_id):
@@ -87,6 +99,10 @@ def _ospf_networks(device, links, svis) -> list[ipaddress.IPv4Network]:
     for svi in svis:
         if svi.device_id == device.id:
             networks.add(ipaddress.ip_network(f"{svi.ip}/{svi.prefix_length}", strict=False))
+    for row in extra:
+        if row.device_id == device.id:
+            prefix = getattr(row, "prefix_length", 32)
+            networks.add(ipaddress.ip_network(f"{row.ip}/{prefix}", strict=False))
     return sorted(networks, key=lambda n: (int(n.network_address), n.prefixlen))
 
 
@@ -115,7 +131,9 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
     svis = rows(DesignSvi) if whole_design else []
     routes = rows(DesignStaticRoute) if whole_design else []
     ospfs = rows(DesignOspf) if whole_design else []
-    if not (links or vlans or ports or svis or routes or ospfs):
+    loopbacks = rows(DesignLoopback) if whole_design else []
+    subifs = rows(DesignSubif) if whole_design else []
+    if not (links or vlans or ports or svis or routes or ospfs or loopbacks or subifs):
         raise ValidationError("The design has no links or settings to configure.")
 
     entries: dict[int, dict] = {}
@@ -123,7 +141,7 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
     def entry(device):
         return entries.setdefault(device.id, {
             "device": device, "vlans": [], "ports": [], "links": [], "svis": [],
-            "routes": [], "ospf": [], "link_ids": [], "notes": [],
+            "routes": [], "ospf": [], "link_ids": [], "notes": [], "channels": {},
         })
 
     for link in links:
@@ -134,6 +152,8 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
             item = entry(device)
             item["link_ids"].append(link.id)
             if device.device_type == "cisco_ios":
+                if link.channel_id and link.channel_id not in item["channels"]:
+                    item["channels"][link.channel_id] = _port_channel_commands(link)
                 item["links"].extend(_ios_link_commands(link, side))
             elif link.link_type == "routed":
                 item["links"].extend(_asa_link_commands(link, side))
@@ -161,6 +181,20 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
         entry(svi.device)["svis"].extend([
             f"interface Vlan{svi.vlan_id}", f"ip address {svi.ip} {network.netmask}", "no shutdown",
         ])
+    for loop in loopbacks:
+        entry(loop.device)["svis"].extend([
+            f"interface Loopback{loop.number}", f"ip address {loop.ip} 255.255.255.255",
+        ])
+    for sub in subifs:
+        network = ipaddress.ip_network(f"{sub.ip}/{sub.prefix_length}", strict=False)
+        item = entry(sub.device)
+        item["svis"].extend([
+            f"interface {sub.interface}.{sub.vlan_id}", f"encapsulation dot1Q {sub.vlan_id}",
+            f"ip address {sub.ip} {network.netmask}", "no shutdown",
+        ])
+        parent = f"interface {sub.interface}"
+        if parent not in item["links"] and parent not in item["svis"]:
+            item["svis"][:0] = [parent, "no shutdown"]
     for route in routes:
         network = ipaddress.ip_network(f"{route.network}/{route.prefix_length}")
         item = entry(route.device)
@@ -179,7 +213,8 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
             )
     for ospf in ospfs:
         item = entry(ospf.device)
-        networks = _ospf_networks(ospf.device, all_links, svis or rows(DesignSvi))
+        networks = _ospf_networks(ospf.device, all_links, svis or rows(DesignSvi),
+                                  (loopbacks or rows(DesignLoopback)) + (subifs or rows(DesignSubif)))
         if ospf.device.device_type != "cisco_ios":
             item["notes"].append("OSPF is only generated for Cisco IOS devices.")
         elif not networks:
@@ -194,7 +229,8 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
     devices, skipped = [], []
     for item in entries.values():
         device = item["device"]
-        commands = (item["vlans"] + item["ports"] + item["links"] + item["svis"]
+        channels = [c for number in sorted(item["channels"]) for c in item["channels"][number]]
+        commands = (item["vlans"] + item["ports"] + channels + item["links"] + item["svis"]
                     + item["routes"] + item["ospf"])
         if device.lifecycle == "planned":
             skipped.append({

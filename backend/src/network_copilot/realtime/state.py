@@ -66,7 +66,7 @@ def project_state(project_id: int) -> dict[str, str]:
         db.session.query(
             TopologyLink.id, TopologyLink.link_type, TopologyLink.interface_a, TopologyLink.interface_b,
             TopologyLink.network, TopologyLink.ip_a, TopologyLink.ip_b, TopologyLink.allowed_vlans,
-            TopologyLink.nameif_a, TopologyLink.nameif_b,
+            TopologyLink.nameif_a, TopologyLink.nameif_b, TopologyLink.channel_id,
         )
         .filter(TopologyLink.project_id == project_id)
         .order_by(TopologyLink.id)

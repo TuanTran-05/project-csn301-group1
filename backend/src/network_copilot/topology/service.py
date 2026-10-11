@@ -199,6 +199,30 @@ def _finalize_fields(project, fields: dict, exclude_id: int | None = None) -> di
     return fields
 
 
+def _check_channel(project_id: int, fields: dict, device_a_id: int, device_b_id: int,
+                   exclude_id: int | None) -> None:
+    """A port-channel is trunk-only and joins exactly one pair of devices."""
+    channel = fields.get("channel_id")
+    if channel is None:
+        return
+    if fields["link_type"] != "trunk":
+        raise ValidationError("Only trunk links can join a port-channel.",
+                              {"channel_id": ["Set the link type to trunk first."]})
+    pair = {device_a_id, device_b_id}
+    for other in list_links(project_id):
+        if other.id == exclude_id or other.channel_id is None:
+            continue
+        touches = pair & {other.device_a_id, other.device_b_id}
+        if other.channel_id == channel and touches and {other.device_a_id, other.device_b_id} != pair:
+            raise ConflictError(
+                f"Port-channel {channel} is already used on a device towards another neighbour."
+            )
+        if other.channel_id == channel and {other.device_a_id, other.device_b_id} == pair:
+            if (other.allowed_vlans or None) != (fields.get("allowed_vlans") or None):
+                raise ValidationError("Members of one port-channel must carry the same VLANs.",
+                                      {"allowed_vlans": [f"Differs from link {other.id}."]})
+
+
 def _assert_endpoints_free(
     project_id: int, endpoints: list[tuple[int, str]], exclude_id: int | None
 ) -> None:
@@ -249,6 +273,7 @@ def create_link(project, payload: dict) -> TopologyLink:
         raise ConflictError(f"A project holds at most {limit} links.")
 
     fields = _finalize_fields(project, fields)
+    _check_channel(project.id, fields, data.device_a_id, data.device_b_id, None)
     link = TopologyLink(project_id=project.id, **fields)
     db.session.add(link)
     db.session.commit()
@@ -277,6 +302,10 @@ def update_link(project, link_id: int, payload: dict) -> TopologyLink:
         {k: changes[k] for k in changes if k in fields}
     )
     fields = _finalize_fields(project, fields, exclude_id=link.id)
+    fields["channel_id"] = changes["channel_id"] if "channel_id" in changes else link.channel_id
+    if fields["link_type"] != "trunk":
+        fields["channel_id"] = None
+    _check_channel(project.id, fields, link.device_a_id, link.device_b_id, link.id)
 
     for key, value in fields.items():
         setattr(link, key, value)
