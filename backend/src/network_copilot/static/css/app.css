@@ -1391,3 +1391,27 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 
 /* Zoomed far out the labels are unreadable noise: show only the shapes. */
 .topology-canvas.lod-low .iface, .topology-canvas.lod-low .mid, .topology-canvas.lod-low .sub { display: none; }
+
+/* design aids: planned/unmanaged nodes, notes, groups, blueprints, lint */
+.topo-node.unmanaged rect { fill: var(--surface-2, var(--surface)); }
+.topo-node.planned { opacity: 0.8; }
+.deco text { font-size: 12px; fill: #1f2937; pointer-events: none; }
+.deco.note { cursor: grab; }
+.deco.note rect:first-child { stroke: rgba(0, 0, 0, 0.25); stroke-width: 1; }
+.deco.selected rect:first-child { stroke: var(--accent); stroke-width: 2.5; }
+.deco .gbody { pointer-events: none; stroke-width: 1.5; stroke-dasharray: 6 4; }
+.deco .ghead { cursor: grab; }
+.deco .glabel { fill: var(--text); font-weight: 600; font-size: 12px; }
+.deco .handle { fill: rgba(0, 0, 0, 0.35); cursor: nwse-resize; }
+.swatches { display: flex; gap: 6px; }
+.swatch-btn { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--border); cursor: pointer; }
+.blueprint-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin: 8px 0; }
+.blueprint-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.blueprint-card span { font-size: 12px; color: var(--text-muted); }
+.blueprint-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.lint-list { list-style: none; padding: 0; margin: 8px 0; max-height: 320px; overflow: auto; }
+.lint-list li { padding: 6px 8px; border-left: 3px solid var(--border); margin-bottom: 4px; }
+.lint-error { border-left-color: var(--offline) !important; }
+.lint-warning { border-left-color: #f0c674 !important; }
+.lint-info { border-left-color: var(--accent) !important; }
+.link-btn { background: none; border: 0; padding: 0; color: inherit; text-align: left; cursor: pointer; text-decoration: underline dotted; }

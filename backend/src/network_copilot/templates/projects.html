@@ -322,6 +322,10 @@
                       <button type="button" @click="applyLayout('grid')">Lưới (theo tên)</button>
                     </span>
                   </span>
+                  <button type="button" @click="openBlueprints()" x-show="canEdit" title="Tạo nhanh mô hình mẫu">Mẫu ▾</button>
+                  <button type="button" @click="addNote('note')" x-show="canEdit" title="Thêm ghi chú lên sơ đồ">+ Ghi chú</button>
+                  <button type="button" @click="addNote('group')" x-show="canEdit" title="Thêm khung nhóm (toà nhà, vùng, site)">+ Nhóm</button>
+                  <button type="button" @click="runLint()" title="Kiểm tra thiết kế và địa chỉ">Kiểm tra</button>
                   <label class="check snap-toggle" x-show="canEdit" title="Bắt dính lưới (G)">
                     <input type="checkbox" :checked="snap" @change="toggleSnap()" /> Lưới
                   </label>
@@ -366,6 +370,9 @@
                       <span x-text="tpl.label"></span>
                     </button>
                   </template>
+                  <label class="check" title="Thiết bị Cisco chưa có IP/SSH: chỉ thiết kế, cấp IP sau">
+                    <input type="checkbox" x-model="placePlanned" /> Thêm ở dạng kế hoạch
+                  </label>
                   <details class="palette-ssh">
                     <summary>SSH mặc định</summary>
                     <p class="hint">Gán cho mọi thiết bị thêm mới. Chỉ giữ trong trang này, không lưu.</p>
@@ -440,8 +447,22 @@
                     <template x-if="props">
                       <div class="subfields">
                         <label>Hostname <input type="text" x-ref="propHostname" x-model="props.hostname" maxlength="64" :disabled="!canEdit" /></label>
-                        <label>IP quản trị <input type="text" x-model="props.management_ip" :disabled="!canEdit" /></label>
-                        <label>Vai trò
+                        <p class="hint">
+                          Loại <b x-text="props.kind"></b>
+                          <span x-show="!props.managed">· không quản trị (backend không SSH vào)</span>
+                          <span x-show="props.managed && props.lifecycle === 'planned'">· <b>kế hoạch</b></span>
+                        </p>
+                        <template x-if="props.managed">
+                          <label>IP quản trị <input type="text" x-model="props.management_ip" :disabled="!canEdit" :placeholder="props.lifecycle === 'planned' ? 'điền khi triển khai' : ''" /></label>
+                        </template>
+                        <template x-if="!props.managed">
+                          <div class="subfields">
+                            <label>IP dữ liệu <input type="text" x-model="props.data_ip" :disabled="!canEdit" placeholder="vd 10.100.1.10" /></label>
+                            <label>Gateway <input type="text" x-model="props.data_gateway" :disabled="!canEdit" placeholder="vd 10.100.1.1" /></label>
+                          </div>
+                        </template>
+                        <button type="button" x-show="canEdit && props.managed && props.lifecycle === 'planned'" @click="provisionSelected()">Triển khai (cấp IP quản trị)</button>
+                        <label x-show="props.managed">Vai trò
                           <select x-model="props.role" :disabled="!canEdit">
                             <template x-for="role in ['isp','firewall','core','distribution','access','dmz','management']" :key="role">
                               <option :value="role" x-text="role"></option>
@@ -454,9 +475,9 @@
                             <option value="physical">Thiết bị thật</option>
                           </select>
                         </label>
-                        <label>Cổng SSH <input type="number" min="1" max="65535" x-model="props.ssh_port" :disabled="!canEdit" /></label>
+                        <label x-show="props.managed">Cổng SSH <input type="number" min="1" max="65535" x-model="props.ssh_port" :disabled="!canEdit" /></label>
                         <label>Mô tả <input type="text" x-model="props.description" maxlength="255" :disabled="!canEdit" /></label>
-                        <label class="check"><input type="checkbox" x-model="props.monitoring_enabled" :disabled="!canEdit" /> Giám sát định kỳ</label>
+                        <label class="check" x-show="props.managed"><input type="checkbox" x-model="props.monitoring_enabled" :disabled="!canEdit" /> Giám sát định kỳ</label>
                         <p class="hint">
                           Trạng thái <b x-text="selectedNode && selectedNode.status"></b> ·
                           <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
@@ -470,6 +491,25 @@
                       <button type="button" class="danger-btn" @click="deleteDevice(selectedNode)">Xoá</button>
                     </div>
                   </form>
+
+                  <div class="card form-grid single" x-show="selectedDeco" x-cloak>
+                    <h4 x-text="selectedDeco && selectedDeco.kind === 'group' ? 'Nhóm' : 'Ghi chú'"></h4>
+                    <template x-if="selectedDeco">
+                      <div class="subfields">
+                        <label>Nội dung
+                          <textarea rows="3" maxlength="500" x-model="selectedDeco.text" :disabled="!canEdit" @change="saveNote(selectedDeco)"></textarea>
+                        </label>
+                        <div class="swatches" x-show="canEdit">
+                          <template x-for="c in decoPalette(selectedDeco)" :key="c">
+                            <button type="button" class="swatch-btn" :style="'background:' + c" :aria-label="c" @click="setDecoColor(selectedDeco, c)"></button>
+                          </template>
+                        </div>
+                        <div class="form-actions" x-show="canEdit">
+                          <button type="button" class="danger-btn" @click="deleteNote(selectedDeco)">Xoá</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
 
                   <form class="card form-grid single" @submit.prevent="saveLink()" x-show="linkFormOpen" x-cloak>
                     <h4 x-text="linkForm.id ? 'Sửa liên kết #' + linkForm.id : 'Liên kết mới'"></h4>
@@ -793,6 +833,9 @@
                 <label>Dải IP quản trị
                   <input type="text" x-model="settingsForm.management_network" required />
                 </label>
+                <label>Dải IP cấp tự động (link /30, VLAN)
+                  <input type="text" x-model="settingsForm.addressing_pool" placeholder="mặc định 10.100.0.0/16" />
+                </label>
                 <label>Môi trường
                   <select x-model="settingsForm.environment">
                     <option value="pnetlab">PNETLab</option>
@@ -839,7 +882,69 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" x-show="blueprintOpen" x-cloak @click.self="blueprintOpen = false">
+    <div class="modal" role="dialog" aria-label="Mô hình mẫu">
+      <h3>Tạo nhanh mô hình mẫu</h3>
+      <p class="hint">Thiết bị, dây cáp, cổng và địa chỉ /30 được tạo sẵn; bạn chỉnh tiếp trên sơ đồ.</p>
+      <div class="blueprint-grid">
+        <template x-for="b in blueprints" :key="b.key">
+          <button type="button" class="blueprint-card" :class="{ active: blueprintKey === b.key }" @click="pickBlueprint(b.key)">
+            <b x-text="b.label"></b><span x-text="b.description"></span>
+          </button>
+        </template>
+      </div>
+      <template x-if="blueprintItem">
+        <div class="form-grid">
+          <template x-for="param in blueprintItem.params" :key="param.name">
+            <label><span x-text="param.label"></span>
+              <input type="number" :min="param.min" :max="param.max" x-model.number="blueprintParams[param.name]" />
+            </label>
+          </template>
+          <label class="check"><input type="checkbox" x-model="blueprintPlanned" /> Thiết bị Cisco ở dạng kế hoạch (chưa cấp IP/SSH)</label>
+        </div>
+      </template>
+      <p class="error-text" x-show="blueprintError" x-text="blueprintError"></p>
+      <div class="form-actions">
+        <button type="button" class="primary-btn" @click="buildBlueprint()" :disabled="blueprintBusy || !blueprintKey">Tạo</button>
+        <button type="button" @click="blueprintOpen = false">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="lintOpen" x-cloak @click.self="lintOpen = false">
+    <div class="modal" role="dialog" aria-label="Kiểm tra thiết kế">
+      <h3>Kiểm tra thiết kế</h3>
+      <p class="error-text" x-show="lintError" x-text="lintError"></p>
+      <template x-if="lintResult">
+        <div>
+          <p class="hint">
+            <b x-text="lintResult.counts.error"></b> lỗi ·
+            <b x-text="lintResult.counts.warning"></b> cảnh báo ·
+            <b x-text="lintResult.counts.info"></b> ghi chú
+          </p>
+          <p x-show="!lintResult.issues.length" class="ok-text">Không phát hiện vấn đề nào.</p>
+          <ul class="lint-list">
+            <template x-for="(issue, index) in lintResult.issues" :key="index">
+              <li :class="'lint-' + issue.level">
+                <button type="button" class="link-btn" @click="focusIssue(issue)" x-text="issue.message"></button>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </template>
+      <template x-if="ipamInfo">
+        <p class="hint">
+          Dải cấp tự động <code x-text="ipamInfo.pool"></code> đã dùng
+          <b x-text="Math.round(ipamInfo.utilisation * 1000) / 10 + '%'"></b> ·
+          link kế tiếp <code x-text="ipamInfo.next_link"></code> · LAN kế tiếp <code x-text="ipamInfo.next_lan"></code>
+        </p>
+      </template>
+      <div class="form-actions"><button type="button" class="primary-btn" @click="lintOpen = false">Đóng</button></div>
+    </div>
+  </div>
+
   <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/design_aids.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
   <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
 </body>

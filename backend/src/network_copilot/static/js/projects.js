@@ -34,9 +34,20 @@ const ICONS = {
     '<rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 10.5h10M14 8l3 2.5-3 2.5M17 14H7M10 12l-3 2 3 2" />',
   firewall:
     '<rect x="3" y="5" width="18" height="14" rx="1" /><path d="M3 10h18M3 15h18M9 5v5M15 10v5M9 15v4" />',
+  pc:
+    '<rect x="4" y="4" width="16" height="11" rx="1.5" /><path d="M9 20h6M12 15v5" />',
+  server:
+    '<rect x="4" y="3" width="16" height="7" rx="1.5" /><rect x="4" y="13" width="16" height="7" rx="1.5" /><path d="M8 6.5h.01M8 16.5h.01M12 6.5h5M12 16.5h5" />',
+  cloud:
+    '<path d="M7 18a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z" />',
+  ap:
+    '<circle cx="12" cy="16" r="2" /><path d="M7.5 11.5a6.4 6.4 0 0 1 9 0M4.5 8.5a10.6 10.6 0 0 1 15 0" />',
+  segment:
+    '<path d="M3 12h18" /><circle cx="6" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="18" cy="12" r="1.5" /><path d="M6 12V7M12 12v5M18 12V7" />',
 };
 
 function templateKeyFor(device) {
+  if (["pc", "server", "cloud", "ap", "segment"].includes(device.kind)) return device.kind;
   if (device.device_type === "cisco_asa" || device.role === "firewall") return "firewall";
   if (device.role === "core") return "router";
   if (device.role === "distribution") return "switch_l3";
@@ -379,6 +390,7 @@ document.addEventListener("alpine:init", () => {
             description: project.description || "",
             management_network: project.management_network,
             environment: project.environment,
+            addressing_pool: project.addressing_pool || "",
           }
         : null;
     },
@@ -395,6 +407,7 @@ document.addEventListener("alpine:init", () => {
       this.linkMode = false;
       this.linkSourceId = null;
       this.templates = [];
+      this.resetDesignAids();
       this.design = EMPTY_DESIGN();
       this.designError = "";
       this.undoStack = [];
@@ -478,6 +491,7 @@ document.addEventListener("alpine:init", () => {
             description: this.settingsForm.description || null,
             management_network: this.settingsForm.management_network,
             environment: this.settingsForm.environment,
+            addressing_pool: this.settingsForm.addressing_pool || null,
           }),
         });
         await this.loadProjects();
@@ -991,6 +1005,8 @@ document.addEventListener("alpine:init", () => {
       if (projectId !== this.currentProjectId) return;
       this.devices = data.nodes.sort((a, b) => window.NCLayout.naturalCompare(a.hostname, b.hostname));
       this.links = data.links;
+      this.notes = data.notes || [];
+      if (this.selectedDecoId && !this.notes.some((n) => n.id === this.selectedDecoId)) this.selectedDecoId = null;
       if (!this._fitted && this.devices.length) {
         this._fitted = true;
         this.$nextTick(() => this.fitView());
@@ -1096,8 +1112,13 @@ document.addEventListener("alpine:init", () => {
         ? {
             id: device.id,
             hostname: device.hostname,
-            management_ip: device.management_ip,
+            management_ip: device.management_ip || "",
             role: device.role,
+            kind: device.kind,
+            managed: device.managed !== false,
+            lifecycle: device.lifecycle,
+            data_ip: device.data_ip || "",
+            data_gateway: device.data_gateway || "",
             environment: device.environment,
             ssh_port: device.ssh_port,
             monitoring_enabled: device.monitoring_enabled,
@@ -1111,17 +1132,22 @@ document.addEventListener("alpine:init", () => {
       this.propsError = "";
       const p = this.props;
       try {
+        const body = {
+          hostname: p.hostname.trim(),
+          environment: p.environment,
+          description: p.description || null,
+          data_ip: p.data_ip || null,
+          data_gateway: p.data_gateway || null,
+        };
+        if (p.managed) {
+          body.role = p.role;
+          body.ssh_port = Number(p.ssh_port) || 22;
+          body.monitoring_enabled = !!p.monitoring_enabled;
+          if (p.lifecycle !== "planned" || p.management_ip) body.management_ip = p.management_ip;
+        }
         const updated = await this.authFetch(`/api/devices/${p.id}`, {
           method: "PUT",
-          body: JSON.stringify({
-            hostname: p.hostname.trim(),
-            management_ip: p.management_ip,
-            role: p.role,
-            environment: p.environment,
-            ssh_port: Number(p.ssh_port) || 22,
-            monitoring_enabled: !!p.monitoring_enabled,
-            description: p.description || null,
-          }),
+          body: JSON.stringify(body),
         });
         await this.loadTopology();
         await this.loadDevices();
@@ -1513,7 +1539,8 @@ document.addEventListener("alpine:init", () => {
             body.x = Math.max(NODE_W / 2, Math.round(point.x));
             body.y = Math.max(NODE_H / 2, Math.round(point.y));
           }
-          if (this.defaultSsh.username && this.defaultSsh.password) body.credential = { ...this.defaultSsh };
+          if (this.placePlanned) body.planned = true;
+          else if (this.defaultSsh.username && this.defaultSsh.password) body.credential = { ...this.defaultSsh };
           const again = await this.authFetch(this.topologyUrl("/quick-device"), {
             method: "POST",
             body: JSON.stringify(body),
@@ -1532,7 +1559,9 @@ document.addEventListener("alpine:init", () => {
         body.x = Math.max(NODE_W / 2, Math.round(point.x));
         body.y = Math.max(NODE_H / 2, Math.round(point.y));
       }
-      if (this.defaultSsh.username && this.defaultSsh.password) {
+      if (this.placePlanned) {
+        body.planned = true;
+      } else if (this.defaultSsh.username && this.defaultSsh.password) {
         body.credential = { ...this.defaultSsh };
       }
       try {
@@ -1788,5 +1817,5 @@ document.addEventListener("alpine:init", () => {
         this.topologyError = this.describeError(err);
       }
     },
-  }, window.NCCanvas()));
+  }, mix(window.NCCanvas(), window.NCDesignAids())));
 });
