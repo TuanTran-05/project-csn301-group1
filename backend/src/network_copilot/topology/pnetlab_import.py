@@ -206,7 +206,7 @@ def import_lab(project, payload: dict) -> dict:
             device_payload["management_ip"] = choice.management_ip or next(default_ips)
         if key in positions:
             device_payload["pos_x"], device_payload["pos_y"] = (round(v) for v in positions[key])
-        if request.credential:
+        if request.credential and kind["device_type"] != "generic":
             device_payload["credential"] = request.credential
         existing = _find_device(project, hostname)
         if existing is not None:

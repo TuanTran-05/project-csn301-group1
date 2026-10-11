@@ -71,7 +71,7 @@ def test_interface_labels_are_expanded(label, expected):
 @pytest.mark.parametrize(
     "template,expected",
     [("vios", ("cisco_ios", "core")), ("viosl2", ("cisco_ios", "access")), ("iol", ("cisco_ios", "core")),
-     ("asav", ("cisco_asa", "firewall")), ("vpcs", None), ("linux", None), (None, None)],
+     ("asav", ("cisco_asa", "firewall")), ("vpcs", ("generic", "host")), ("linux", ("generic", "server")), ("mystery-box", None), (None, None)],
 )
 def test_templates_map_to_device_kinds(template, expected):
     kind = pnetlab_import.classify(template)
@@ -138,7 +138,7 @@ def test_preview_lists_nodes_links_and_free_addresses(client, admin_headers, bas
     assert by_id["1"]["hostname"] == "R1" and by_id["1"]["supported"]
     assert by_id["2"]["hostname"] == "CORE-SWITCH" and by_id["2"]["role"] == "access"
     assert by_id["3"]["device_type"] == "cisco_asa"
-    assert by_id["4"]["supported"] is False and by_id["4"]["management_ip"] is None
+    assert by_id["4"]["supported"] and by_id["4"]["kind"] == "pc" and by_id["4"]["management_ip"] is None
     ips = [by_id[k]["management_ip"] for k in "123"]
     assert len(set(ips)) == 3 and all(ip.startswith("172.16.3.") for ip in ips)
     assert len(body["links"]) == 2
@@ -151,9 +151,10 @@ def test_import_creates_devices_positions_and_links(client, admin_headers, base,
     body = client.post(base, headers=admin_headers, json=payload).get_json()
 
     statuses = {d["id"]: d["status"] for d in body["devices"]}
-    assert statuses == {"1": "created", "2": "created", "3": "created", "4": "skipped"}
+    assert statuses == {"1": "created", "2": "created", "3": "created", "4": "created"}
     devices = {d.hostname: d for d in db.session.query(Device)}
-    assert set(devices) == {"R1", "CORE-SWITCH", "FW"}
+    assert set(devices) == {"R1", "CORE-SWITCH", "FW", "PC1"}
+    assert devices["PC1"].kind == "pc" and devices["PC1"].management_ip is None and devices["PC1"].credential is None
     assert devices["R1"].environment == "pnetlab" and devices["R1"].pos_x is not None
     assert devices["R1"].credential is not None
     assert [l["status"] for l in body["links"]] == ["created", "created"]
