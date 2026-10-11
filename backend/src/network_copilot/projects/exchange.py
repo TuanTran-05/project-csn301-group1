@@ -153,6 +153,42 @@ def _unique_name(owner_id: int, wanted: str) -> str:
     return f"{wanted} ({number})"[:80]
 
 
+def populate_cabling(project: Project, doc, by_hostname: dict) -> None:
+    """Links, design and notes of a document, onto devices already in the project."""
+    for index, item in enumerate(doc.links):
+        a = by_hostname.get(str(item.get("hostname_a", "")).upper())
+        b = by_hostname.get(str(item.get("hostname_b", "")).upper())
+        if a is None or b is None:
+            raise ValidationError(f"Link #{index + 1} names a device that is not in the document.")
+        fields = {
+            k: item.get(k)
+            for k in ("interface_a", "interface_b", "link_type", "network", "ip_a",
+                      "ip_b", "allowed_vlans", "bring_up", "description")
+            if item.get(k) is not None
+        }
+        try:
+            link = topology_service.create_link(
+                project, {"device_a_id": a.id, "device_b_id": b.id, **fields}
+            )
+            extras = {
+                k: item[k]
+                for k in ("nameif_a", "security_a", "nameif_b", "security_b")
+                if item.get(k) is not None
+            }
+            if extras:
+                topology_service.update_link(project, link.id, extras)
+        except AppError as exc:
+            raise ValidationError(f"Link #{index + 1} is invalid: {exc.message}", exc.details) from exc
+
+    from ..topology import design
+
+    design.import_design(project, doc.design, {h: d for h, d in by_hostname.items()})
+    from ..topology import notes
+
+    for item in doc.notes:
+        notes.create_note(project, item)
+
+
 def import_project(user, payload: dict, name: str | None = None) -> Project:
     """Create a new project from an exported document."""
     if user.role == "VIEWER":
@@ -187,38 +223,7 @@ def import_project(user, payload: dict, name: str | None = None) -> Project:
                 ) from exc
             by_hostname[device.hostname.upper()] = device
 
-        for index, item in enumerate(doc.links):
-            a = by_hostname.get(str(item.get("hostname_a", "")).upper())
-            b = by_hostname.get(str(item.get("hostname_b", "")).upper())
-            if a is None or b is None:
-                raise ValidationError(f"Link #{index + 1} names a device that is not in the document.")
-            fields = {
-                k: item.get(k)
-                for k in ("interface_a", "interface_b", "link_type", "network", "ip_a",
-                          "ip_b", "allowed_vlans", "bring_up", "description")
-                if item.get(k) is not None
-            }
-            try:
-                link = topology_service.create_link(
-                    project, {"device_a_id": a.id, "device_b_id": b.id, **fields}
-                )
-                extras = {
-                    k: item[k]
-                    for k in ("nameif_a", "security_a", "nameif_b", "security_b")
-                    if item.get(k) is not None
-                }
-                if extras:
-                    topology_service.update_link(project, link.id, extras)
-            except AppError as exc:
-                raise ValidationError(f"Link #{index + 1} is invalid: {exc.message}", exc.details) from exc
-
-        from ..topology import design
-
-        design.import_design(project, doc.design, {h: d for h, d in by_hostname.items()})
-        from ..topology import notes
-
-        for item in doc.notes:
-            notes.create_note(project, item)
+        populate_cabling(project, doc, by_hostname)
     except AppError:
         db.session.rollback()
         project_service.delete_project(project)

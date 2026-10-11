@@ -6,7 +6,7 @@ from ..audit.service import record_event
 from ..auth.service import current_user
 from ..projects import service as project_service
 from ..extensions import limiter
-from . import blueprints, configgen, design, ipam, lint, notes, discovery, pnetlab_import, service
+from . import blueprints, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -87,6 +87,49 @@ def update_note(project_id: int, note_id: int):
 def delete_note(project_id: int, note_id: int):
     project = _project(project_id, "editor")
     notes.delete_note(project, note_id)
+    return "", 204
+
+
+@bp.get("/versions")
+@jwt_required()
+def list_versions(project_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify({"items": [v.to_dict() for v in versions.list_versions(project.id)]}), 200
+
+
+@bp.post("/versions")
+@jwt_required()
+def create_version(project_id: int):
+    project = _project(project_id, "editor")
+    version = versions.create_version(project, current_user(), request.get_json(silent=True) or {})
+    record_event(action="topology.version_create", result="success", user_id=current_user().id,
+                 details={"version_id": version.id, "name": version.name})
+    return jsonify(version.to_dict()), 201
+
+
+@bp.get("/versions/<int:version_id>/diff")
+@jwt_required()
+def diff_version(project_id: int, version_id: int):
+    project = _project(project_id, "viewer")
+    return jsonify(versions.diff(project, versions.get_version(project.id, version_id))), 200
+
+
+@bp.post("/versions/<int:version_id>/restore")
+@jwt_required()
+def restore_version(project_id: int, version_id: int):
+    project = _project(project_id, "editor")
+    version = versions.get_version(project.id, version_id)
+    result = versions.restore(project, current_user(), version, request.get_json(silent=True) or {})
+    record_event(action="topology.version_restore", result="success", user_id=current_user().id,
+                 details={"version_id": version.id, **{k: result[k] for k in ("created", "pruned")}})
+    return jsonify(result), 200
+
+
+@bp.delete("/versions/<int:version_id>")
+@jwt_required()
+def delete_version(project_id: int, version_id: int):
+    project = _project(project_id, "editor")
+    versions.delete_version(project, version_id)
     return "", 204
 
 

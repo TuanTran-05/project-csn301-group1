@@ -278,3 +278,32 @@ class TopologyNote(db.Model):
             "x": self.x, "y": self.y, "width": self.width, "height": self.height,
             "color": self.color,
         }
+
+
+class TopologyVersion(db.Model):
+    """A saved copy of a project's diagram and design (no credentials)."""
+
+    __tablename__ = "topology_versions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = db.Column(db.String(80), nullable=False)
+    note = db.Column(db.String(255))
+    auto = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    device_count = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    link_count = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    document = db.Column(db.Text, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "note": self.note, "auto": self.auto,
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "device_count": self.device_count, "link_count": self.link_count,
+        }
