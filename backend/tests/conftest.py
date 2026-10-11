@@ -136,6 +136,8 @@ def _create_device(
         management_ip=ip,
         device_type=device_type,
         role=role,
+        kind="firewall" if device_type == "cisco_asa" else {
+            "core": "router", "distribution": "l3_switch", "firewall": "firewall"}.get(role, "switch"),
         ssh_port=22,
         status="unknown",
         monitoring_enabled=True,
