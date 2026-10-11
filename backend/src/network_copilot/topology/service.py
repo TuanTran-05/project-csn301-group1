@@ -242,6 +242,12 @@ def create_link(project, payload: dict) -> TopologyLink:
         None,
     )
 
+    from flask import current_app
+
+    limit = current_app.config.get("MAX_LINKS_PER_PROJECT", 0)
+    if limit and len(list_links(project.id)) >= limit:
+        raise ConflictError(f"A project holds at most {limit} links.")
+
     fields = _finalize_fields(project, fields)
     link = TopologyLink(project_id=project.id, **fields)
     db.session.add(link)

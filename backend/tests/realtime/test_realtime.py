@@ -76,7 +76,7 @@ def test_change_status_moves_the_changes_fingerprint(client, admin_headers, proj
 
 def test_state_endpoint_answers_304_when_nothing_changed(client, admin_headers, project):
     first = client.get(f"/api/projects/{project.id}/state", headers=admin_headers)
-    assert first.status_code == 200 and set(first.get_json()["state"]) == {"messages", "changes", "batches", "devices"}
+    assert first.status_code == 200 and set(first.get_json()["state"]) == {"topology", "messages", "changes", "batches", "devices"}
     etag = first.headers["ETag"]
     same = client.get(f"/api/projects/{project.id}/state", headers={**admin_headers, "If-None-Match": etag})
     assert same.status_code == 304
@@ -99,7 +99,7 @@ def test_stream_sends_the_state_then_ends_with_bye(client, admin_headers, projec
     assert response.mimetype == "text/event-stream"
     assert response.headers["X-Accel-Buffering"] == "no"
     seen = events(response)
-    assert seen[0][0] == "state" and set(seen[0][1]) == {"messages", "changes", "batches", "devices"}
+    assert seen[0][0] == "state" and set(seen[0][1]) == {"topology", "messages", "changes", "batches", "devices"}
     assert seen[-1] == ("bye", {"reconnect": True})
     assert realtime_routes._open_streams == 0  # the slot is released
 
@@ -131,3 +131,20 @@ def test_stream_needs_access_to_the_project(client, admin_headers, project):
 
 def test_the_default_config_is_polite_about_threads():
     assert TestConfig.REALTIME_MAX_SECONDS <= 60 and TestConfig.REALTIME_MAX_STREAMS >= 1
+
+
+def test_topology_fingerprint_moves_with_cabling_notes_and_layout(client, admin_headers, project):
+    base = f"/api/projects/{project.id}/topology"
+    seen = [project_state.project_state(project.id)["topology"]]
+    a = client.post(f"{base}/quick-device", headers=admin_headers, json={"template": "router"}).get_json()
+    seen.append(project_state.project_state(project.id)["topology"])
+    b = client.post(f"{base}/quick-device", headers=admin_headers, json={"template": "router"}).get_json()
+    client.post(f"{base}/links", headers=admin_headers, json={"device_a_id": a["id"], "device_b_id": b["id"]})
+    seen.append(project_state.project_state(project.id)["topology"])
+    client.post(f"{base}/notes", headers=admin_headers, json={"text": "hi"})
+    seen.append(project_state.project_state(project.id)["topology"])
+    client.put(f"{base}/layout", headers=admin_headers, json={"positions": [{"device_id": a["id"], "x": 300, "y": 200}]})
+    seen.append(project_state.project_state(project.id)["topology"])
+    assert len(set(seen)) == len(seen)
+    # nothing changed -> same fingerprint
+    assert project_state.project_state(project.id)["topology"] == seen[-1]

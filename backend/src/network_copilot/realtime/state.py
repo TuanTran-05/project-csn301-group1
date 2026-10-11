@@ -11,6 +11,7 @@ from ..changes.model import ChangeBatch, ChangeRequest
 from ..chat.model import ChatMessage, ChatSession
 from ..devices.model import Device
 from ..extensions import db
+from ..topology.model import TopologyLink, TopologyNote, TopologyVersion
 
 RECENT = 500  # rows per list; older ones cannot change the page
 
@@ -52,7 +53,40 @@ def project_state(project_id: int) -> dict[str, str]:
         .filter(ChatSession.project_id == project_id)
         .scalar()
     )
+    layout = (
+        db.session.query(
+            Device.id, Device.pos_x, Device.pos_y, Device.kind, Device.lifecycle, Device.role,
+            Device.data_ip, Device.data_gateway,
+        )
+        .filter(Device.project_id == project_id)
+        .order_by(Device.id)
+        .all()
+    )
+    links = (
+        db.session.query(
+            TopologyLink.id, TopologyLink.link_type, TopologyLink.interface_a, TopologyLink.interface_b,
+            TopologyLink.network, TopologyLink.ip_a, TopologyLink.ip_b, TopologyLink.allowed_vlans,
+            TopologyLink.nameif_a, TopologyLink.nameif_b,
+        )
+        .filter(TopologyLink.project_id == project_id)
+        .order_by(TopologyLink.id)
+        .all()
+    )
+    notes = (
+        db.session.query(TopologyNote.id, TopologyNote.text, TopologyNote.x, TopologyNote.y,
+                         TopologyNote.width, TopologyNote.height, TopologyNote.color)
+        .filter(TopologyNote.project_id == project_id)
+        .order_by(TopologyNote.id)
+        .all()
+    )
+    versions = (
+        db.session.query(db.func.max(TopologyVersion.id), db.func.count(TopologyVersion.id))
+        .filter(TopologyVersion.project_id == project_id)
+        .one()
+    )
     return {
+        "topology": _digest(([tuple(r) for r in layout], [tuple(r) for r in links],
+                             [tuple(r) for r in notes], tuple(versions))),
         "messages": _digest((tuple(messages), sessions)),
         "changes": _digest([tuple(row) for row in changes]),
         "batches": _digest([tuple(row) for row in batches]),

@@ -47,6 +47,7 @@ def list_blueprints(project_id: int):
 
 @bp.post("/blueprints/<key>")
 @jwt_required()
+@limiter.limit("20 per minute")
 def build_blueprint(project_id: int, key: str):
     project = _project(project_id, "editor")
     result = blueprints.build(project, key, request.get_json(silent=True) or {})
@@ -99,6 +100,7 @@ def list_versions(project_id: int):
 
 @bp.post("/versions")
 @jwt_required()
+@limiter.limit("20 per minute")
 def create_version(project_id: int):
     project = _project(project_id, "editor")
     version = versions.create_version(project, current_user(), request.get_json(silent=True) or {})
@@ -116,6 +118,7 @@ def diff_version(project_id: int, version_id: int):
 
 @bp.post("/versions/<int:version_id>/restore")
 @jwt_required()
+@limiter.limit("10 per minute")
 def restore_version(project_id: int, version_id: int):
     project = _project(project_id, "editor")
     version = versions.get_version(project.id, version_id)

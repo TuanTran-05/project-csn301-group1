@@ -79,6 +79,12 @@ class Config:
     REALTIME_MAX_SECONDS = float(os.environ.get("REALTIME_MAX_SECONDS", "55"))
     REALTIME_MAX_STREAMS = int(os.environ.get("REALTIME_MAX_STREAMS", "20"))
 
+    # Per-project and per-user ceilings so one account cannot fill the database.
+    # An administrator is exempt from the project limit; 0 turns a limit off.
+    MAX_PROJECTS_PER_USER = int(os.environ.get("MAX_PROJECTS_PER_USER", "20"))
+    MAX_DEVICES_PER_PROJECT = int(os.environ.get("MAX_DEVICES_PER_PROJECT", "300"))
+    MAX_LINKS_PER_PROJECT = int(os.environ.get("MAX_LINKS_PER_PROJECT", "1000"))
+
     RATELIMIT_ENABLED = _bool("RATELIMIT_ENABLED", True)
     RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
 

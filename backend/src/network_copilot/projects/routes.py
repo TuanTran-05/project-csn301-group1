@@ -6,6 +6,7 @@ from flask_jwt_extended import jwt_required
 from ..audit.service import record_event
 from ..auth.service import current_user
 from ..errors import ValidationError
+from ..extensions import limiter
 from . import exchange, service
 
 bp = Blueprint("projects", __name__, url_prefix="/api/projects")
@@ -103,6 +104,25 @@ def share_project(project_id: int):
     return jsonify(member.to_dict()), 201
 
 
+@bp.get("/<int:project_id>/share-candidates")
+@jwt_required()
+def share_candidates(project_id: int):
+    user = current_user()
+    project = service.require_project(user, project_id, "owner")
+    found = service.search_share_candidates(project, request.args.get("q", ""))
+    return jsonify({"items": [{"id": u.id, "username": u.username} for u in found]}), 200
+
+
+@bp.delete("/<int:project_id>/membership")
+@jwt_required()
+def leave_project(project_id: int):
+    user = current_user()
+    project = service.require_project(user, project_id, "viewer")
+    service.leave_project(project, user)
+    record_event(action="project.leave", result="success", user_id=user.id, project_id=project.id)
+    return "", 204
+
+
 @bp.put("/<int:project_id>/members/<int:user_id>")
 @jwt_required()
 def update_member(project_id: int, user_id: int):
@@ -169,6 +189,7 @@ def export_devices_csv(project_id: int):
 
 @bp.post("/import")
 @jwt_required()
+@limiter.limit("10 per minute")
 def import_project():
     user = current_user()
     payload = request.get_json(silent=True) or {}
@@ -199,6 +220,7 @@ def clone_project(project_id: int):
 
 @bp.post("/<int:project_id>/devices/import-csv")
 @jwt_required()
+@limiter.limit("10 per minute")
 def import_devices_csv(project_id: int):
     user = current_user()
     project = service.require_project(user, project_id, "editor")

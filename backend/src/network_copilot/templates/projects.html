@@ -325,6 +325,7 @@
                   <button type="button" @click="openBlueprints()" x-show="canEdit" title="Tạo nhanh mô hình mẫu">Mẫu ▾</button>
                   <button type="button" @click="addNote('note')" x-show="canEdit" title="Thêm ghi chú lên sơ đồ">+ Ghi chú</button>
                   <button type="button" @click="addNote('group')" x-show="canEdit" title="Thêm khung nhóm (toà nhà, vùng, site)">+ Nhóm</button>
+                  <button type="button" @click="openVersions()" title="Lưu / so sánh / khôi phục các phiên bản sơ đồ">Phiên bản</button>
                   <button type="button" @click="runLint()" title="Kiểm tra thiết kế và địa chỉ">Kiểm tra</button>
                   <label class="check snap-toggle" x-show="canEdit" title="Bắt dính lưới (G)">
                     <input type="checkbox" :checked="snap" @change="toggleSnap()" /> Lưới
@@ -811,13 +812,17 @@
               </table>
               <p class="hint" x-show="!members.length">Chưa chia sẻ cho ai.</p>
               <form class="inline-form" @submit.prevent="shareProject()" x-show="isOwner">
-                <input type="text" x-model="shareForm.username" placeholder="tên đăng nhập" required />
+                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" placeholder="tên đăng nhập (gõ 2 ký tự để gợi ý)" required autocomplete="off" />
+                <datalist id="share-candidates"><template x-for="c in shareCandidates" :key="c"><option :value="c"></option></template></datalist>
                 <select x-model="shareForm.access">
                   <option value="viewer">viewer</option>
                   <option value="editor">editor</option>
                 </select>
                 <button type="submit" class="primary-btn">Chia sẻ</button>
               </form>
+              <div class="form-actions" x-show="project && !isOwner">
+                <button type="button" class="danger-btn" @click="leaveCurrentProject()">Rời project này</button>
+              </div>
             </section>
 
             <!-- ---------- Settings ---------- -->
@@ -908,6 +913,46 @@
         <button type="button" class="primary-btn" @click="buildBlueprint()" :disabled="blueprintBusy || !blueprintKey">Tạo</button>
         <button type="button" @click="blueprintOpen = false">Đóng</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="versionsOpen" x-cloak @click.self="versionsOpen = false">
+    <div class="modal" role="dialog" aria-label="Phiên bản sơ đồ">
+      <h3>Phiên bản sơ đồ</h3>
+      <p class="hint">Phiên bản lưu sơ đồ và thiết kế (không lưu mật khẩu SSH). Khôi phục giữ lại thiết bị còn tồn tại nên không mất SSH.</p>
+      <form class="inline-form" x-show="canEdit" @submit.prevent="saveVersion()">
+        <input type="text" x-model="versionName" maxlength="80" placeholder="Tên phiên bản, vd: trước khi thêm VLAN" />
+        <button type="submit" class="primary-btn">Lưu phiên bản hiện tại</button>
+      </form>
+      <p class="ok-text" x-show="versionNotice" x-text="versionNotice"></p>
+      <p class="error-text" x-show="versionError" x-text="versionError"></p>
+      <p class="hint" x-show="!versions.length">Chưa có phiên bản nào.</p>
+      <table class="data-table" x-show="versions.length">
+        <tbody>
+          <template x-for="v in versions" :key="v.id">
+            <tr>
+              <td><b x-text="v.name"></b> <span class="hint" x-show="v.auto">(tự động)</span><br />
+                <span class="hint" x-text="new Date(v.created_at).toLocaleString() + ' · ' + v.device_count + ' thiết bị · ' + v.link_count + ' dây'"></span></td>
+              <td class="row-actions">
+                <button type="button" @click="showVersionDiff(v)">So sánh</button>
+                <button type="button" x-show="canEdit" @click="restoreVersion(v)">Khôi phục</button>
+                <button type="button" class="danger-btn" x-show="canEdit" @click="deleteVersion(v)">Xoá</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <label class="check" x-show="canEdit"><input type="checkbox" x-model="versionPrune" /> Khi khôi phục, xoá thiết bị không có trong phiên bản</label>
+      <template x-if="versionDiff">
+        <div>
+          <h4>So với hiện tại (phiên bản #<span x-text="versionDiffId"></span>)</h4>
+          <p class="hint" x-show="!versionDiffRows.length">Giống hệt hiện tại.</p>
+          <ul class="lint-list">
+            <template x-for="(row, i) in versionDiffRows" :key="i"><li><b x-text="row[0]"></b> <span x-text="row[1]"></span></li></template>
+          </ul>
+        </div>
+      </template>
+      <div class="form-actions"><button type="button" class="primary-btn" @click="versionsOpen = false">Đóng</button></div>
     </div>
   </div>
 

@@ -2,6 +2,8 @@
 
 import ipaddress
 
+from flask import current_app
+
 from pydantic import ValidationError as PydanticValidationError
 
 from ..auth.model import User
@@ -145,6 +147,11 @@ def create_project(user: User, payload: dict) -> Project:
     if user.role == "VIEWER":
         raise ForbiddenError("A read-only account cannot create projects.")
     data = validate(ProjectCreateSchema, payload)
+    limit = current_app.config.get("MAX_PROJECTS_PER_USER", 0)
+    if limit and user.role != "ADMIN":
+        owned = db.session.query(Project).filter(Project.owner_id == user.id).count()
+        if owned >= limit:
+            raise ConflictError(f"You can own at most {limit} projects.")
     existing = (
         db.session.query(Project)
         .filter(Project.owner_id == user.id, Project.name == data.name)
@@ -300,6 +307,40 @@ def update_member(project: Project, user_id: int, payload: dict) -> ProjectMembe
     member.access = data.access
     db.session.commit()
     return member
+
+
+def search_share_candidates(project: Project, query: str, limit: int = 10) -> list[User]:
+    """Active users whose name starts with ``query``, not yet on the project."""
+    query = (query or "").strip()
+    if len(query) < 2:
+        return []
+    like = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    members = db.session.query(ProjectMember.user_id).filter_by(project_id=project.id)
+    return (
+        db.session.query(User)
+        .filter(
+            User.username.like(like, escape="\\"),
+            User.is_active.is_(True),
+            User.id != project.owner_id,
+            User.id.notin_(members),
+        )
+        .order_by(User.username)
+        .limit(limit)
+        .all()
+    )
+
+
+def leave_project(project: Project, user: User) -> None:
+    """A shared user gives up their own access (the owner cannot leave)."""
+    member = (
+        db.session.query(ProjectMember)
+        .filter_by(project_id=project.id, user_id=user.id)
+        .one_or_none()
+    )
+    if member is None:
+        raise ConflictError("Only a user the project was shared with can leave it.")
+    db.session.delete(member)
+    db.session.commit()
 
 
 def remove_member(project: Project, user_id: int) -> None:

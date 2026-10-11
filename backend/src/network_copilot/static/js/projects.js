@@ -192,6 +192,7 @@ document.addEventListener("alpine:init", () => {
 
     init() {
       this.initCanvas();
+      this.initDesignAids();
       window.addEventListener("keydown", (event) => this.onKeyDown(event));
       this.$watch("selectedNodeId", () => this.syncProps());
       // The canvas can only be measured once its tab is showing.

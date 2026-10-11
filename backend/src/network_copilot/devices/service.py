@@ -113,9 +113,18 @@ def get_device_by_hostname(hostname: str, project_id: int | None = None) -> Devi
     return matches[0]
 
 
+def _assert_quota(project) -> None:
+    from flask import current_app
+
+    limit = current_app.config.get("MAX_DEVICES_PER_PROJECT", 0)
+    if limit and db.session.query(Device).filter_by(project_id=project.id).count() >= limit:
+        raise ConflictError(f"A project holds at most {limit} devices.")
+
+
 def create_device(payload: dict, project) -> Device:
     data = _validate(DeviceCreateSchema, payload, project)
     _assert_unique(project.id, data.hostname, data.management_ip)
+    _assert_quota(project)
 
     fields = data.model_dump(exclude={"credential"})
     fields["managed"] = data.device_type != "generic"

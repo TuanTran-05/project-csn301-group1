@@ -40,6 +40,41 @@
       lintError: "",
       ipamInfo: null,
 
+      // Another person editing the same project: refetch the diagram when its
+      // fingerprint moves (checked every few seconds while the tab is open).
+      _topologyState: null,
+      _topologyTimer: null,
+
+      initDesignAids() {
+        this.$watch("tab", () => this._syncTopologyWatch());
+        this.$watch("currentProjectId", () => { this._topologyState = null; this._syncTopologyWatch(); });
+      },
+
+      _syncTopologyWatch() {
+        clearInterval(this._topologyTimer);
+        this._topologyTimer = null;
+        if (this.tab !== "topology" || !this.currentProjectId || !this.token) return;
+        this._topologyTimer = setInterval(() => this._checkTopology(), 5000);
+      },
+
+      async _checkTopology() {
+        if (document.hidden || this._drag || this.dropBusy || this.blueprintBusy) return;
+        const projectId = this.currentProjectId;
+        try {
+          const data = await this.authFetch(`/api/projects/${projectId}/state`);
+          if (projectId !== this.currentProjectId || !data || !data.state) return;
+          const next = data.state.topology;
+          const previous = this._topologyState;
+          this._topologyState = next;
+          if (previous && previous !== next) {
+            await this.loadTopology();
+            await this.loadDevices();
+          }
+        } catch {
+          // The next tick tries again.
+        }
+      },
+
       resetDesignAids() {
         this.notes = [];
         this.selectedDecoId = null;
@@ -48,6 +83,9 @@
         this.lintOpen = false;
         this.lintResult = null;
         this.ipamInfo = null;
+        this.versionsOpen = false;
+        this.versions = [];
+        this.versionDiff = null;
       },
 
       // ---- node text -------------------------------------------------------
@@ -259,6 +297,130 @@
           this.syncProps();
         }
         this.lintOpen = false;
+      },
+
+      // ---- versions --------------------------------------------------------
+      versionsOpen: false,
+      versions: [],
+      versionName: "",
+      versionDiff: null,
+      versionDiffId: null,
+      versionPrune: false,
+      versionError: "",
+      versionNotice: "",
+
+      async openVersions() {
+        this.versionsOpen = true;
+        this.versionError = "";
+        this.versionNotice = "";
+        this.versionDiff = null;
+        await this.loadVersions();
+      },
+
+      async loadVersions() {
+        try {
+          this.versions = (await this.authFetch(this.topologyUrl("/versions"))).items;
+        } catch (err) {
+          this.versionError = this.describeError(err);
+        }
+      },
+
+      async saveVersion() {
+        const name = this.versionName.trim();
+        if (!name) return;
+        this.versionError = "";
+        try {
+          await this.authFetch(this.topologyUrl("/versions"), { method: "POST", body: JSON.stringify({ name }) });
+          this.versionName = "";
+          this.versionNotice = "Đã lưu phiên bản.";
+          await this.loadVersions();
+        } catch (err) {
+          this.versionError = this.describeError(err);
+        }
+      },
+
+      async showVersionDiff(version) {
+        this.versionError = "";
+        try {
+          this.versionDiff = await this.authFetch(this.topologyUrl(`/versions/${version.id}/diff`));
+          this.versionDiffId = version.id;
+        } catch (err) {
+          this.versionError = this.describeError(err);
+        }
+      },
+
+      get versionDiffRows() {
+        const d = this.versionDiff;
+        if (!d) return [];
+        const rows = [];
+        d.devices.missing_now.forEach((h) => rows.push(["+", `Thiết bị ${h} (sẽ được tạo lại)`]));
+        d.devices.added_since.forEach((h) => rows.push(["−", `Thiết bị ${h} (thêm sau đó${this.versionPrune ? ", sẽ bị xoá" : ", được giữ"})`]));
+        d.devices.changed.forEach((c) => rows.push(["~", `${c.hostname}: đổi ${c.fields.join(", ")}`]));
+        d.links.missing_now.forEach((l) => rows.push(["+", `Dây ${l}`]));
+        d.links.added_since.forEach((l) => rows.push(["−", `Dây ${l} (sẽ bị bỏ)`]));
+        d.links.changed.forEach((l) => rows.push(["~", `Dây ${l} đổi cấu hình`]));
+        if (d.notes.then !== d.notes.now) rows.push(["~", `Ghi chú ${d.notes.now} → ${d.notes.then}`]);
+        for (const [name, c] of Object.entries(d.design)) {
+          if (c.then !== c.now) rows.push(["~", `Thiết kế ${name}: ${c.now} → ${c.then}`]);
+        }
+        return rows;
+      },
+
+      async restoreVersion(version) {
+        if (!window.confirm(`Khôi phục «${version.name}»? Trạng thái hiện tại được lưu thành một phiên bản tự động.`)) return;
+        this.versionError = "";
+        try {
+          const result = await this.authFetch(this.topologyUrl(`/versions/${version.id}/restore`), {
+            method: "POST",
+            body: JSON.stringify({ prune: !!this.versionPrune }),
+          });
+          await this.loadTopology();
+          await this.loadDevices();
+          await this.loadProjects();
+          await this.loadVersions();
+          this.versionDiff = null;
+          this.versionNotice = `Đã khôi phục. Bản sao lưu trước đó: #${result.backup_id}.`;
+        } catch (err) {
+          this.versionError = this.describeError(err);
+        }
+      },
+
+      async deleteVersion(version) {
+        try {
+          await this.authFetch(this.topologyUrl(`/versions/${version.id}`), { method: "DELETE" });
+          if (this.versionDiffId === version.id) this.versionDiff = null;
+          await this.loadVersions();
+        } catch (err) {
+          this.versionError = this.describeError(err);
+        }
+      },
+
+      // ---- sharing helpers ---------------------------------------------------
+      shareCandidates: [],
+
+      async searchCandidates() {
+        const q = (this.shareForm.username || "").trim();
+        if (q.length < 2 || !this.isOwner) {
+          this.shareCandidates = [];
+          return;
+        }
+        try {
+          const data = await this.authFetch(`/api/projects/${this.currentProjectId}/share-candidates?q=${encodeURIComponent(q)}`);
+          this.shareCandidates = data.items.map((u) => u.username);
+        } catch {
+          this.shareCandidates = [];
+        }
+      },
+
+      async leaveCurrentProject() {
+        if (!window.confirm("Rời project này? Bạn sẽ mất quyền truy cập cho đến khi được chia sẻ lại.")) return;
+        try {
+          await this.authFetch(`/api/projects/${this.currentProjectId}/membership`, { method: "DELETE" });
+          localStorage.removeItem("nc_project_id");
+          window.location.reload();
+        } catch (err) {
+          this.shareError = this.describeError(err);
+        }
       },
 
       // ---- planned -> provisioned -----------------------------------------
