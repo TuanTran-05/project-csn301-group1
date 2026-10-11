@@ -3,7 +3,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
-from ..auth.service import current_user, roles_required
+from ..auth.service import current_user
 from ..projects import service as project_service
 from ..extensions import limiter
 from . import configgen, design, discovery, pnetlab_import, service
@@ -51,6 +51,31 @@ def quick_device(project_id: int):
         details=device.to_dict(),
     )
     return jsonify(device.to_dict()), 201
+
+
+@bp.post("/duplicate")
+@jwt_required()
+def duplicate(project_id: int):
+    project = _project(project_id, "editor")
+    result = service.duplicate_devices(project, request.get_json(silent=True) or {})
+    record_event(
+        action="topology.duplicate",
+        result="success",
+        user_id=current_user().id,
+        details={"devices": [d["hostname"] for d in result["devices"]]},
+    )
+    return jsonify(result), 201
+
+
+@bp.get("/devices/<int:device_id>/ports")
+@jwt_required()
+def device_ports(project_id: int, device_id: int):
+    from ..devices import service as device_service
+    from .templates import port_inventory
+
+    project = _project(project_id, "viewer")
+    device = device_service.get_device(device_id, project.id)
+    return jsonify({"ports": port_inventory(project.id, device)}), 200
 
 
 @bp.put("/layout")
@@ -228,14 +253,18 @@ def config_plan(project_id: int):
 
 
 @bp.post("/config-preview")
-@roles_required("ADMIN")
+@jwt_required()
 def config_preview(project_id: int):
-    """Freeze the design's configuration as a change batch awaiting approval."""
+    """Freeze the design's configuration as a change batch awaiting approval.
+
+    Any editor may do this: a preview is only a proposal. Approving and applying
+    it stays an ADMIN action.
+    """
     project = _project(project_id, "editor")
     data = _config_request()
     user = current_user()
     batch, plan = configgen.create_design_preview(
-        project, user.id if user else None, data.link_ids
+        project, user.id if user else None, data.link_ids, data.note
     )
     record_event(
         action="topology.config_preview",

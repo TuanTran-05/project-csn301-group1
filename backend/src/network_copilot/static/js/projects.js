@@ -45,6 +45,9 @@ function templateKeyFor(device) {
 
 const LINK_COLORS = { physical: "#75899f", routed: "#22c55e", trunk: "#06b6d4" };
 
+// The canvas module (canvas.js) draws nodes and links with these.
+window.NCShared = { ICONS, LINK_COLORS, templateKeyFor, esc };
+
 const EMPTY_DEVICE_FORM = () => ({
   id: null,
   hostname: "",
@@ -89,8 +92,15 @@ const EMPTY_LINK_FORM = () => ({
   security_b: "",
 });
 
+// Copy a mixin's members onto the component *with their getters intact*;
+// object spread would call each getter once and keep only its value.
+function mix(base, mixin) {
+  return Object.defineProperties(base, Object.getOwnPropertyDescriptors(mixin));
+}
+
 document.addEventListener("alpine:init", () => {
-  Alpine.data("projectsApp", () => ({
+  Alpine.data("projectsApp", () => mix({
+
     // -- auth --
     token: localStorage.getItem("nc_token") || null,
     currentUser: storedUser(),
@@ -144,9 +154,14 @@ document.addEventListener("alpine:init", () => {
     linkForm: EMPTY_LINK_FORM(),
     linkFormOpen: false,
     topologyError: "",
+    topologyNotice: "",
     discovery: null,
     multi: [],
-    band: null,
+    props: null,
+    propsError: "",
+    clipboard: [],
+    pasteCount: 0,
+    portsByLink: { a: [], b: [] },
     undoStack: [],
     redoStack: [],
     historyBusy: false,
@@ -165,7 +180,19 @@ document.addEventListener("alpine:init", () => {
     // ------------------------------------------------------------------
 
     init() {
+      this.initCanvas();
       window.addEventListener("keydown", (event) => this.onKeyDown(event));
+      this.$watch("selectedNodeId", () => this.syncProps());
+      // The canvas can only be measured once its tab is showing.
+      this.$watch("tab", (value) => {
+        if (value !== "topology") return;
+        this.$nextTick(() => {
+          if (!this._fittedVisible && this.devices.length) {
+            this._fittedVisible = true;
+            this.fitView();
+          }
+        });
+      });
       if (!this.token) return;
       this.startApp();
     },
@@ -183,6 +210,7 @@ document.addEventListener("alpine:init", () => {
       if (this.tab !== "topology" || !this.canEdit) return;
       const tag = (event.target && event.target.tagName) || "";
       if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+      if (this.onCanvasKey(event)) return;
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === "z") {
         event.preventDefault();
@@ -372,6 +400,10 @@ document.addEventListener("alpine:init", () => {
       this.undoStack = [];
       this.redoStack = [];
       this.multi = [];
+      this._fitted = false;
+      this._fittedVisible = false;
+      this.props = null;
+      this.menu = null;
       this.discovery = null;
       this.linkFormOpen = false;
       this.deviceFormOpen = false;
@@ -957,8 +989,12 @@ document.addEventListener("alpine:init", () => {
       const projectId = this.currentProjectId;
       const data = await this.authFetch(this.topologyUrl());
       if (projectId !== this.currentProjectId) return;
-      this.devices = data.nodes;
+      this.devices = data.nodes.sort((a, b) => window.NCLayout.naturalCompare(a.hostname, b.hostname));
       this.links = data.links;
+      if (!this._fitted && this.devices.length) {
+        this._fitted = true;
+        this.$nextTick(() => this.fitView());
+      }
       // A comparison refers to link ids; once the cabling changes it is stale.
       const signature = data.links.map((l) => l.id).join(",");
       if (this._linkSignature !== undefined && signature !== this._linkSignature) {
@@ -985,81 +1021,6 @@ document.addEventListener("alpine:init", () => {
         x: 100 + (index % columns) * 190,
         y: 90 + Math.floor(index / columns) * 150,
       };
-    },
-
-    // The canvas grows to fit devices dragged past the default edge.
-    get canvasW() {
-      const xs = this.devices.map((d) => this.nodePos(d).x);
-      return Math.max(CANVAS_W, Math.min(4000, Math.max(0, ...xs) + NODE_W));
-    },
-
-    get canvasH() {
-      const ys = this.devices.map((d) => this.nodePos(d).y);
-      return Math.max(CANVAS_H, Math.min(4000, Math.max(0, ...ys) + NODE_H * 2));
-    },
-
-    get topologySvg() {
-      const parts = [];
-      const pos = {};
-      for (const device of this.devices) pos[device.id] = this.nodePos(device);
-
-      // Spread parallel links between the same pair of devices.
-      const seen = {};
-      for (const link of this.links) {
-        const a = pos[link.device_a_id];
-        const b = pos[link.device_b_id];
-        if (!a || !b) continue;
-        const key = [link.device_a_id, link.device_b_id].sort().join("-");
-        const slot = (seen[key] = (seen[key] || 0) + 1) - 1;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const length = Math.hypot(dx, dy) || 1;
-        const nx = (-dy / length) * slot * 14;
-        const ny = (dx / length) * slot * 14;
-        const x1 = a.x + nx;
-        const y1 = a.y + ny;
-        const x2 = b.x + nx;
-        const y2 = b.y + ny;
-        const color = LINK_COLORS[link.link_type] || LINK_COLORS.physical;
-        const selected = link.id === this.selectedLinkId;
-        const dash = link.link_type === "trunk" ? ' stroke-dasharray="7 4"' : "";
-        const drift = this.driftOf(link.id);
-        parts.push(
-          `<g class="topo-link${selected ? " selected" : ""}" data-link-id="${link.id}"${drift ? ` data-drift="${drift}"` : ""}>` +
-            `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="16" />` +
-            `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${selected ? 4 : 2}"${dash} />` +
-            this._linkLabels(link, x1, y1, x2, y2, color) +
-            `</g>`
-        );
-      }
-
-      for (const device of this.devices) {
-        const p = pos[device.id];
-        const selected =
-          device.id === this.selectedNodeId ||
-          device.id === this.linkSourceId ||
-          this.multi.includes(device.id);
-        const status = ["online", "offline"].includes(device.status)
-          ? device.status
-          : "unknown";
-        parts.push(
-          `<g class="topo-node${selected ? " selected" : ""} env-${esc(device.environment)}" data-node-id="${device.id}" transform="translate(${p.x - NODE_W / 2},${p.y - NODE_H / 2})">` +
-            `<rect width="${NODE_W}" height="${NODE_H}" rx="8" />` +
-            `<circle class="dot ${status}" cx="${NODE_W - 10}" cy="10" r="4.5" />` +
-            `<g class="icon" transform="translate(6,${NODE_H / 2 - 14}) scale(1.15)">${ICONS[templateKeyFor(device)]}</g>` +
-            `<text class="host" x="${NODE_W / 2 + 10}" y="24" text-anchor="middle">${esc(device.hostname)}</text>` +
-            `<text class="sub" x="${NODE_W / 2 + 10}" y="41" text-anchor="middle">${esc(device.role)} · ${device.environment === "physical" ? "thật" : "PNETLab"}</text>` +
-            `</g>`
-        );
-      }
-      if (this.band) {
-        const b = this.band;
-        parts.push(
-          `<rect class="band" x="${Math.min(b.x1, b.x2)}" y="${Math.min(b.y1, b.y2)}" ` +
-            `width="${Math.abs(b.x2 - b.x1)}" height="${Math.abs(b.y2 - b.y1)}" />`
-        );
-      }
-      return parts.join("");
     },
 
     _linkLabels(link, x1, y1, x2, y2, color) {
@@ -1093,142 +1054,6 @@ document.addEventListener("alpine:init", () => {
         .replace(/^Ethernet/i, "Eth");
     },
 
-    _svgPoint(event) {
-      const svg = this.$refs.canvas;
-      const point = svg.createSVGPoint();
-      point.x = event.clientX;
-      point.y = event.clientY;
-      const mapped = point.matrixTransform(svg.getScreenCTM().inverse());
-      return { x: mapped.x, y: mapped.y };
-    },
-
-    onCanvasPointerDown(event) {
-      const nodeEl = event.target.closest("[data-node-id]");
-      const linkEl = event.target.closest("[data-link-id]");
-      if (nodeEl) {
-        const id = Number(nodeEl.dataset.nodeId);
-        const device = this.deviceById(id);
-        if (!device) return;
-        if ((event.shiftKey || event.ctrlKey || event.metaKey) && !this.linkMode) {
-          // Add to / remove from the selection; no drag.
-          this.multi = this.multi.includes(id)
-            ? this.multi.filter((other) => other !== id)
-            : [...this.multi, id];
-          this.selectedNodeId = this.multi.length ? this.multi[this.multi.length - 1] : null;
-          this.selectedLinkId = null;
-          event.preventDefault();
-          return;
-        }
-        if (!this.multi.includes(id)) this.multi = [id];
-        const start = this._svgPoint(event);
-        const moving = this.canEdit && !this.linkMode ? this.multi : [id];
-        const origins = {};
-        for (const other of moving) {
-          const target = this.deviceById(other);
-          if (target) origins[other] = this.nodePos(target);
-        }
-        this._drag = {
-          id,
-          origins,
-          startPoint: start,
-          startX: event.clientX,
-          startY: event.clientY,
-          moved: false,
-        };
-        const move = (e) => this._onDragMove(e);
-        const up = (e) => {
-          window.removeEventListener("pointermove", move);
-          window.removeEventListener("pointerup", up);
-          this._onDragEnd(e);
-        };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
-        event.preventDefault();
-      } else if (linkEl) {
-        this.multi = [];
-        this.selectLink(Number(linkEl.dataset.linkId));
-      } else {
-        this._startBand(event);
-      }
-    },
-
-    // Rubber band: drag on empty canvas to select the devices inside it.
-    _startBand(event) {
-      const additive = event.shiftKey || event.ctrlKey || event.metaKey;
-      const start = this._svgPoint(event);
-      if (!additive) {
-        this.multi = [];
-        this.selectedNodeId = null;
-        this.selectedLinkId = null;
-      }
-      if (this.linkMode) return;
-      const base = additive ? [...this.multi] : [];
-      this.band = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
-      const move = (e) => {
-        const point = this._svgPoint(e);
-        this.band = { ...this.band, x2: point.x, y2: point.y };
-        const [left, right] = [Math.min(this.band.x1, this.band.x2), Math.max(this.band.x1, this.band.x2)];
-        const [top, bottom] = [Math.min(this.band.y1, this.band.y2), Math.max(this.band.y1, this.band.y2)];
-        const inside = this.devices
-          .filter((d) => {
-            const p = this.nodePos(d);
-            return p.x >= left && p.x <= right && p.y >= top && p.y <= bottom;
-          })
-          .map((d) => d.id);
-        this.multi = [...new Set([...base, ...inside])];
-        this.selectedNodeId = this.multi.length === 1 ? this.multi[0] : null;
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        this.band = null;
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      event.preventDefault();
-    },
-
-    _onDragMove(event) {
-      const drag = this._drag;
-      if (!drag) return;
-      if (
-        !drag.moved &&
-        Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4
-      ) {
-        return;
-      }
-      if (!this.canEdit || this.linkMode) return;
-      drag.moved = true;
-      const point = this._svgPoint(event);
-      const dx = point.x - drag.startPoint.x;
-      const dy = point.y - drag.startPoint.y;
-      for (const [id, origin] of Object.entries(drag.origins)) {
-        const device = this.deviceById(id);
-        if (!device) continue;
-        device.pos_x = Math.max(NODE_W / 2, Math.min(4000, origin.x + dx));
-        device.pos_y = Math.max(NODE_H / 2, Math.min(4000, origin.y + dy));
-      }
-    },
-
-    async _onDragEnd() {
-      const drag = this._drag;
-      this._drag = null;
-      if (!drag) return;
-      const device = this.deviceById(drag.id);
-      if (!device) return;
-      if (!drag.moved) {
-        this.clickNode(device);
-        return;
-      }
-      const before = drag.origins;
-      const after = {};
-      for (const id of Object.keys(before)) {
-        const moved = this.deviceById(id);
-        if (moved) after[id] = { x: moved.pos_x, y: moved.pos_y };
-      }
-      await this._savePositions(before, after, "Di chuyển");
-    },
-
     // Persist positions and remember how to put them back.
     async _savePositions(before, after, label) {
       try {
@@ -1260,6 +1085,175 @@ document.addEventListener("alpine:init", () => {
         method: "PUT",
         body: JSON.stringify({ positions }),
       });
+    },
+
+    // ---- properties panel, context menu, copy & paste, port lists ----------
+
+    syncProps() {
+      const device = this.selectedNode;
+      this.propsError = "";
+      this.props = device && this.multi.length <= 1
+        ? {
+            id: device.id,
+            hostname: device.hostname,
+            management_ip: device.management_ip,
+            role: device.role,
+            environment: device.environment,
+            ssh_port: device.ssh_port,
+            monitoring_enabled: device.monitoring_enabled,
+            description: device.description || "",
+          }
+        : null;
+    },
+
+    async saveProps() {
+      if (!this.props) return;
+      this.propsError = "";
+      const p = this.props;
+      try {
+        const updated = await this.authFetch(`/api/devices/${p.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            hostname: p.hostname.trim(),
+            management_ip: p.management_ip,
+            role: p.role,
+            environment: p.environment,
+            ssh_port: Number(p.ssh_port) || 22,
+            monitoring_enabled: !!p.monitoring_enabled,
+            description: p.description || null,
+          }),
+        });
+        await this.loadTopology();
+        await this.loadDevices();
+        this.selectedNodeId = updated.id;
+        this.syncProps();
+      } catch (err) {
+        this.propsError = this.describeError(err);
+      }
+    },
+
+    onCanvasDblClick(event) {
+      const nodeEl = event.target.closest("[data-node-id]");
+      if (!nodeEl || !this.canEdit) return;
+      const device = this.deviceById(Number(nodeEl.dataset.nodeId));
+      if (!device) return;
+      this.multi = [device.id];
+      this.selectedLinkId = null;
+      this.selectedNodeId = device.id;
+      this.syncProps();
+      this.$nextTick(() => {
+        const input = this.$refs.propHostname;
+        if (input) { input.focus(); input.select(); }
+      });
+    },
+
+    onContextMenu(event) {
+      event.preventDefault();
+      const nodeEl = event.target.closest("[data-node-id]");
+      const linkEl = event.target.closest("[data-link-id]");
+      if (nodeEl) {
+        const id = Number(nodeEl.dataset.nodeId);
+        if (!this.multi.includes(id)) {
+          this.multi = [id];
+          this.selectedNodeId = id;
+          this.selectedLinkId = null;
+        }
+        this.menu = { x: event.clientX, y: event.clientY, kind: "node", id };
+      } else if (linkEl) {
+        const id = Number(linkEl.dataset.linkId);
+        this.selectLink(id);
+        this.menu = { x: event.clientX, y: event.clientY, kind: "link", id };
+      } else {
+        this.menu = { x: event.clientX, y: event.clientY, kind: "canvas" };
+      }
+    },
+
+    menuAction(action) {
+      const menu = this.menu;
+      this.menu = null;
+      if (!menu) return;
+      if (action === "edit") this.onCanvasDblClick({ target: { closest: () => ({ dataset: { nodeId: menu.id } }) } });
+      else if (action === "duplicate") this.duplicateSelection();
+      else if (action === "link-from") {
+        this.toggleLinkMode();
+        this.linkSourceId = menu.id;
+      } else if (action === "delete-node") this.multi.length > 1 ? this.deleteSelectedDevices() : this.deleteDevice(this.deviceById(menu.id));
+      else if (action === "delete-link") {
+        this.linkForm.id = menu.id;
+        this.deleteLink();
+      } else if (action === "paste") this.pasteClipboard();
+      else if (action === "fit") this.fitView();
+      else if (action === "select-all") this.multi = this.devices.map((d) => d.id);
+    },
+
+    copySelection() {
+      if (!this.multi.length) return;
+      this.clipboard = [...this.multi];
+      this.pasteCount = 0;
+      this.topologyNotice = `Đã sao chép ${this.clipboard.length} thiết bị. Ctrl+V để dán.`;
+    },
+
+    async pasteClipboard() {
+      if (!this.clipboard.length || !this.canEdit) return;
+      this.pasteCount += 1;
+      await this._duplicate(this.clipboard, 40 * this.pasteCount, 40 * this.pasteCount);
+    },
+
+    async duplicateSelection() {
+      if (!this.multi.length || !this.canEdit) return;
+      await this._duplicate([...this.multi], 50, 50);
+    },
+
+    async _duplicate(ids, dx, dy) {
+      this.topologyError = "";
+      try {
+        const result = await this.authFetch(this.topologyUrl("/duplicate"), {
+          method: "POST",
+          body: JSON.stringify({ device_ids: ids, dx, dy }),
+        });
+        const ref = { ids: result.devices.map((d) => d.id) };
+        this._pushUndo({
+          label: "Nhân bản thiết bị",
+          undo: async () => {
+            for (const id of ref.ids) await this.authFetch(`/api/devices/${id}`, { method: "DELETE" });
+          },
+          redo: async () => {
+            const again = await this.authFetch(this.topologyUrl("/duplicate"), {
+              method: "POST",
+              body: JSON.stringify({ device_ids: ids, dx, dy }),
+            });
+            ref.ids = again.devices.map((d) => d.id);
+          },
+        });
+        await this.loadTopology();
+        await this.loadProjects();
+        this.multi = ref.ids;
+        this.selectedNodeId = ref.ids.length === 1 ? ref.ids[0] : null;
+        if (result.notes && result.notes.length) this.topologyNotice = result.notes.join(" ");
+        else this.topologyNotice = "Đã nhân bản. Mật khẩu SSH không được sao chép: nhập lại cho bản sao.";
+      } catch (err) {
+        this.topologyError = this.describeError(err);
+      }
+    },
+
+    // Free ports of a device, for the cable form's drop-down suggestions.
+    async loadPorts(side) {
+      const id = this.linkForm[`device_${side}_id`];
+      if (!id) {
+        this.portsByLink = { ...this.portsByLink, [side]: [] };
+        return;
+      }
+      try {
+        const data = await this.authFetch(this.topologyUrl(`/devices/${id}/ports`));
+        this.portsByLink = { ...this.portsByLink, [side]: data.ports };
+      } catch {
+        this.portsByLink = { ...this.portsByLink, [side]: [] };
+      }
+    },
+
+    // Group boxes and notes (added in the design-aids step) are drawn below the nodes.
+    get decorationsSvg() {
+      return this.decorationMarkup ? this.decorationMarkup() : "";
     },
 
     // ---- history: undo / redo -------------------------------------------
@@ -1623,9 +1617,10 @@ document.addEventListener("alpine:init", () => {
       }
       if (creating) {
         payload.device_a_id = Number(form.device_a_id);
-        payload.interface_a = form.interface_a;
+        // Left empty, the server picks the lowest free port.
+        payload.interface_a = String(form.interface_a || "").trim() || null;
         payload.device_b_id = Number(form.device_b_id);
-        payload.interface_b = form.interface_b;
+        payload.interface_b = String(form.interface_b || "").trim() || null;
       }
       return payload;
     },
@@ -1793,5 +1788,5 @@ document.addEventListener("alpine:init", () => {
         this.topologyError = this.describeError(err);
       }
     },
-  }));
+  }, window.NCCanvas()));
 });

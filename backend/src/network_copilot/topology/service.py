@@ -1,6 +1,7 @@
 """Topology design: devices on a canvas, cabled together by links."""
 
 import ipaddress
+import re
 
 from ..devices.model import Device
 from ..errors import ConflictError, NotFoundError, ValidationError
@@ -331,3 +332,89 @@ def quick_add_device(project, payload: dict) -> Device:
         device_payload["pos_x"] = data.x
         device_payload["pos_y"] = data.y
     return device_service.create_device(device_payload, project)
+
+
+def duplicate_devices(project, payload: dict) -> dict:
+    """Copy devices (and the cables among them) next to the originals.
+
+    Names and management addresses are chosen fresh. SSH logins are not copied
+    (they are secrets the copy has no business inheriting); routed cables come
+    out as plain cables because their subnet cannot be shared.
+    """
+    from ..devices import service as device_service
+    from ..devices.model import Device
+    from .model import TopologyLink
+
+    ids = payload.get("device_ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 100 or not all(isinstance(i, int) for i in ids):
+        raise ValidationError("'device_ids' must list 1-100 device ids.")
+    offset_x, offset_y = payload.get("dx", 60), payload.get("dy", 60)
+    if not all(isinstance(v, (int, float)) and -5000 <= v <= 5000 for v in (offset_x, offset_y)):
+        raise ValidationError("'dx' and 'dy' must be numbers.")
+
+    originals = (
+        db.session.query(Device)
+        .filter(Device.project_id == project.id, Device.id.in_(ids))
+        .order_by(Device.id)
+        .all()
+    )
+    if len(originals) != len(set(ids)):
+        raise ValidationError("Some devices are not in this project.")
+
+    created: dict[int, Device] = {}
+    notes: list[str] = []
+    try:
+        for original in originals:
+            prefix = re.sub(r"[-_]?\d+$", "", original.hostname) or get_template_prefix(original)
+            payload_out = {
+                "hostname": next_hostname(project.id, prefix),
+                "management_ip": next_management_ip(project),
+                "device_type": original.device_type,
+                "role": original.role,
+                "environment": original.environment,
+                "ssh_port": original.ssh_port,
+                "monitoring_enabled": original.monitoring_enabled,
+                "description": original.description,
+            }
+            if original.pos_x is not None:
+                payload_out["pos_x"] = original.pos_x + offset_x
+                payload_out["pos_y"] = (original.pos_y or 0) + offset_y
+            created[original.id] = device_service.create_device(payload_out, project)
+
+        links = []
+        for link in list_links(project.id):
+            if link.device_a_id in created and link.device_b_id in created:
+                body = {
+                    "device_a_id": created[link.device_a_id].id,
+                    "interface_a": link.interface_a,
+                    "device_b_id": created[link.device_b_id].id,
+                    "interface_b": link.interface_b,
+                    "link_type": "trunk" if link.link_type == "trunk" else "physical",
+                    "bring_up": link.bring_up,
+                    "description": None,
+                }
+                if link.link_type == "trunk":
+                    body["allowed_vlans"] = link.allowed_vlans
+                if link.link_type == "routed":
+                    notes.append(
+                        f"The routed link {link.device_a.hostname}-{link.device_b.hostname} "
+                        "was copied as a plain cable."
+                    )
+                links.append(create_link(project, body))
+    except Exception:
+        db.session.rollback()
+        from ..devices.service import purge_devices
+
+        purge_devices([d.id for d in created.values()])
+        raise
+    return {
+        "devices": [d.to_dict() for d in created.values()],
+        "links": [l.to_dict() for l in links],
+        "notes": notes,
+    }
+
+
+def get_template_prefix(device) -> str:
+    from .templates import template_for_device
+
+    return template_for_device(device)["prefix"]

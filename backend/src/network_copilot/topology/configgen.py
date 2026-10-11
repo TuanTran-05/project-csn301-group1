@@ -228,7 +228,7 @@ def _asa_exit(route, links) -> str | None:
     return None
 
 
-def create_design_preview(project, user_id: int | None, link_ids=None):
+def create_design_preview(project, user_id: int | None, link_ids=None, note: str | None = None):
     """Freeze the plan into a change batch awaiting approval."""
     plan = build_plan(project, link_ids)
     if not plan["devices"]:
@@ -249,7 +249,10 @@ def create_design_preview(project, user_id: int | None, link_ids=None):
     batch = batch_service.create_batch_preview(
         user_id=user_id,
         operations=operations,
-        description=f"Apply network design of project {project.name}"[:255],
+        description=(
+            f"Apply network design of project {project.name}"
+            + (f" - {note.strip()}" if note and note.strip() else "")
+        )[:255],
         source="design",
         project_id=project.id,
     )

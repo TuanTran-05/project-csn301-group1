@@ -265,9 +265,8 @@ def test_preview_never_touches_a_device(client, admin_headers, base, lab, ssh_fa
     assert ssh_factory.clients == {}
 
 
-def test_only_an_admin_may_create_the_preview(client, base, lab, project):
+def test_an_editor_can_propose_but_only_an_admin_can_approve(client, admin_headers, base, lab, project):
     from conftest import _auth_headers, _create_user
-
     from network_copilot.projects.model import ProjectMember
 
     user = _create_user("opop2", "OperatorPass123!", "OPERATOR")
@@ -275,7 +274,19 @@ def test_only_an_admin_may_create_the_preview(client, base, lab, project):
     db.session.commit()
     headers = _auth_headers(client, "opop2", "OperatorPass123!")
     add(client, headers, base, lab, "r1", "Gi0/1", "sw1", "Gi0/0")
-    assert client.post(f"{base}/config-preview", headers=headers, json={}).status_code == 403
+
+    response = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
+    assert response.status_code == 201
+    batch = response.get_json()["batch"]
+    assert batch["status"] == "pending_approval" and "please review" in batch["description"]
+    assert batch["requested_by_id"] == user.id
+    # The proposal changes nothing until an admin approves it.
+    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers).status_code == 403
+    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=admin_headers).status_code == 200
+
+
+def test_a_viewer_cannot_propose(client, viewer_headers, base, lab):
+    assert client.post(f"{base}/config-preview", headers=viewer_headers, json={}).status_code == 403
 
 
 def test_preview_with_only_unsupported_devices_is_refused(client, admin_headers, base, lab):
@@ -377,3 +388,51 @@ def test_an_explicit_port_can_be_mixed_with_an_automatic_one(client, admin_heade
     )
     assert response.status_code == 201
     assert response.get_json()["interface_b"] == "GigabitEthernet0/0"
+
+
+# -- ports and duplication ----------------------------------------------------------
+
+
+def test_port_inventory_marks_used_ports(client, admin_headers, base, lab):
+    client.post(f"{base}/links", headers=admin_headers, json=link_payload(lab["r1"], "Gi0/0", lab["sw1"], "Gi0/3"))
+    router = client.get(f"{base}/devices/{lab['r1'].id}/ports", headers=admin_headers).get_json()["ports"]
+    assert len(router) == 8 and router[0] == {"name": "GigabitEthernet0/0", "used": True, "used_by": "link to SW1"}
+    assert router[1]["used"] is False
+    switch = client.get(f"{base}/devices/{lab['sw1'].id}/ports", headers=admin_headers).get_json()["ports"]
+    assert len(switch) == 24 and switch[3]["used"] and not switch[0]["used"]
+    assert client.get(f"{base}/devices/9999/ports", headers=admin_headers).status_code == 404
+
+
+def test_duplicate_copies_devices_and_inner_cables_only(client, admin_headers, base, lab):
+    client.put(f"{base}/layout", headers=admin_headers,
+               json={"positions": [{"device_id": lab["sw1"].id, "x": 100, "y": 100}, {"device_id": lab["sw2"].id, "x": 300, "y": 100}]})
+    client.post(f"{base}/links", headers=admin_headers,
+                json=link_payload(lab["sw1"], "Gi0/1", lab["sw2"], "Gi0/1", link_type="trunk", allowed_vlans="10,20"))
+    client.post(f"{base}/links", headers=admin_headers, json=link_payload(lab["r1"], "Gi0/0", lab["sw1"], "Gi0/0"))
+
+    body = client.post(f"{base}/duplicate", headers=admin_headers,
+                       json={"device_ids": [lab["sw1"].id, lab["sw2"].id], "dx": 0, "dy": 200}).get_json()
+    assert [d["hostname"] for d in body["devices"]] == ["SW3", "SW4"]
+    assert [(d["pos_x"], d["pos_y"]) for d in body["devices"]] == [(100.0, 300.0), (300.0, 300.0)]
+    assert all(not d["has_credential"] for d in body["devices"])
+    assert len({d["management_ip"] for d in body["devices"]} | {lab["sw1"].management_ip, lab["sw2"].management_ip}) == 4
+    assert len(body["links"]) == 1 and body["links"][0]["link_type"] == "trunk"   # the R1 cable stays out
+    assert body["links"][0]["allowed_vlans"] == "10,20"
+
+
+def test_duplicating_a_routed_link_makes_a_plain_cable_and_says_so(client, admin_headers, base, lab):
+    client.post(f"{base}/links", headers=admin_headers,
+                json=link_payload(lab["r1"], "Gi0/1", lab["sw1"], "Gi0/0", link_type="routed", network="10.0.12.0/30"))
+    body = client.post(f"{base}/duplicate", headers=admin_headers, json={"device_ids": [lab["r1"].id, lab["sw1"].id]}).get_json()
+    assert body["links"][0]["link_type"] == "physical" and body["notes"]
+
+
+def test_duplicate_validates_and_is_atomic(client, admin_headers, base, lab, project):
+    before = db.session.query(type(lab["r1"])).count()
+    for body in ({}, {"device_ids": []}, {"device_ids": ["x"]}, {"device_ids": [999999]}, {"device_ids": [lab["r1"].id], "dx": "far"}):
+        assert client.post(f"{base}/duplicate", headers=admin_headers, json=body).status_code == 422
+    assert db.session.query(type(lab["r1"])).count() == before
+
+
+def test_viewers_cannot_duplicate(client, viewer_headers, base, lab):
+    assert client.post(f"{base}/duplicate", headers=viewer_headers, json={"device_ids": [lab["r1"].id]}).status_code == 403

@@ -290,3 +290,11 @@ def test_designer_page_wires_the_new_tools(client):
     html = client.get("/projects").get_data(as_text=True)
     for marker in ("pnetPreview", "runDiscovery", "exportDiagramSvg", "undo()", "addDesign('vlans')", "importCsvFile"):
         assert marker in html, marker
+
+
+def test_canvas_module_and_controls_are_wired(client):
+    html = client.get("/projects").get_data(as_text=True)
+    assert "js/canvas.js" in html
+    for marker in ("onWheel", "minimapSvg", "applyLayout('hierarchy')", "toggleSnap", "saveProps", "menuAction", "loadPorts"):
+        assert marker in html, marker
+    assert html.index("js/canvas.js") < html.index("js/projects.js")  # the mixin must exist first

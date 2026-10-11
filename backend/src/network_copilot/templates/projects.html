@@ -306,7 +306,26 @@
                   <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
                   <button type="button" @click="undo()" x-show="canEdit" :disabled="!canUndo" title="Hoàn tác (Ctrl+Z)">↶ Hoàn tác</button>
                   <button type="button" @click="redo()" x-show="canEdit" :disabled="!canRedo" title="Làm lại (Ctrl+Y)">↷ Làm lại</button>
-                  <button type="button" @click="autoLayout()" x-show="canEdit">Sắp xếp lại</button>
+                  <span class="zoom-box" title="Con lăn chuột: phóng to/thu nhỏ · Space+kéo hoặc nút giữa: kéo nền">
+                    <button type="button" @click="zoomBy(1.25)" aria-label="Thu nhỏ">−</button>
+                    <button type="button" @click="resetView()" class="zoom-value" x-text="zoomPercent + '%'"></button>
+                    <button type="button" @click="zoomBy(1 / 1.25)" aria-label="Phóng to">+</button>
+                    <button type="button" @click="fitView()" title="Vừa khung (F)">Vừa khung</button>
+                  </span>
+                  <span class="menu-wrap" x-show="canEdit">
+                    <button type="button" @click.stop="layoutMenuOpen = !layoutMenuOpen" title="Sắp xếp sơ đồ (vùng chọn nếu có)">Bố cục ▾</button>
+                    <span class="menu-list" x-show="layoutMenuOpen" x-cloak @click.outside="layoutMenuOpen = false">
+                      <button type="button" @click="applyLayout('hierarchy')">Phân tầng (core ở trên)</button>
+                      <button type="button" @click="applyLayout('force')">Lực đẩy (theo kết nối)</button>
+                      <button type="button" @click="applyLayout('circle')">Vòng tròn</button>
+                      <button type="button" @click="applyLayout('star')">Hình sao</button>
+                      <button type="button" @click="applyLayout('grid')">Lưới (theo tên)</button>
+                    </span>
+                  </span>
+                  <label class="check snap-toggle" x-show="canEdit" title="Bắt dính lưới (G)">
+                    <input type="checkbox" :checked="snap" @change="toggleSnap()" /> Lưới
+                  </label>
+                  <button type="button" @click="helpOpen = true" title="Phím tắt (?)" aria-label="Phím tắt">?</button>
                   <button type="button" @click="exportDiagramSvg()" title="Tải sơ đồ thành ảnh vector">Tải SVG</button>
                   <button type="button" @click="exportDiagramPng()" title="Tải sơ đồ thành ảnh PNG">Tải PNG</button>
                   <button type="button" @click="runDiscovery()" x-show="canEdit" :disabled="discovery && discovery.loading"
@@ -317,6 +336,7 @@
                 </div>
               </div>
               <p class="error-text" x-show="topologyError" x-text="topologyError"></p>
+              <p class="ok-text" x-show="topologyNotice" x-text="topologyNotice" @click="topologyNotice = ''"></p>
 
               <p class="hint" x-show="linkMode" x-cloak>
                 <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Chọn thiết bị nguồn.'"></span>
@@ -354,18 +374,59 @@
                   </details>
                 </aside>
 
-                <svg
-                  x-ref="canvas"
-                  class="topology-canvas"
-                  :view-box.camel="'0 0 ' + canvasW + ' ' + canvasH"
-                  preserveAspectRatio="xMidYMid meet"
-                  @pointerdown="onCanvasPointerDown($event)"
-                  @dragover.prevent
-                  @drop="onCanvasDrop($event)"
-                >
-                  <text x="50%" y="50%" class="canvas-empty" text-anchor="middle" x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
-                  <g x-html="topologySvg"></g>
-                </svg>
+                <div class="canvas-stage" :class="{ panning: panning, 'space-pan': spaceDown }">
+                  <svg
+                    x-ref="canvas"
+                    class="topology-canvas"
+                    :class="{ 'lod-low': zoomPercent < 40 }"
+                    :view-box.camel="viewBoxAttr"
+                    preserveAspectRatio="xMidYMid meet"
+                    @pointerdown="onCanvasPointerDown($event)"
+                    @wheel.prevent="onWheel($event)"
+                    @dblclick="onCanvasDblClick($event)"
+                    @contextmenu="onContextMenu($event)"
+                    @dragover.prevent
+                    @drop="onCanvasDrop($event)"
+                  >
+                    <defs>
+                      <pattern id="gridpat" width="40" height="40" patternUnits="userSpaceOnUse">
+                        <path d="M 40 0 L 0 0 0 40" fill="none" class="grid-line" />
+                      </pattern>
+                    </defs>
+                    <rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridpat)" class="grid-bg" />
+                    <text x="480" y="280" class="canvas-empty" text-anchor="middle" x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
+                    <g x-html="decorationsSvg"></g>
+                    <g x-html="topologySvg"></g>
+                    <rect x-ref="bandRect" class="band" style="display:none" />
+                  </svg>
+                  <svg class="minimap" x-show="devices.length > 1" x-cloak
+                       :view-box.camel="minimapBox.x + ' ' + minimapBox.y + ' ' + minimapBox.w + ' ' + minimapBox.h"
+                       @pointerdown.prevent="onMinimapPointer($event)" aria-label="Bản đồ thu nhỏ">
+                    <g x-html="minimapSvg"></g>
+                  </svg>
+                  <div class="context-menu" x-show="menu" x-cloak :style="menu ? 'left:' + menu.x + 'px; top:' + menu.y + 'px' : ''" @click.stop>
+                    <template x-if="menu && menu.kind === 'node'">
+                      <div>
+                        <button type="button" @click="menuAction('edit')">Sửa thuộc tính</button>
+                        <button type="button" @click="menuAction('duplicate')">Nhân bản (Ctrl+D)</button>
+                        <button type="button" @click="menuAction('link-from')">Nối dây từ đây</button>
+                        <button type="button" class="danger-btn" @click="menuAction('delete-node')">Xoá</button>
+                      </div>
+                    </template>
+                    <template x-if="menu && menu.kind === 'link'">
+                      <div>
+                        <button type="button" class="danger-btn" @click="menuAction('delete-link')">Xoá dây nối</button>
+                      </div>
+                    </template>
+                    <template x-if="menu && menu.kind === 'canvas'">
+                      <div>
+                        <button type="button" @click="menuAction('paste')" :disabled="!clipboard.length">Dán (Ctrl+V)</button>
+                        <button type="button" @click="menuAction('select-all')">Chọn tất cả</button>
+                        <button type="button" @click="menuAction('fit')">Vừa khung</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
 
                 <aside class="topology-panel">
                   <div class="legend">
@@ -374,41 +435,65 @@
                     <span><i class="swatch trunk"></i> trunk</span>
                   </div>
 
-                  <div x-show="selectedNode" x-cloak class="card">
-                    <h4 x-text="selectedNode && selectedNode.hostname"></h4>
-                    <p class="hint">
-                      <code x-text="selectedNode && selectedNode.management_ip"></code> ·
-                      <span x-text="selectedNode && selectedNode.role"></span> ·
-                      <span x-text="selectedNode && selectedNode.status"></span> ·
-                      <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
-                    </p>
-                    <div class="row-actions" x-show="canEdit">
-                      <button type="button" @click="editSelectedDevice()">Sửa</button>
-                      <button type="button" class="danger-btn" @click="deleteDevice(selectedNode)">Xoá (Delete)</button>
+                  <form class="card form-grid single" x-show="props" x-cloak @submit.prevent="saveProps()">
+                    <h4>Thuộc tính thiết bị</h4>
+                    <template x-if="props">
+                      <div class="subfields">
+                        <label>Hostname <input type="text" x-ref="propHostname" x-model="props.hostname" maxlength="64" :disabled="!canEdit" /></label>
+                        <label>IP quản trị <input type="text" x-model="props.management_ip" :disabled="!canEdit" /></label>
+                        <label>Vai trò
+                          <select x-model="props.role" :disabled="!canEdit">
+                            <template x-for="role in ['isp','firewall','core','distribution','access','dmz','management']" :key="role">
+                              <option :value="role" x-text="role"></option>
+                            </template>
+                          </select>
+                        </label>
+                        <label>Môi trường
+                          <select x-model="props.environment" :disabled="!canEdit">
+                            <option value="pnetlab">PNETLab</option>
+                            <option value="physical">Thiết bị thật</option>
+                          </select>
+                        </label>
+                        <label>Cổng SSH <input type="number" min="1" max="65535" x-model="props.ssh_port" :disabled="!canEdit" /></label>
+                        <label>Mô tả <input type="text" x-model="props.description" maxlength="255" :disabled="!canEdit" /></label>
+                        <label class="check"><input type="checkbox" x-model="props.monitoring_enabled" :disabled="!canEdit" /> Giám sát định kỳ</label>
+                        <p class="hint">
+                          Trạng thái <b x-text="selectedNode && selectedNode.status"></b> ·
+                          <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
+                        </p>
+                      </div>
+                    </template>
+                    <p class="error-text" x-show="propsError" x-text="propsError"></p>
+                    <div class="form-actions" x-show="canEdit">
+                      <button type="submit" class="primary-btn">Lưu</button>
+                      <button type="button" @click="duplicateSelection()">Nhân bản</button>
+                      <button type="button" class="danger-btn" @click="deleteDevice(selectedNode)">Xoá</button>
                     </div>
-                  </div>
+                  </form>
 
                   <form class="card form-grid single" @submit.prevent="saveLink()" x-show="linkFormOpen" x-cloak>
                     <h4 x-text="linkForm.id ? 'Sửa liên kết #' + linkForm.id : 'Liên kết mới'"></h4>
                     <p class="hint" x-show="!linkForm.id">Bấm hai thiết bị trên sơ đồ hoặc chọn bên dưới.</p>
 
                     <label>Thiết bị A
-                      <select x-model.number="linkForm.device_a_id" :disabled="!!linkForm.id">
+                      <select x-model.number="linkForm.device_a_id" :disabled="!!linkForm.id" @change="loadPorts('a')">
                         <option value="">—</option>
                         <template x-for="d in devices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
                       </select>
                     </label>
                     <label>Cổng A
-                      <input type="text" x-model="linkForm.interface_a" :disabled="!!linkForm.id" required placeholder="GigabitEthernet0/1" />
+                      <input type="text" list="ports-a" x-model="linkForm.interface_a" :disabled="!!linkForm.id" placeholder="trống = tự chọn cổng trống" />
+                      <datalist id="ports-a"><template x-for="p in portsByLink.a.filter((x) => !x.used)" :key="p.name"><option :value="p.name"></option></template></datalist>
                     </label>
                     <label>Thiết bị B
-                      <select x-model.number="linkForm.device_b_id" :disabled="!!linkForm.id">
+                      <select x-model.number="linkForm.device_b_id" :disabled="!!linkForm.id" @change="loadPorts('b')">
                         <option value="">—</option>
                         <template x-for="d in devices" :key="d.id"><option :value="d.id" x-text="d.hostname"></option></template>
                       </select>
                     </label>
                     <label>Cổng B
-                      <input type="text" x-model="linkForm.interface_b" :disabled="!!linkForm.id" required placeholder="GigabitEthernet0/0" />
+                      <input type="text" list="ports-b" x-model="linkForm.interface_b" :disabled="!!linkForm.id" placeholder="trống = tự chọn cổng trống" />
+                      <datalist id="ports-b"><template x-for="p in portsByLink.b.filter((x) => !x.used)" :key="p.name"><option :value="p.name"></option></template></datalist>
                     </label>
                     <label>Kiểu liên kết
                       <select x-model="linkForm.link_type">
@@ -732,6 +817,29 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" x-show="helpOpen" x-cloak @click.self="helpOpen = false">
+    <div class="modal" role="dialog" aria-label="Phím tắt">
+      <h3>Phím tắt trên sơ đồ</h3>
+      <table class="data-table">
+        <tbody>
+          <tr><td><kbd>Con lăn</kbd></td><td>Phóng to / thu nhỏ quanh con trỏ</td></tr>
+          <tr><td><kbd>Space</kbd> + kéo · nút giữa</td><td>Kéo nền sơ đồ</td></tr>
+          <tr><td><kbd>F</kbd> · <kbd>0</kbd> · <kbd>+</kbd> <kbd>−</kbd></td><td>Vừa khung · 100% · phóng to/thu nhỏ</td></tr>
+          <tr><td>Kéo trên nền · <kbd>Shift</kbd>+bấm · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Chọn nhiều thiết bị</td></tr>
+          <tr><td>Nhấp đúp · chuột phải</td><td>Sửa thuộc tính · menu thao tác</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>V</kbd> / <kbd>D</kbd></td><td>Sao chép · dán · nhân bản</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></td><td>Hoàn tác · làm lại</td></tr>
+          <tr><td><kbd>←↑↓→</kbd> (<kbd>Shift</kbd>: nhanh)</td><td>Dịch thiết bị đang chọn</td></tr>
+          <tr><td><kbd>G</kbd></td><td>Bật/tắt bắt dính lưới</td></tr>
+          <tr><td><kbd>Delete</kbd> · <kbd>Esc</kbd></td><td>Xoá đã chọn · bỏ chọn / thoát nối dây</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Bảng này</td></tr>
+        </tbody>
+      </table>
+      <div class="form-actions"><button type="button" class="primary-btn" @click="helpOpen = false">Đóng</button></div>
+    </div>
+  </div>
+
+  <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
   <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
 </body>

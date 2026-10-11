@@ -11,6 +11,7 @@ from ..extensions import db
 DEVICE_TEMPLATES = (
     {
         "key": "router",
+        "ports": 8,
         "label": "Router",
         "device_type": "cisco_ios",
         "role": "core",
@@ -19,6 +20,7 @@ DEVICE_TEMPLATES = (
     },
     {
         "key": "switch_l3",
+        "ports": 24,
         "label": "Switch L3",
         "device_type": "cisco_ios",
         "role": "distribution",
@@ -27,6 +29,7 @@ DEVICE_TEMPLATES = (
     },
     {
         "key": "switch",
+        "ports": 24,
         "label": "Switch L2",
         "device_type": "cisco_ios",
         "role": "access",
@@ -35,6 +38,7 @@ DEVICE_TEMPLATES = (
     },
     {
         "key": "firewall",
+        "ports": 8,
         "label": "Firewall ASA",
         "device_type": "cisco_asa",
         "role": "firewall",
@@ -46,6 +50,45 @@ DEVICE_TEMPLATES = (
 # Management addresses are suggested from the 10th host upward, leaving the
 # low addresses for the gateway and infrastructure.
 FIRST_SUGGESTED_HOST = 10
+
+
+def template_for_device(device) -> dict:
+    """The template a device most resembles (decides its port inventory)."""
+    if device.device_type == "cisco_asa" or device.role == "firewall":
+        return get_template("firewall")
+    if device.role == "core":
+        return get_template("router")
+    if device.role == "distribution":
+        return get_template("switch_l3")
+    return get_template("switch")
+
+
+def port_inventory(project_id: int, device) -> list[dict]:
+    """The device's ports, each marked free or used (by a link or access port)."""
+    from .interfaces import normalize_label
+    from .model import DesignAccessPort, TopologyLink
+
+    template = template_for_device(device)
+    used: dict[str, str] = {}
+
+    def canon(name):
+        return (normalize_label(name) or name).lower()
+
+    for link in db.session.query(TopologyLink).filter(TopologyLink.project_id == project_id):
+        if link.device_a_id == device.id:
+            peer = link.device_b.hostname if link.device_b else "?"
+            used[canon(link.interface_a)] = f"link to {peer}"
+        if link.device_b_id == device.id:
+            peer = link.device_a.hostname if link.device_a else "?"
+            used[canon(link.interface_b)] = f"link to {peer}"
+    for port in db.session.query(DesignAccessPort).filter_by(device_id=device.id):
+        used[canon(port.interface)] = f"access VLAN {port.vlan_id}"
+
+    ports = []
+    for number in range(template["ports"]):
+        name = f"{template['interface_prefix']}{number}"
+        ports.append({"name": name, "used": canon(name) in used, "used_by": used.get(canon(name))})
+    return ports
 
 
 def get_template(key: str) -> dict:

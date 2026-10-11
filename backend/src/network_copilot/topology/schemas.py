@@ -96,3 +96,5 @@ class ConfigRequestSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     link_ids: list[int] | None = Field(default=None, max_length=1000)
+    # A line for the reviewer, kept in the change batch's description.
+    note: str | None = Field(default=None, max_length=160)
