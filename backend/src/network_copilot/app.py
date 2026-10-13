@@ -95,6 +95,7 @@ def _register_blueprints(app: Flask) -> None:
     from .commands.routes import bp as commands_bp
     from .dashboard.routes import bp as dashboard_bp
     from .devices.routes import bp as devices_bp
+    from .history_extension.routes import init_app as init_history_extension
     from .monitoring.routes import bp as monitoring_bp
 
     app.register_blueprint(auth_bp)
@@ -107,6 +108,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(ai_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(dashboard_bp)
+    init_history_extension(app)
 
 
 def _register_error_handlers(app: Flask) -> None:

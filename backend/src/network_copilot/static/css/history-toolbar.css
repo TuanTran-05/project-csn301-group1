@@ -1,0 +1,17 @@
+.nc-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.sidebar .nc-history-heading h2 { margin: 0; min-width: 0; }
+.nc-history-toolbar { display: flex; gap: 4px; flex-shrink: 0; }
+.nc-history-toolbar button { display: grid; place-items: center; width: 28px; height: 28px; padding: 4px; border: 1px solid var(--border, #223349); border-radius: 50%; background: var(--surface-raised, #0b1420); color: var(--text, #dbe4ee); cursor: pointer; }
+.nc-history-toolbar button:disabled { opacity: .3; cursor: not-allowed; }
+.nc-history-toolbar button:hover:not(:disabled) { background: var(--surface, #131f30); border-color: var(--accent, #06b6d4); }
+.nc-history-toolbar button:focus-visible { outline: 2px solid var(--accent, #06b6d4); outline-offset: 2px; }
+.nc-history-toolbar svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.nc-history-tooltip { position: relative; display: inline-flex; }
+.nc-history-tooltip::after { content: attr(data-tooltip); position: absolute; right: 0; top: calc(100% + 8px); z-index: 10; padding: 6px 8px; border-radius: 6px; background: var(--surface, #131f30); color: var(--text, #dbe4ee); border: 1px solid var(--border, #223349); white-space: nowrap; font-size: 12px; pointer-events: none; opacity: 0; }
+.nc-history-tooltip:hover::after, .nc-history-tooltip:focus-within::after { opacity: 1; }
+.nc-history-message { color: var(--danger-text, #f3a6a6); font-size: 12px; }
+.nc-pending-editor { display: flex; flex-direction: column; gap: 8px; font-size: 12px; padding: 10px 0; }
+.nc-pending-editor fieldset { margin: 0; border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
+.nc-pending-editor label { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.nc-pending-editor input, .nc-pending-editor textarea { width: 100%; background: var(--surface-raised); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px; }
+.nc-pending-editor textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; }

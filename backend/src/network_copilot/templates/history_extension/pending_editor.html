@@ -1,0 +1,20 @@
+<form class="nc-pending-editor" x-show="pendingEditor" x-cloak @submit.prevent="savePendingEditor()">
+  <strong>Sửa cấu hình đang chờ duyệt</strong>
+  <label x-show="pendingEditor && pendingEditor.kind === 'batch'">
+    Mô tả batch
+    <input type="text" maxlength="255" :value="pendingEditor?.description || ''"
+      @input="pendingEditor.description = $event.target.value" />
+  </label>
+  <template x-for="child in pendingEditor ? pendingEditor.changes : []" :key="child.id">
+    <fieldset>
+      <legend x-text="child.hostname"></legend>
+      <label>Mô tả <input type="text" maxlength="255" x-model="child.description" /></label>
+      <label>Lệnh cấu hình <textarea rows="6" x-model="child.commandsText" required spellcheck="false"></textarea></label>
+    </fieldset>
+  </template>
+  <p class="nc-history-message" role="alert" x-show="pendingEditorError" x-text="pendingEditorError"></p>
+  <div class="sidebar-actions">
+    <button type="submit">Lưu nháp</button>
+    <button type="button" @click="pendingEditor = null">Đóng</button>
+  </div>
+</form>
