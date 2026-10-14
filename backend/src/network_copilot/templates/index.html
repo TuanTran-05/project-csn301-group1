@@ -6,6 +6,7 @@
   <title>Network Copilot</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/history-toolbar.css') }}" />
 </head>
 <body x-data="app()">
 
@@ -360,8 +361,9 @@
           <button type="submit" :disabled="sending">Gửi</button>
         </form>
       </main>
-      <aside class="sidebar changes-panel">
-        <h2>Thay đổi đang chờ</h2>
+      <aside class="sidebar changes-panel" x-data="historyDraft">
+        {% include 'history_extension/toolbar.html' %}
+        {% include 'history_extension/pending_editor.html' %}
         <p
           class="sidebar-state"
           x-show="changesLoading || batchesLoading"
@@ -388,6 +390,8 @@
               <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
                 <button @click="approveChange(change.id)">Approve</button>
                 <button @click="cancelChange(change.id)">Cancel</button>
+                <button type="button" x-show="change.requested_by_id === currentUser?.id"
+                  @click="openPendingEditor('change', change.id)">Sửa nháp</button>
               </div>
             </li>
           </template>
@@ -432,6 +436,8 @@
                 x-text="batchActionErrors[batch.id]"
               ></div>
               <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
+                <button type="button" x-show="batch.status === 'pending_approval' && batch.requested_by_id === currentUser?.id"
+                  @click="openPendingEditor('batch', batch.id)">Sửa nháp</button>
                 <button
                   x-show="batch.status === 'pending_approval'"
                   :disabled="Boolean(batchActionIds[batch.id])"
@@ -455,6 +461,8 @@
   </div>
 
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/history-toolbar.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/history-panel.js') }}" defer></script>
   <script src="{{ url_for('static', filename='vendor/alpine.min.js') }}" defer></script>
 </body>
 </html>

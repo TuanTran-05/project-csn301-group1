@@ -124,6 +124,8 @@ def create_batch_preview(
             )
         batch.requires_confirmation = any(c.requires_confirmation for c in batch.changes)
         batch.risk_level = max((c.risk_level for c in batch.changes), key=_risk_rank)
+        from ..history_extension.pending_service import capture_before, record_after
+        history_before = capture_before(user_id)
         db.session.add(batch)
         db.session.flush()
         for change in batch.changes:
@@ -132,6 +134,7 @@ def create_batch_preview(
     except Exception:
         db.session.rollback()
         raise
+    record_after(history_before, "CREATE_PENDING_BATCH", batch)
     return batch
 
 
@@ -203,11 +206,14 @@ def cancel_batch(batch_id: int, user_id: int | None) -> ChangeBatch:
         raise InvalidStateError(
             f"A batch in state '{batch.status}' can no longer be cancelled."
         )
+    from ..history_extension.pending_service import capture_before, record_after
+    history_before = capture_before(user_id)
     batch.status = "cancelled"
     for change in batch.changes:
         if change.status in {"pending_approval", "approved"}:
             change.status = "cancelled"
     db.session.commit()
+    record_after(history_before, "CANCEL_PENDING_BATCH", batch)
     record_event(
         action="batch.cancel",
         result="success",

@@ -50,18 +50,18 @@ def redact_sensitive(value, _force: bool = False):
     and every scalar underneath it is masked instead, so callers can still read
     the shape of what was logged without ever seeing a secret.
     """
-    if isinstance(value, dict):
-        return {
-            key: redact_sensitive(item, _force or _is_sensitive(key))
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [redact_sensitive(item, _force) for item in value]
-    if _force:
-        return REDACTED
-    if isinstance(value, str):
-        return INLINE_SECRET.sub(lambda m: f"{m.group(1)} {REDACTED}", value)
-    return value
+    from ..history_extension.protection import redact_sensitive_data
+    safe = redact_sensitive_data(value, force=_force)
+    # Configuration command lists may use unknown vendor credential syntax.
+    # Keep the existing single readonly-command audit contract.
+    def mask_command_lists(item):
+        if isinstance(item, dict):
+            return {key: redact_sensitive_data(child, force=True) if "commands" in str(key).lower()
+                    else mask_command_lists(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [mask_command_lists(child) for child in item]
+        return item
+    return mask_command_lists(safe)
 
 
 def _request_context() -> dict:
@@ -103,7 +103,9 @@ def record_event(
             user_id=user_id,
             username=username,
             device_id=device_id,
-            message=(redact_sensitive(message) or "")[:512] if message else None,
+            # Preview descriptions are arbitrary text; they can contain pasted credentials.
+            message=(REDACTED if action == "change.preview"
+                     else (redact_sensitive(message) or "")[:512]) if message else None,
             details=safe_details,
             source_ip=context.get("source_ip"),
             request_id=context.get("request_id"),
@@ -111,8 +113,12 @@ def record_event(
         db.session.add(event)
         db.session.commit()
         return event
-    except Exception:  # pragma: no cover - auditing must degrade gracefully
-        logger.exception("Failed to write audit event %s/%s", action, result)
+    except Exception as exc:  # pragma: no cover - auditing must degrade gracefully
+        try:
+            logger.error("Failed to write audit event (%s)", type(exc).__name__)
+        except Exception:
+            # A failed handler must not prevent rollback or escape this helper.
+            pass
         try:
             db.session.rollback()
         except Exception:
