@@ -23,12 +23,21 @@ _KEY_MARKERS = ("password", "passwd", "secret", "token", "api_key", "apikey", "a
 _INLINE = re.compile(
     r"\b(password|passwd|secret|token|key|api[_-]?key|credential|community|passphrase|"
     r"pre[-_ ]shared[-_ ]key|key[-_ ]string|authentication[-_ ]key|private[-_ ]key)\b"
-    r"(?=\s|[:=])\s*[:=]?\s*\S.*", re.I | re.S)
+    r"(?=\s|[:=])\s*[:=]?\s*"
+    r"(?:[0-9]\s+(?=[\"']|\S+[^\S\r\n]*(?:[\r\n]|\Z)))?"
+    r'(?:"(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)'
+    r"|'(?:\\[\s\S]|[^'\\])*(?:'|\\?\Z)"
+    r"|\S[^\r\n]*)[^\r\n]*", re.I)
 
 
 def redact_sensitive_data(value, force=False, hide_commands=False):
-    """Mask entire secret suffixes, including IOS encoding type and quoted values.
+    """Mask secret values, including wrapped IOS encoding and quoted values.
 
+    Separators may wrap; quoted values end at their unescaped closing quote.
+    A one-digit encoding may precede a quoted value or one unquoted token.
+    A multiword diagnostic line does not qualify as a wrapped encoded value.
+    Unquoted values and closing-quote suffixes stop at the current line end.
+    An unterminated quote masks the remaining text rather than leaking it.
     Audit commands are masked as a whole, including unknown vendor syntaxes.
     Authorized draft/configuration responses retain full data for editing.
     """
@@ -110,12 +119,38 @@ def public_audit(trail):
     return result
 
 
+# Frozen 1.1 rules: these authenticate old envelopes, not new audit output.
+# Keep them independent from future changes to the active redaction policy.
+_LEGACY_KEY_MARKERS = ("password", "passwd", "secret", "token", "api_key", "apikey", "authorization",
+                       "auth", "credential", "private_key", "session_key", "passphrase", "community",
+                       "pre_shared", "psk", "key_string")
+_LEGACY_INLINE = re.compile(
+    r"\b(password|passwd|secret|token|key|api[_-]?key|credential|community|passphrase|"
+    r"pre[-_ ]shared[-_ ]key|key[-_ ]string|authentication[-_ ]key|private[-_ ]key)\b"
+    r"(?=\s|[:=])\s*[:=]?\s*\S.*", re.I | re.S)
+
+
+def _legacy_redact(value, force=False):
+    """Historical recursive projection with hide_commands=True."""
+    if isinstance(value, dict):
+        return {key: _legacy_redact(item, force or any(m in str(key).lower() for m in _LEGACY_KEY_MARKERS)
+                                   or "command" in str(key).lower() or str(key).lower() == "description")
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_legacy_redact(item, force) for item in value]
+    if force:
+        return REDACTED
+    if isinstance(value, str):
+        return _LEGACY_INLINE.sub(lambda match: match.group(1) + " " + REDACTED, value)
+    return value
+
+
 def _legacy_audit_view(data):
     """Exact 1.1 projection, only for authenticating existing encrypted backups."""
     result = deepcopy(data)
     result["backup_version"] = "1.1"
     result["backup_kind"] = "restorable_encrypted"
-    result["audit_trail"] = redact_sensitive_data(data["audit_trail"], hide_commands=True)
+    result["audit_trail"] = _legacy_redact(data["audit_trail"])
     return result
 
 
