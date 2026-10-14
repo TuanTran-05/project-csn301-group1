@@ -211,7 +211,7 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     ]
 
     # 9. The audit trail covers the whole flow.
-    logs = client.get("/api/audit-logs", headers=headers)
+    logs = client.get("/api/audit-logs?scope=all", headers=headers)
     actions = {item["action"] for item in logs.get_json()["items"]}
     assert {
         "auth.login",
@@ -244,7 +244,7 @@ def test_flow_never_leaks_credentials(client, app, lab, access_switch, admin_use
 
     surfaces = [
         client.get("/api/devices", headers=headers),
-        client.get("/api/audit-logs", headers=headers),
+        client.get("/api/audit-logs?scope=all", headers=headers),
         client.get("/api/commands/history", headers=headers),
         client.get(f"/api/changes/{change_id}", headers=headers),
         client.get(f"/api/change-batches/{batch['id']}", headers=headers),

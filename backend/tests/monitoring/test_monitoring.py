@@ -269,3 +269,65 @@ def test_poll_runs_the_asa_commands_on_an_asa_device(app, ssh_factory, make_devi
 
     assert fake.show_commands == ["show interface ip brief", "show route"]
 
+
+
+# -- parallel polling and cycle statistics ---------------------------------------
+
+
+def test_poll_all_collects_in_parallel_but_saves_every_device(app, make_device, ssh_factory):
+    import threading
+
+    from network_copilot.monitoring.service import poll_all_enabled_devices
+
+    devices = [make_device(f"P{i}", f"172.16.3.{100 + i}", "access") for i in range(1, 7)]
+    threads = set()
+
+    from fakes.fake_ssh_client import FakeSSHClient
+
+    class Threaded(FakeSSHClient):
+        def run_show(self, command):
+            import time
+
+            threads.add(threading.get_ident())
+            time.sleep(0.02)
+            return super().run_show(command)
+
+    for device in devices:
+        ssh_factory.clients[device.hostname] = Threaded(default_output="ok")
+
+    snapshots = poll_all_enabled_devices(max_workers=3)
+    assert len(snapshots) == 6 and all(s.status == "online" for s in snapshots)
+    assert len(threads) > 1  # really ran on more than one thread
+    stats = app.extensions["monitoring_stats"]
+    assert stats["devices"] == 6 and stats["workers"] == 3 and stats["overrunning"] is False
+
+
+def test_a_failing_device_does_not_stop_the_others_in_parallel(app, make_device, ssh_factory):
+    from network_copilot.monitoring.service import poll_all_enabled_devices
+    from network_copilot.ssh.exceptions import SSHConnectionError
+
+    make_device("OK1", "172.16.3.101", "access")
+    make_device("BAD", "172.16.3.102", "access")
+    make_device("OK2", "172.16.3.103", "access")
+    ssh_factory.set_client("OK1", default_output="x")
+    ssh_factory.set_failing("BAD", SSHConnectionError("refused"))
+    ssh_factory.set_client("OK2", default_output="x")
+    statuses = {s.device.hostname: s.status for s in poll_all_enabled_devices(max_workers=3)}
+    assert statuses == {"OK1": "online", "BAD": "offline", "OK2": "online"}
+
+
+def test_an_overrunning_cycle_is_flagged(app, make_device, ssh_factory, caplog):
+    from network_copilot.monitoring.service import poll_all_enabled_devices
+
+    app.config["MONITORING_INTERVAL_SECONDS"] = 0
+    make_device("SLOW", "172.16.3.101", "access")
+    ssh_factory.set_client("SLOW", default_output="x")
+    poll_all_enabled_devices()
+    assert app.extensions["monitoring_stats"]["overrunning"] is True
+    assert "took" in caplog.text
+
+
+def test_monitoring_stats_endpoint_is_admin_only(client, admin_headers, viewer_headers, app):
+    assert client.get("/api/dashboard/monitoring", headers=viewer_headers).status_code == 403
+    body = client.get("/api/dashboard/monitoring", headers=admin_headers).get_json()
+    assert body == {"enabled": False, "stats": None}

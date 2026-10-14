@@ -31,15 +31,33 @@ class BatchOperation:
     group_id: int | None = None
 
 
-def _resolve_targets(hostnames: list[str]) -> list[Device]:
+def _resolve_targets(
+    hostnames: list[str], project_id: int | None = None
+) -> list[Device]:
+    """Turn hostnames (or "*") into devices.
+
+    With ``project_id`` the lookup, including the "*" wildcard, only sees that
+    project's devices. Without it (internal callers) a hostname that exists in
+    several projects is ambiguous and the batch builder below rejects any
+    result that spans projects.
+    """
     if not hostnames:
         raise ValidationError("At least one device hostname (or '*') is required.")
+
+    query = db.session.query(Device)
+    if project_id is not None:
+        query = query.filter(Device.project_id == project_id)
     if hostnames == ["*"]:
-        return db.session.query(Device).order_by(Device.hostname).all()
+        # "Every device" means every one the backend can configure.
+        return (
+            query.filter(Device.managed.is_(True), Device.lifecycle == "provisioned")
+            .order_by(Device.hostname, Device.id)
+            .all()
+        )
     if "*" in hostnames:
         raise ValidationError("'*' cannot be mixed with explicit hostnames.")
     unique = sorted(set(hostnames))
-    devices = db.session.query(Device).filter(Device.hostname.in_(unique)).all()
+    devices = query.filter(Device.hostname.in_(unique)).all()
     found = {device.hostname for device in devices}
     missing = [hostname for hostname in unique if hostname not in found]
     if missing:
@@ -56,31 +74,27 @@ def create_batch_preview(
     operations: list[BatchOperation],
     description: str | None,
     source: str = "ai",
+    project_id: int | None = None,
 ) -> ChangeBatch:
     """Resolve every operation's targets and build one ChangeRequest per
     device. Either the whole batch is created, or nothing is - a conflicting
-    or unknown target raises before any row is added to the session."""
+    or unknown target raises before any row is added to the session.
+
+    A batch belongs to exactly one project. Routes pass ``project_id`` so every
+    hostname, and the "*" wildcard, only resolves inside it."""
     if not operations:
         raise ValidationError("At least one batch operation is required.")
 
-    resolved: dict[str, tuple[Device, BatchOperation]] = {}
+    resolved: dict[int, tuple[Device, BatchOperation]] = {}
     for operation in operations:
-        devices = _resolve_targets(operation.device_hostnames)
-        if operation.device_hostnames == ["*"]:
-            from ..governance.access import actor, permitted
-            user = actor(user_id)
-            devices = [d for d in devices if permitted(user, "config.create", operation.group_id, d)]
-            if operation.group_id is not None:
-                from ..governance.access import require_group
-                group = require_group(user, operation.group_id)
-                devices = [d for d in devices if d in group.devices]
+        devices = _resolve_targets(operation.device_hostnames, project_id)
         for device in devices:
-            previous = resolved.get(device.hostname)
+            previous = resolved.get(device.id)
             if previous and previous[1] != operation:
                 raise ValidationError(
                     f"Device '{device.hostname}' has conflicting batch operations."
                 )
-            resolved[device.hostname] = (device, operation)
+            resolved[device.id] = (device, operation)
 
     if not resolved:
         # Reachable when every operation is a wildcard ("*") and the device
@@ -90,26 +104,23 @@ def create_batch_preview(
         # ValueError.
         raise ValidationError("The batch did not resolve to any device.")
 
-    from ..auth.model import User
-    from ..changes.model import ChangeRequest
-    from ..governance.access import actor, policy
-    from ..errors import ConflictError
-    user = actor(user_id)
-    db.session.query(User).filter_by(id=user.id).update({"token_version": User.token_version})
-    pending = db.session.query(ChangeRequest).filter(ChangeRequest.requested_by_id == user.id,
-                                                    ChangeRequest.status.in_(["pending_approval", "approved", "running"])).count()
-    if pending + len(resolved) > policy().pending_change_limit:
-        raise ConflictError("Pending change quota reached.")
+    project_ids = {device.project_id for device, _ in resolved.values()}
+    if len(project_ids) != 1:
+        raise ValidationError(
+            "A batch can only target devices of a single project; pass a project."
+        )
 
     batch = ChangeBatch(
+        project_id=project_ids.pop(),
         requested_by_id=user_id,
         description=(description or "")[:255] or None,
         status="pending_approval",
         source=source,
     )
     try:
-        for hostname in sorted(resolved):
-            device, operation = resolved[hostname]
+        for device, operation in sorted(
+            resolved.values(), key=lambda pair: (pair[0].hostname, pair[0].id)
+        ):
             batch.changes.append(
                 prepare_change(
                     user_id,
@@ -138,8 +149,10 @@ def create_batch_preview(
     return batch
 
 
-def get_batch(batch_id: int) -> ChangeBatch:
+def get_batch(batch_id: int, project_id: int | None = None) -> ChangeBatch:
     batch = db.session.get(ChangeBatch, batch_id)
+    if batch is not None and project_id is not None and batch.project_id != project_id:
+        batch = None
     if batch is None:
         raise NotFoundError(f"Change batch {batch_id} was not found.")
     from ..governance.visibility import check_change
@@ -148,11 +161,12 @@ def get_batch(batch_id: int) -> ChangeBatch:
     return batch
 
 
-def list_batches(limit: int = 100) -> list[ChangeBatch]:
-    from ..governance.visibility import batches
-    return batches(
-        db.session.query(ChangeBatch)
-        .order_by(ChangeBatch.created_at.desc(), ChangeBatch.id.desc())
+def list_batches(limit: int = 100, project_id: int | None = None) -> list[ChangeBatch]:
+    query = db.session.query(ChangeBatch)
+    if project_id is not None:
+        query = query.filter(ChangeBatch.project_id == project_id)
+    return (
+        query.order_by(ChangeBatch.created_at.desc(), ChangeBatch.id.desc())
         .limit(min(max(limit, 1), 500))
         .all()
     )

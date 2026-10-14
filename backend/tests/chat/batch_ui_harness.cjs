@@ -372,7 +372,43 @@ async function logoutInvalidatesActionAndCleansTimers() {
   assert.deepEqual(clearedIntervals, [11, 12, 13, 14]);
 }
 
+async function streamRefreshesOnlyChangedParts() {
+  const { app } = createApp();
+  const calls = [];
+  for (const name of ["refreshDevices", "refreshChanges", "refreshBatches", "pollMessages"]) {
+    app[name] = () => {
+      calls.push(name);
+      return Promise.resolve();
+    };
+  }
+  const state = (extra) => ({ devices: "d1", changes: "c1", batches: "b1", messages: "m1", ...extra });
+  const block = (value) => `event: state\ndata: ${JSON.stringify(value)}`;
+
+  // First state after connecting: everything is refreshed once.
+  app._handleStreamBlock(block(state({})));
+  assert.deepEqual(calls.splice(0), ["refreshDevices", "refreshChanges", "refreshBatches", "pollMessages"]);
+
+  // Nothing moved: nothing is fetched.
+  app._handleStreamBlock(block(state({})));
+  assert.deepEqual(calls.splice(0), []);
+
+  // Only a new chat message: only the chat is polled.
+  app._handleStreamBlock(block(state({ messages: "m2" })));
+  assert.deepEqual(calls.splice(0), ["pollMessages"]);
+
+  // A change and a batch moved together.
+  app._handleStreamBlock(block(state({ messages: "m2", changes: "c2", batches: "b2" })));
+  assert.deepEqual(calls.splice(0).sort(), ["refreshBatches", "refreshChanges"]);
+
+  // Heartbeats, bye events and garbage are ignored.
+  app._handleStreamBlock("event: bye\ndata: {\"reconnect\": true}");
+  app._handleStreamBlock(": keep-alive");
+  app._handleStreamBlock("event: state\ndata: {not json");
+  assert.deepEqual(calls, []);
+}
+
 const cases = {
+  stream_refreshes_only_changed_parts: streamRefreshesOnlyChangedParts,
   stale_chat_snapshot: staleChatSnapshot,
   stale_get_after_action: staleGetAfterAction,
   latest_refresh_wins: latestRefreshWins,

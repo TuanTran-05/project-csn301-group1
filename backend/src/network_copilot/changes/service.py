@@ -307,6 +307,7 @@ def prepare_change(
     assignment_id: int | None = None,
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
+    device_service.ensure_deployable(device)
     body, requires_confirmation = validate_commands(commands, device)
     validate_execution_mode(body, execution_mode)
 
@@ -371,15 +372,13 @@ def create_preview(
     description: str | None = None,
     source: str = "api",
     execution_mode: str = "config",
-    group_id: int | None = None,
-    assignment_id: int | None = None,
+    project_id: int | None = None,
 ) -> ChangeRequest:
-    """Validate a change and store it as pending_approval. Never touches SSH."""
-    device = device_service.get_device(device_id)
-    actor = _require_actor(user_id)
-    _authorize_device_access(actor, device)
-    # Serialize quota checks for this account across concurrent previews.
-    db.session.query(User).filter_by(id=actor.id).update({"token_version": User.token_version})
+    """Validate a change and store it as pending_approval. Never touches SSH.
+
+    ``project_id`` confines the target to one project; routes always pass it.
+    """
+    device = device_service.get_device(device_id, project_id)
 
     change = prepare_change(
         user_id,
@@ -446,8 +445,12 @@ def _validate_verification(commands: list[str], device: Device) -> list[str]:
     return verified
 
 
-def get_change(change_id: int) -> ChangeRequest:
+def get_change(change_id: int, project_id: int | None = None) -> ChangeRequest:
     change = db.session.get(ChangeRequest, change_id)
+    if change is not None and project_id is not None:
+        # Another project's change is indistinguishable from a missing one.
+        if change.device is None or change.device.project_id != project_id:
+            change = None
     if change is None:
         raise NotFoundError(f"Change request {change_id} was not found.")
     from ..governance.visibility import check_change
@@ -491,8 +494,13 @@ def list_changes(
     status: str | None = None,
     limit: int = 100,
     standalone_only: bool = False,
+    project_id: int | None = None,
 ) -> list[ChangeRequest]:
     query = db.session.query(ChangeRequest)
+    if project_id is not None:
+        query = query.join(Device, Device.id == ChangeRequest.device_id).filter(
+            Device.project_id == project_id
+        )
     if device_id:
         query = query.filter(ChangeRequest.device_id == device_id)
     if status:

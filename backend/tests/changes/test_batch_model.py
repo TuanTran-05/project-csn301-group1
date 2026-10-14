@@ -1,11 +1,12 @@
 from network_copilot.changes.model import ChangeBatch, ChangeRequest
+from conftest import default_project_id as _pid
 from network_copilot.extensions import db
 
 
 def test_batch_serializes_children_and_confirmation_text(
     app, admin_user, access_switch, dist_switch
 ):
-    batch = ChangeBatch(
+    batch = ChangeBatch(project_id=_pid(), 
         status="pending_approval",
         risk_level="high",
         requires_confirmation=True,
@@ -30,7 +31,7 @@ def test_batch_serializes_children_and_confirmation_text(
 
 
 def test_single_child_batch_uses_hostname_confirmation(app, admin_user, access_switch):
-    batch = ChangeBatch(status="pending_approval", risk_level="high", requires_confirmation=True)
+    batch = ChangeBatch(project_id=_pid(), status="pending_approval", risk_level="high", requires_confirmation=True)
     batch.changes = [ChangeRequest(device_id=access_switch.id, commands=["reload"], execution_mode="exec")]
     db.session.add(batch)
     db.session.commit()
@@ -39,7 +40,7 @@ def test_single_child_batch_uses_hostname_confirmation(app, admin_user, access_s
 
 def test_batch_serializes_children_sorted_by_hostname(app, admin_user, access_switch, dist_switch):
     """Verify that children are explicitly sorted by hostname, not insertion order."""
-    batch = ChangeBatch(
+    batch = ChangeBatch(project_id=_pid(), 
         status="pending_approval",
         risk_level="high",
         requires_confirmation=True,

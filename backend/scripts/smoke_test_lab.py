@@ -27,6 +27,7 @@ from network_copilot.credentials.service import get_device_credential  # noqa: E
 from network_copilot.devices.model import Device  # noqa: E402
 from network_copilot.errors import AppError  # noqa: E402
 from network_copilot.extensions import db  # noqa: E402
+from network_copilot.projects.model import Project  # noqa: E402
 from network_copilot.ssh.client import SSHClient  # noqa: E402
 from network_copilot.ssh.types import SSHTarget  # noqa: E402
 
@@ -97,7 +98,22 @@ def check(device: Device) -> tuple[bool, str]:
 def main() -> int:
     app = create_app()
     with app.app_context():
-        devices = db.session.query(Device).order_by(Device.hostname).all()
+        # The lab lives in one project; other projects are not this script's
+        # business and must not count as "unexpected" devices.
+        name = os.environ.get("SEED_PROJECT_NAME", "PNETLab")
+        project = db.session.query(Project).filter_by(name=name).first()
+        if project is None:
+            print(
+                f"No project named '{name}'. Run scripts/seed_lab.py first.",
+                file=sys.stderr,
+            )
+            return 1
+        devices = (
+            db.session.query(Device)
+            .filter_by(project_id=project.id)
+            .order_by(Device.hostname)
+            .all()
+        )
 
         mismatch = inventory_error(devices)
         if mismatch is not None:

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 RESULTS = ("success", "failure", "blocked")
 
@@ -20,6 +20,9 @@ class AuditLog(db.Model):
     device_id = db.Column(
         db.Integer, db.ForeignKey("devices.id", ondelete="SET NULL"), index=True
     )
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), index=True
+    )
     message = db.Column(db.String(512))
     details = db.Column(db.JSON)
     source_ip = db.Column(db.String(45))
@@ -31,6 +34,11 @@ class AuditLog(db.Model):
         index=True,
     )
 
+    __table_args__ = (
+        in_check("result", RESULTS, "result_valid"),
+        db.Index("ix_audit_logs_project_created", "project_id", "created_at"),
+    )
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -39,6 +47,7 @@ class AuditLog(db.Model):
             "user_id": self.user_id,
             "username": self.username,
             "device_id": self.device_id,
+            "project_id": self.project_id,
             "message": self.message,
             "details": self.details,
             "source_ip": self.source_ip,

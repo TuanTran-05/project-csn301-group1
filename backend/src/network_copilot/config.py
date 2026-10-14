@@ -54,6 +54,11 @@ class Config:
     # Management network every device must live in.
     MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "172.16.3.0/24")
 
+    # SQLite ignores FOREIGN KEY clauses unless asked to enforce them per
+    # connection. On, the ON DELETE CASCADE / SET NULL rules in the schema are
+    # real and a row can never point at something that does not exist.
+    SQLITE_FOREIGN_KEYS = _bool("SQLITE_FOREIGN_KEYS", True)
+
     SSH_CONNECT_TIMEOUT = int(os.environ.get("SSH_CONNECT_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT = int(os.environ.get("SSH_COMMAND_TIMEOUT", "30"))
 
@@ -61,6 +66,24 @@ class Config:
     MONITORING_INTERVAL_SECONDS = int(
         os.environ.get("MONITORING_INTERVAL_SECONDS", "60")
     )
+    # Devices polled at the same time. SSH is the slow part, so a handful in
+    # parallel keeps a cycle well inside the interval as projects grow.
+    MONITORING_MAX_WORKERS = int(os.environ.get("MONITORING_MAX_WORKERS", "4"))
+
+    # Server-sent events: the chat page is told when something changed instead
+    # of asking every few seconds. Each open stream holds one worker thread for
+    # up to REALTIME_MAX_SECONDS, so run Gunicorn with threads (gthread) or turn
+    # this off; the page then falls back to polling by itself.
+    REALTIME_ENABLED = _bool("REALTIME_ENABLED", True)
+    REALTIME_POLL_SECONDS = float(os.environ.get("REALTIME_POLL_SECONDS", "2"))
+    REALTIME_MAX_SECONDS = float(os.environ.get("REALTIME_MAX_SECONDS", "55"))
+    REALTIME_MAX_STREAMS = int(os.environ.get("REALTIME_MAX_STREAMS", "20"))
+
+    # Per-project and per-user ceilings so one account cannot fill the database.
+    # An administrator is exempt from the project limit; 0 turns a limit off.
+    MAX_PROJECTS_PER_USER = int(os.environ.get("MAX_PROJECTS_PER_USER", "20"))
+    MAX_DEVICES_PER_PROJECT = int(os.environ.get("MAX_DEVICES_PER_PROJECT", "300"))
+    MAX_LINKS_PER_PROJECT = int(os.environ.get("MAX_LINKS_PER_PROJECT", "1000"))
 
     RATELIMIT_ENABLED = _bool("RATELIMIT_ENABLED", True)
     RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
@@ -83,4 +106,13 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
-    ADMIN_MFA_REQUIRED = False
+    # Most fixtures insert rows with placeholder ids (user_id=1 ...), so the
+    # shared test config leaves FK enforcement off; ForeignKeyTestConfig turns
+    # it on for the tests that check the schema's integrity rules.
+    SQLITE_FOREIGN_KEYS = False
+    # One in-memory SQLite connection is shared by the whole test run.
+    MONITORING_MAX_WORKERS = 1
+
+
+class ForeignKeyTestConfig(TestConfig):
+    SQLITE_FOREIGN_KEYS = True

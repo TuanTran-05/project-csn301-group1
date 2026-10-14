@@ -18,6 +18,26 @@ document.addEventListener("alpine:init", () => {
     _sessionGeneration: 0,
     _authRetryTimer: null,
 
+    // -- projects (the isolation boundary: devices, chat and changes all
+    // belong to the selected project) --
+    projects: [],
+    currentProjectId: (() => {
+      const stored = localStorage.getItem("nc_project_id");
+      return stored ? Number(stored) : null;
+    })(),
+    noProject: false,
+
+    // -- live updates (server-sent events; polling is the fallback) --
+    _streamGeneration: 0,
+    _streamAbort: null,
+    _streamHealthy: false,
+    _streamState: null,
+
+    // -- chat composer --
+    showJump: false,
+    _sentHistory: [],
+    _historyIndex: -1,
+
     // -- devices --
     devices: [],
     _deviceRefreshGeneration: 0,
@@ -58,6 +78,110 @@ document.addEventListener("alpine:init", () => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
     })(),
+
+    // Starter prompts built from this project's real devices, so a new chat
+    // is never a blank box.
+    get suggestions() {
+      const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
+      const router = byRole("core", "isp");
+      const switchDevice = byRole("access", "distribution");
+      const prompts = [];
+      if (router) {
+        prompts.push(`Kiểm tra trạng thái OSPF trên ${router.hostname}`);
+        prompts.push(`Hiển thị bảng định tuyến của ${router.hostname}`);
+      }
+      if (switchDevice) {
+        prompts.push(`Liệt kê VLAN trên ${switchDevice.hostname}`);
+        prompts.push(`Xem trạng thái các cổng của ${switchDevice.hostname}`);
+      }
+      if (this.devices.length) {
+        prompts.push("Thiết bị nào đang offline?");
+        if (this.currentUser && this.currentUser.role === "ADMIN") {
+          prompts.push("Lưu cấu hình trên toàn bộ thiết bị");
+        }
+      } else {
+        prompts.push("Mạng của tôi cần những gì để bắt đầu?");
+      }
+      return prompts;
+    },
+
+    useSuggestion(text) {
+      this.draftMessage = text;
+      return this.sendMessage();
+    },
+
+    insertHostname(hostname) {
+      const sep = this.draftMessage && !/\s$/.test(this.draftMessage) ? " " : "";
+      this.draftMessage = `${this.draftMessage}${sep}${hostname} `;
+      this.$nextTick(() => {
+        const box = this.$refs.composer;
+        if (box) {
+          box.focus();
+          this.autoGrow(box);
+        }
+      });
+    },
+
+    // Enter sends, Shift+Enter breaks the line. Enter while an input method
+    // (Vietnamese Telex/VNI) is composing only confirms the word, so it must
+    // not send.
+    onComposerKeydown(event) {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        this.sendMessage();
+        return;
+      }
+      const box = event.target;
+      const atStart = box.selectionStart === 0 && box.selectionEnd === 0;
+      if (event.key === "ArrowUp" && atStart && this._sentHistory.length) {
+        event.preventDefault();
+        this._historyIndex = Math.min(
+          this._historyIndex + 1,
+          this._sentHistory.length - 1
+        );
+        this.draftMessage = this._sentHistory[this._historyIndex];
+        this.$nextTick(() => this.autoGrow(box));
+      } else if (event.key === "ArrowDown" && this._historyIndex >= 0) {
+        const atEnd = box.selectionStart === box.value.length;
+        if (!atEnd) return;
+        event.preventDefault();
+        this._historyIndex -= 1;
+        this.draftMessage =
+          this._historyIndex >= 0 ? this._sentHistory[this._historyIndex] : "";
+        this.$nextTick(() => this.autoGrow(box));
+      }
+    },
+
+    autoGrow(box) {
+      if (!box) return;
+      box.style.height = "auto";
+      box.style.height = `${Math.min(box.scrollHeight, 160)}px`;
+    },
+
+    onChatScroll() {
+      this.showJump = !this._isScrolledToBottom();
+    },
+
+    async copyText(text, event) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const button = event && event.target;
+        if (button) {
+          const label = button.textContent;
+          button.textContent = "Đã chép";
+          setTimeout(() => {
+            button.textContent = label;
+          }, 1200);
+        }
+      } catch {
+        // Clipboard access can be blocked (plain http); the text stays selectable.
+      }
+    },
+
+    get currentProject() {
+      return this.projects.find((p) => p.id === this.currentProjectId) || null;
+    },
 
     get pendingChanges() {
       return Object.values(this.changesById).filter(
@@ -110,8 +234,10 @@ document.addEventListener("alpine:init", () => {
     async authFetch(path, options = {}) {
       const token = this.token;
       const generation = this._sessionGeneration;
+      const projectId = this.currentProjectId;
       const headers = Object.assign(
         { "Content-Type": "application/json" },
+        projectId ? { "X-Project-Id": String(projectId) } : {},
         options.headers || {},
         token ? { Authorization: `Bearer ${token}` } : {}
       );
@@ -157,6 +283,57 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    _resetProjectData() {
+      this.stopPolling();
+      this._deviceRefreshGeneration += 1;
+      this._changesRefreshGeneration += 1;
+      this._batchesRefreshGeneration += 1;
+      this._batchesRefreshRequestToken += 1;
+      this._messagesRefreshGeneration += 1;
+      this.devices = [];
+      this.changesById = {};
+      this.confirmInputs = {};
+      this.changesLoading = false;
+      this.changesError = "";
+      this.batchesById = {};
+      this.batchConfirmInputs = {};
+      this.batchActionIds = {};
+      this.batchActionErrors = {};
+      this.batchesLoading = false;
+      this.batchesError = "";
+      this.messages = [];
+      this.draftMessage = "";
+      this.sending = false;
+      this.sessions = [];
+      this.currentSessionId = null;
+      localStorage.removeItem("nc_session_id");
+    },
+
+    async loadProjects() {
+      const data = await this.authFetch("/api/projects");
+      this.projects = data.items;
+      if (this.projects.length === 0) {
+        this.currentProjectId = null;
+        localStorage.removeItem("nc_project_id");
+        this.noProject = true;
+        return;
+      }
+      this.noProject = false;
+      if (!this.projects.some((p) => p.id === this.currentProjectId)) {
+        this.currentProjectId = this.projects[0].id;
+      }
+      localStorage.setItem("nc_project_id", String(this.currentProjectId));
+    },
+
+    async switchProject(projectId) {
+      if (projectId === this.currentProjectId) return;
+      this._sessionGeneration += 1;
+      this._resetProjectData();
+      this.currentProjectId = projectId;
+      localStorage.setItem("nc_project_id", String(projectId));
+      await this.startApp({ skipProjects: true });
+    },
+
     logout() {
       this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
@@ -188,10 +365,23 @@ document.addEventListener("alpine:init", () => {
       this.sessions = [];
       this.currentSessionId = null;
       localStorage.removeItem("nc_session_id");
+      this.projects = [];
+      this.currentProjectId = null;
+      this.noProject = false;
+      localStorage.removeItem("nc_project_id");
     },
 
-    async startApp() {
+    async startApp(options = {}) {
       const generation = this._sessionGeneration;
+      if (!options.skipProjects) {
+        try {
+          await this.loadProjects();
+        } catch {
+          if (generation !== this._sessionGeneration) return;
+        }
+        if (generation !== this._sessionGeneration) return;
+      }
+      if (this.noProject) return;
       this.changesLoading = true;
       this.batchesLoading = true;
       const bootstrap = [
@@ -210,22 +400,128 @@ document.addEventListener("alpine:init", () => {
         if (generation !== this._sessionGeneration) return;
       }
       this.startPolling();
+      this.startRealtime();
     },
 
     startPolling() {
       this.stopPolling();
-      this._deviceTimer = setInterval(() => {
-        this.refreshDevices().catch(() => {});
-      }, 15000);
-      this._changesTimer = setInterval(() => {
-        this.refreshChanges().catch(() => {});
-      }, 15000);
-      this._batchesTimer = setInterval(() => {
-        this.refreshBatches().catch(() => {});
-      }, 15000);
-      this._messagesTimer = setInterval(() => {
-        this.pollMessages().catch(() => {});
-      }, 7000);
+      // While the event stream is healthy the server says when to refresh, so
+      // these timers only act when it is not.
+      const unlessStreaming = (refresh) => () => {
+        if (!this._streamHealthy) refresh().catch(() => {});
+      };
+      this._deviceTimer = setInterval(unlessStreaming(() => this.refreshDevices()), 15000);
+      this._changesTimer = setInterval(unlessStreaming(() => this.refreshChanges()), 15000);
+      this._batchesTimer = setInterval(unlessStreaming(() => this.refreshBatches()), 15000);
+      this._messagesTimer = setInterval(unlessStreaming(() => this.pollMessages()), 7000);
+      // A slow full refresh as a safety net against a missed event.
+      this._safetyTimer = setInterval(() => this._refreshEverything(), 60000);
+    },
+
+    _refreshEverything() {
+      return Promise.allSettled([
+        this.refreshDevices(),
+        this.refreshChanges(),
+        this.refreshBatches(),
+        this.pollMessages(),
+      ]);
+    },
+
+    // ---- server-sent events over fetch (EventSource cannot send our headers) ----
+
+    startRealtime() {
+      this.stopRealtime();
+      if (
+        !this.currentProjectId ||
+        typeof AbortController === "undefined" ||
+        typeof TextDecoder === "undefined"
+      ) {
+        return;
+      }
+      const generation = ++this._streamGeneration;
+      this._streamState = null;
+      this._streamLoop(generation);
+    },
+
+    stopRealtime() {
+      this._streamGeneration += 1;
+      this._streamHealthy = false;
+      if (this._streamAbort) this._streamAbort.abort();
+      this._streamAbort = null;
+    },
+
+    async _streamLoop(generation) {
+      let failures = 0;
+      while (generation === this._streamGeneration && this.token) {
+        const controller = new AbortController();
+        this._streamAbort = controller;
+        try {
+          const response = await fetch(`/api/projects/${this.currentProjectId}/events`, {
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "X-Project-Id": String(this.currentProjectId),
+            },
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) throw new Error(String(response.status));
+          failures = 0;
+          this._streamHealthy = true;
+          await this._readStream(response.body, generation);
+        } catch {
+          if (generation !== this._streamGeneration) return;
+          failures += 1;
+        }
+        this._streamHealthy = false;
+        if (generation !== this._streamGeneration) return;
+        // A normal end (the server closes after ~55s) reconnects at once;
+        // errors back off, and polling covers the gap.
+        const wait = failures === 0 ? 300 : Math.min(30000, 1000 * 2 ** Math.min(failures, 5));
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    },
+
+    async _readStream(body, generation) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (generation === this._streamGeneration) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf("\n\n")) >= 0) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          this._handleStreamBlock(block);
+        }
+      }
+    },
+
+    _handleStreamBlock(block) {
+      let name = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (name !== "state" || !data) return;
+      try {
+        this._onRemoteState(JSON.parse(data));
+      } catch {
+        // A garbled event is ignored; the safety refresh catches up.
+      }
+    },
+
+    // Refetch only the parts whose fingerprint moved. The first state after
+    // connecting refreshes everything once, closing the gap since startApp.
+    _onRemoteState(next) {
+      const previous = this._streamState;
+      this._streamState = next;
+      const changed = (key) => !previous || previous[key] !== next[key];
+      if (changed("devices")) this.refreshDevices().catch(() => {});
+      if (changed("changes")) this.refreshChanges().catch(() => {});
+      if (changed("batches")) this.refreshBatches().catch(() => {});
+      if (changed("messages")) this.pollMessages().catch(() => {});
     },
 
     stopPolling() {
@@ -233,6 +529,9 @@ document.addEventListener("alpine:init", () => {
       clearInterval(this._changesTimer);
       clearInterval(this._batchesTimer);
       clearInterval(this._messagesTimer);
+      if (this._safetyTimer) clearInterval(this._safetyTimer);
+      this._safetyTimer = null;
+      this.stopRealtime();
       this._deviceTimer = null;
       this._changesTimer = null;
       this._batchesTimer = null;
@@ -243,7 +542,8 @@ document.addEventListener("alpine:init", () => {
       const generation = this._deviceRefreshGeneration;
       const data = await this.authFetch("/api/devices");
       if (generation === this._deviceRefreshGeneration) {
-        this.devices = data.items;
+        // The chat only talks about devices the backend can reach.
+        this.devices = data.items.filter((device) => device.deployable !== false);
       }
     },
 
@@ -745,7 +1045,11 @@ document.addEventListener("alpine:init", () => {
         .filter((message) => !message._client)
         .map((message) => message.id);
       this.draftMessage = "";
+      this._sentHistory.unshift(text);
+      this._sentHistory = this._sentHistory.slice(0, 30);
+      this._historyIndex = -1;
       this.sending = true;
+      this.$nextTick(() => this.autoGrow(this.$refs.composer));
       this._ingestMessage(
         this._clientMessage("user", text, null, knownServerIds)
       );
@@ -797,6 +1101,8 @@ document.addEventListener("alpine:init", () => {
         }
         if (generation === this._messagesRefreshGeneration) {
           this.sending = false;
+          // Give the box back to the user so the next question needs no click.
+          this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
         }
       }
     },

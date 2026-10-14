@@ -39,6 +39,13 @@ class ForbiddenError(AppError):
     error = "forbidden"
 
 
+class ProjectRequiredError(AppError):
+    """The request needs a project and none could be chosen unambiguously."""
+
+    status_code = 400
+    error = "project_required"
+
+
 class PolicyViolationError(AppError):
     """Raised when the command policy engine blocks a command."""
 

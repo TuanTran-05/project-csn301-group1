@@ -8,6 +8,7 @@ import logging
 
 from ..audit.service import record_event
 from ..devices import service as device_service
+from ..devices.model import Device
 from ..errors import PolicyViolationError, ValidationError
 from ..extensions import db
 from ..ssh.client import build_client_for_device
@@ -56,23 +57,18 @@ def execute_readonly(
     command: str,
     user_id: int | None = None,
     source: str = "api",
-    group_id: int | None = None,
+    project_id: int | None = None,
 ) -> CommandExecution:
-    """Run a single read-only command after the policy engine approves it."""
+    """Run a single read-only command after the policy engine approves it.
+
+    ``project_id`` confines the device lookup to one project; routes always
+    pass it.
+    """
     if not isinstance(command, str) or not command.strip():
         raise ValidationError("A non-empty 'command' is required.")
 
     # Raises NotFoundError when the device does not exist.
-    device = device_service.get_device(device_id)
-    from ..governance.access import actor, permitted, require, role
-    user = actor(user_id)
-    if group_id is None and role(user) != "ADMIN":
-        scopes = [g.id for g in device.groups if permitted(user, "device.observe", g.id, device)]
-        if len(scopes) != 1:
-            from ..errors import ForbiddenError
-            raise ForbiddenError("Select exactly one authorized group for this observation.")
-        group_id = scopes[0]
-    require(user, "device.observe", group_id, device)
+    device = device_service.ensure_deployable(device_service.get_device(device_id, project_id))
 
     decision = policy_for_source(source).evaluate(command, device.role)
     if not decision.allowed:
@@ -158,12 +154,17 @@ def execute_readonly(
 
 
 def list_history(
+    project_id: int | None = None,
     device_id: int | None = None,
     user_id: int | None = None,
     status: str | None = None,
     limit: int = 100,
 ) -> list[CommandExecution]:
     query = db.session.query(CommandExecution)
+    if project_id is not None:
+        query = query.join(Device, Device.id == CommandExecution.device_id).filter(
+            Device.project_id == project_id
+        )
     if device_id:
         query = query.filter(CommandExecution.device_id == device_id)
     if user_id:

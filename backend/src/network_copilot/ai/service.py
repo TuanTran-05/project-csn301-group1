@@ -159,17 +159,19 @@ class AIService:
         return self._provider
 
     # -- context ----------------------------------------------------------
-    def build_context(self, user_id=None, group_id=None) -> dict:
-        """Safe lab context; per-session conversation is added by interpret()."""
-        devices = db.session.query(Device).order_by(Device.hostname).all()
-        if user_id is not None:
-            from ..governance.visibility import devices as visible_devices
-            from ..governance.access import actor
-            devices = visible_devices(devices, actor(user_id))
-            if group_id is not None:
-                from ..governance.access import require_group
-                group = require_group(actor(user_id), group_id)
-                devices = [device for device in devices if device in group.devices]
+    def build_context(self, project_id: int | None = None) -> dict:
+        """Safe lab context; per-session conversation is added by interpret().
+
+        Restricted to one project's devices and topology when ``project_id``
+        is given (routes always give it), so the model can neither see nor
+        name a device that belongs to another project.
+        """
+        query = db.session.query(Device).filter(
+            Device.managed.is_(True), Device.lifecycle == "provisioned"
+        )
+        if project_id is not None:
+            query = query.filter(Device.project_id == project_id)
+        devices = query.order_by(Device.hostname, Device.id).all()
         commands = sorted(
             rule.name for rule in ai_policy.rules
         )
@@ -187,7 +189,7 @@ class AIService:
             "supported_commands": commands,
             "configuration_templates": [public(t) for t in db.session.query(ConfigTemplate).filter_by(enabled=True)],
             "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
-            "topology": build_topology(devices),
+            "topology": build_topology(project_id),
         }
 
     # -- conversation history ---------------------------------------------
@@ -199,7 +201,10 @@ class AIService:
 
     @classmethod
     def _recent_history(
-        cls, session_id: int | None, current_message: str
+        cls,
+        session_id: int | None,
+        current_message: str,
+        project_id: int | None = None,
     ) -> list[dict]:
         """Recent turns of this chat session, for conversational follow-ups.
 
@@ -208,11 +213,13 @@ class AIService:
         module's standing rule is that the model never receives credentials,
         management IPs or a running-config.
         """
-        if session_id is None:
+        if session_id is None or project_id is None:
             return []
 
         rows = chat_service.list_messages(
-            session_id=session_id, limit=cls._HISTORY_FETCH_LIMIT
+            session_id=session_id,
+            limit=cls._HISTORY_FETCH_LIMIT,
+            project_id=project_id,
         )
         turns = [
             {"role": row.role, "content": row.content}
@@ -244,19 +251,17 @@ class AIService:
         return extract_json_object(raw)
 
     def interpret(
-        self, message: str, user_id: int | None, session_id: int | None = None, group_id: int | None = None
+        self,
+        message: str,
+        user_id: int | None,
+        session_id: int | None = None,
+        project_id: int | None = None,
     ) -> AIAction:
         """Ask the model for a structured action. No side effects."""
-        from ..governance.quotas import consume_ai
-        consume_ai(user_id, group_id)
-        if session_id is not None:
-            from ..chat.model import ChatSession
-            from ..governance.access import actor, role
-            session = db.session.get(ChatSession, session_id)
-            if session and role(actor(user_id)) != "ADMIN" and session.created_by_id != user_id:
-                raise ForbiddenError("This chat belongs to another account.")
-        context = self.build_context(user_id, group_id)
-        context["conversation"] = self._recent_history(session_id, message)
+        context = self.build_context(project_id)
+        context["conversation"] = self._recent_history(
+            session_id, message, project_id
+        )
         schema = build_ai_action_schema(
             device["hostname"] for device in context["devices"]
         )
@@ -378,7 +383,7 @@ class AIService:
                 command=command,
                 user_id=user_id,
                 source="ai",
-                group_id=group_id,
+                project_id=device.project_id,
             )
             results.append(
                 {
@@ -454,7 +459,9 @@ class AIService:
             "requires_approval": False,
         }
 
-    def _handle_configure(self, action: AIAction, user_id: int | None, group_id: int | None = None) -> dict:
+    def _handle_configure(
+        self, action: AIAction, user_id: int | None, project_id: int | None = None
+    ) -> dict:
         operations = [
             BatchOperation(
                 device_hostnames=list(operation.device_hostnames),
@@ -470,6 +477,7 @@ class AIService:
             operations=operations,
             description=action.explanation[:255] if action.explanation else None,
             source="ai",
+            project_id=project_id,
         )
         record_event(
             action="ai.action",
@@ -491,9 +499,15 @@ class AIService:
 
     # -- entry point ------------------------------------------------------
     def handle(
-        self, message: str, user_id: int | None, session_id: int | None = None, group_id: int | None = None
+        self,
+        message: str,
+        user_id: int | None,
+        session_id: int | None = None,
+        project_id: int | None = None,
     ) -> dict:
-        action = self.interpret(message, user_id, session_id=session_id, group_id=group_id)
+        action = self.interpret(
+            message, user_id, session_id=session_id, project_id=project_id
+        )
 
         # A conversational turn touches nothing: no device is resolved, no
         # policy is evaluated, no SSH session is opened, and no audit row is
@@ -506,12 +520,13 @@ class AIService:
             }
 
         if action.intent == "configure":
-            return self._handle_configure(action, user_id, group_id)
+            self._require_admin(user_id)
+            return self._handle_configure(action, user_id, project_id)
 
         operation = self._readonly_operation(action)
-        device = device_service.get_device_by_hostname(operation.device_hostnames[0])
-        from ..governance.access import actor, require
-        require(actor(user_id), "device.observe", group_id, device)
+        device = device_service.get_device_by_hostname(
+            operation.device_hostnames[0], project_id
+        )
         self._guard_readonly(action, operation, device, user_id)
 
         record_event(

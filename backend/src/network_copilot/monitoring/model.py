@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 
 class DeviceSnapshot(db.Model):
@@ -29,6 +29,11 @@ class DeviceSnapshot(db.Model):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         index=True,
+    )
+
+    __table_args__ = (
+        in_check("status", ("online", "offline"), "status_valid"),
+        db.Index("ix_device_snapshots_device_created", "device_id", "created_at"),
     )
 
     device = db.relationship("Device")

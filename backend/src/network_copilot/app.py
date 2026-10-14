@@ -37,6 +37,14 @@ def create_app(config_object: type | None = None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.get("/projects")
+    def projects_page():
+        return render_template("projects.html")
+
+    @app.get("/users")
+    def users_page():
+        return render_template("users.html")
+
     @app.get("/dashboard")
     def dashboard_page():
         return render_template("dashboard.html")
@@ -46,8 +54,13 @@ def create_app(config_object: type | None = None) -> Flask:
 
 def _register_extensions(app: Flask) -> None:
     db.init_app(app)
+    _enforce_sqlite_foreign_keys(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+
+    from .auth.service import is_token_revoked
+
+    jwt.token_in_blocklist_loader(is_token_revoked)
 
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
     app.config["RATELIMIT_ENABLED"] = bool(app.config.get("RATELIMIT_ENABLED", True))
@@ -55,6 +68,30 @@ def _register_extensions(app: Flask) -> None:
         "RATELIMIT_STORAGE_URI", "memory://"
     )
     limiter.init_app(app)
+
+
+def _enforce_sqlite_foreign_keys(app: Flask) -> None:
+    """Turn on FOREIGN KEY enforcement for every SQLite connection.
+
+    Alembic's env.py switches it off again for the duration of a migration:
+    SQLite rebuilds a table to alter it, and dropping the old table with
+    enforcement on would cascade-delete its children.
+    """
+    if not app.config.get("SQLITE_FOREIGN_KEYS"):
+        return
+
+    from sqlalchemy import event
+
+    with app.app_context():
+        engine = db.engine
+        if engine.dialect.name != "sqlite":
+            return
+
+        @event.listens_for(engine, "connect")
+        def _pragma(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
 
 def _register_models() -> None:
@@ -69,7 +106,8 @@ def _register_models() -> None:
     from .devices import model as _device_model  # noqa: F401
     from .groups import model as _group_model  # noqa: F401
     from .monitoring import model as _monitoring_model  # noqa: F401
-    from .governance import model as _governance_model  # noqa: F401
+    from .projects import model as _project_model  # noqa: F401
+    from .topology import model as _topology_model  # noqa: F401
 
 
 def _register_request_hooks(app: Flask) -> None:
@@ -107,6 +145,7 @@ def _register_blueprints(app: Flask) -> None:
     from .ai.routes import bp as ai_bp
     from .audit.routes import bp as audit_bp
     from .auth.routes import bp as auth_bp
+    from .auth.routes import users_bp
     from .changes.batch_routes import bp as change_batches_bp
     from .changes.routes import bp as changes_bp
     from .chat.routes import bp as chat_bp
@@ -116,11 +155,15 @@ def _register_blueprints(app: Flask) -> None:
     from .groups.routes import bp as groups_bp
     from .history_extension.routes import init_app as init_history_extension
     from .monitoring.routes import bp as monitoring_bp
-    from .governance.routes import bp as governance_bp
-    from .governance.learning import bp as learning_bp
+    from .projects.routes import bp as projects_bp
+    from .realtime.routes import bp as realtime_bp
+    from .topology.routes import bp as topology_bp
 
     app.register_blueprint(auth_bp)
-    app.register_blueprint(groups_bp)
+    app.register_blueprint(users_bp)
+    app.register_blueprint(projects_bp)
+    app.register_blueprint(realtime_bp)
+    app.register_blueprint(topology_bp)
     app.register_blueprint(devices_bp)
     app.register_blueprint(commands_bp)
     app.register_blueprint(monitoring_bp)

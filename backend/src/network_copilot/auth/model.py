@@ -5,7 +5,7 @@ from sqlalchemy import Index, text, event
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 
 class Role(str, Enum):
@@ -26,42 +26,36 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(
-        db.Enum(
-            Role,
-            name="user_role",
-            native_enum=False,
-            create_constraint=False,
-            values_callable=lambda roles: [role.value for role in roles],
-            length=16,
-        ),
-        nullable=False,
-        default=Role.STUDENT,
-    )
+    full_name = db.Column(db.String(120))
+    email = db.Column(db.String(254), unique=True)
+    role = db.Column(db.String(16), nullable=False, default="VIEWER")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-    token_version = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    display_name = db.Column(db.String(100))
-    mfa_secret = db.Column(db.Text)
-    mfa_pending_secret = db.Column(db.Text)
-    mfa_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
-    mfa_last_counter = db.Column(db.BigInteger, nullable=False, default=-1, server_default="-1")
-    recovery_hashes = db.Column(db.JSON, nullable=False, default=list, server_default="[]")
-    __table_args__ = (
-        Index("uq_single_admin", "role", unique=True,
-              sqlite_where=text("role = 'ADMIN'"), postgresql_where=text("role = 'ADMIN'")),
+    # Bumped whenever the password, role or active flag changes. A token
+    # carries the value it was issued with, so changing any of them logs the
+    # user out everywhere instead of leaving old tokens valid until expiry.
+    token_version = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0"
+    )
+    last_login_at = db.Column(db.DateTime)
+    password_changed_at = db.Column(db.DateTime)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL")
     )
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
-    teaching_groups = db.relationship(
-        "Group", secondary="teacher_groups", back_populates="teachers"
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
-    student_groups = db.relationship(
-        "Group", secondary="student_groups", back_populates="students"
-    )
+
+    __table_args__ = (in_check("role", ROLES, "role_valid"),)
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
+        self.password_changed_at = datetime.now(timezone.utc)
 
     def check_password(self, password: str) -> bool:
         if not self.password_hash:
@@ -73,10 +67,11 @@ class User(db.Model):
         return {
             "id": self.id,
             "username": self.username,
-            "role": self.role.value if isinstance(self.role, Role) else self.role,
+            "full_name": self.full_name,
+            "email": self.email,
+            "role": self.role,
             "is_active": self.is_active,
-            "display_name": self.display_name,
-            "mfa_enabled": self.mfa_enabled,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

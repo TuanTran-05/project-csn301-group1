@@ -1,6 +1,7 @@
 import pytest
 from fakes.fake_ai_provider import FakeAIProvider
 
+from conftest import _default_project
 from network_copilot.app import create_app
 from network_copilot.config import TestConfig
 from network_copilot.extensions import db as _db
@@ -257,6 +258,7 @@ def test_ai_chat_is_rate_limited_to_twenty_per_minute(limited_app):
     from network_copilot.auth.model import User
 
     with limited_app.app_context():
+        _default_project()
         user = User(username="admin", role="ADMIN")
         user.set_password("StrongPass123!")
         _db.session.add(user)

@@ -72,3 +72,7 @@ def test_batch_child_renders_passed_failed_and_redacted_verification_after_apply
 
 def test_logout_invalidates_batch_action_and_cleans_polling_timers():
     assert_behavior_case("logout_cleanup")
+
+
+def test_event_stream_refreshes_only_the_parts_that_changed():
+    assert_behavior_case("stream_refreshes_only_changed_parts")

@@ -3,7 +3,19 @@ from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
 from ..extensions import limiter
-from .service import authenticate, current_user, issue_token
+from .service import (
+    authenticate,
+    create_user,
+    current_user,
+    issue_token,
+    list_all_users,
+    change_own_password,
+    get_user,
+    record_login,
+    reset_password,
+    roles_required,
+    update_user,
+)
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -40,14 +52,7 @@ def login():
             401,
         )
 
-    from ..governance import mfa
-    if user.mfa_enabled:
-        valid = mfa.verify(user, payload.get("code"))
-        if not valid and payload.get("recovery_code"):
-            valid = mfa.recover(user, payload["recovery_code"])
-        if not valid:
-            return jsonify(error="unauthorized", message="A valid two-factor or recovery code is required."), 401
-    pending = user.role == "ADMIN" and current_app.config.get("ADMIN_MFA_REQUIRED", True) and not user.mfa_enabled
+    record_login(user)
     record_event(
         action="auth.login",
         result="success",
@@ -68,3 +73,81 @@ def me():
             401,
         )
     return jsonify(user.to_dict()), 200
+
+
+@bp.post("/change-password")
+@jwt_required()
+def change_password():
+    user = current_user()
+    payload = request.get_json(silent=True) or {}
+    change_own_password(
+        user, payload.get("current_password"), payload.get("new_password")
+    )
+    record_event(
+        action="auth.password_change", result="success", user_id=user.id
+    )
+    # Every older token just stopped working, including the caller's own.
+    return jsonify({"access_token": issue_token(user), "user": user.to_dict()}), 200
+
+
+# -- user administration ----------------------------------------------------
+
+users_bp = Blueprint("users", __name__, url_prefix="/api/users")
+
+
+@users_bp.get("")
+@roles_required("ADMIN")
+def list_users():
+    return jsonify({"items": [u.to_dict() for u in list_all_users()]}), 200
+
+
+@users_bp.post("")
+@roles_required("ADMIN")
+def create_user_route():
+    actor = current_user()
+    user = create_user(request.get_json(silent=True) or {}, actor)
+    record_event(
+        action="user.create",
+        result="success",
+        user_id=actor.id,
+        details={"username": user.username, "role": user.role},
+    )
+    return jsonify(user.to_dict()), 201
+
+
+@users_bp.get("/<int:user_id>")
+@roles_required("ADMIN")
+def get_user_route(user_id: int):
+    return jsonify(get_user(user_id).to_dict()), 200
+
+
+@users_bp.put("/<int:user_id>")
+@roles_required("ADMIN")
+def update_user_route(user_id: int):
+    actor = current_user()
+    user = get_user(user_id)
+    payload = request.get_json(silent=True) or {}
+    update_user(user, payload, actor)
+    record_event(
+        action="user.update",
+        result="success",
+        user_id=actor.id,
+        details={"target": user.username, "changes": payload},
+    )
+    return jsonify(user.to_dict()), 200
+
+
+@users_bp.post("/<int:user_id>/reset-password")
+@roles_required("ADMIN")
+def reset_password_route(user_id: int):
+    actor = current_user()
+    user = get_user(user_id)
+    payload = request.get_json(silent=True) or {}
+    reset_password(user, payload.get("new_password"))
+    record_event(
+        action="user.password_reset",
+        result="success",
+        user_id=actor.id,
+        details={"target": user.username},
+    )
+    return "", 204

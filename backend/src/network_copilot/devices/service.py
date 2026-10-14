@@ -14,44 +14,87 @@ def _format_pydantic_errors(exc: PydanticValidationError) -> dict:
     return details
 
 
-def _validate(schema, payload: dict):
+def _validate(schema, payload: dict, project):
     try:
-        return schema.model_validate(payload)
+        return schema.model_validate(
+            payload, context={"network": project.management_network}
+        )
     except PydanticValidationError as exc:
         raise ValidationError(
             "Device payload failed validation.", _format_pydantic_errors(exc)
         ) from exc
 
 
-def _assert_unique(hostname: str | None, management_ip: str | None, exclude_id=None):
+def _assert_unique(
+    project_id: int,
+    hostname: str | None,
+    management_ip: str | None,
+    exclude_id=None,
+):
+    """Hostnames and management IPs only have to be unique inside a project."""
     if hostname is not None:
-        query = db.session.query(Device).filter(Device.hostname == hostname)
+        query = db.session.query(Device).filter(
+            Device.project_id == project_id, Device.hostname == hostname
+        )
         if exclude_id is not None:
             query = query.filter(Device.id != exclude_id)
         if query.first() is not None:
             raise ConflictError(f"A device named {hostname} already exists.")
 
     if management_ip is not None:
-        query = db.session.query(Device).filter(Device.management_ip == management_ip)
+        query = db.session.query(Device).filter(
+            Device.project_id == project_id, Device.management_ip == management_ip
+        )
         if exclude_id is not None:
             query = query.filter(Device.id != exclude_id)
         if query.first() is not None:
             raise ConflictError(f"A device already uses {management_ip}.")
 
 
-def list_devices(role: str | None = None, status: str | None = None) -> list[Device]:
-    query = db.session.query(Device)
+def list_devices(
+    role: str | None = None,
+    status: str | None = None,
+    project_id: int | None = None,
+    deployable: bool = False,
+) -> list[Device]:
+    """Devices, optionally restricted to one project.
+
+    HTTP routes always pass ``project_id``; ``None`` is for internal callers
+    (the monitoring scheduler, CLI scripts) that work across projects.
+    """
+    # has_credential is serialised for every device: load the credentials in
+    # one extra query instead of one per row.
+    query = db.session.query(Device).options(db.selectinload(Device.credential))
+    if project_id is not None:
+        query = query.filter(Device.project_id == project_id)
+    if deployable:
+        # Only devices the backend can open a session to: managed and provisioned.
+        query = query.filter(Device.managed.is_(True), Device.lifecycle == "provisioned")
     if role:
         query = query.filter(Device.role == role)
     if status:
         query = query.filter(Device.status == status)
-    from ..governance.visibility import devices
-    return devices(query.order_by(Device.hostname).all())
+    return query.order_by(Device.hostname, Device.id).all()
 
 
-def get_device(device_id: int) -> Device:
+def ensure_deployable(device: Device) -> Device:
+    """The device if the backend can talk to it, else a clear validation error."""
+    if not device.managed:
+        raise ValidationError(
+            f"{device.hostname} is an unmanaged {device.kind}; the backend never connects to it."
+        )
+    if device.lifecycle != "provisioned":
+        raise ValidationError(
+            f"{device.hostname} is only planned; provision it (give it a management "
+            "IP) before using it."
+        )
+    return device
+
+
+def get_device(device_id: int, project_id: int | None = None) -> Device:
     device = db.session.get(Device, device_id)
-    if device is None:
+    # A device in another project is indistinguishable from a missing one.
+    if device is None or (project_id is not None and device.project_id != project_id):
         raise NotFoundError(f"Device {device_id} was not found.")
     from ..governance.visibility import request_user
     from ..governance.access import require
@@ -61,50 +104,139 @@ def get_device(device_id: int) -> Device:
     return device
 
 
-def get_device_by_hostname(hostname: str) -> Device:
-    device = (
-        db.session.query(Device).filter(Device.hostname == hostname).one_or_none()
-    )
-    if device is None:
+def get_device_by_hostname(hostname: str, project_id: int | None = None) -> Device:
+    query = db.session.query(Device).filter(Device.hostname == hostname)
+    if project_id is not None:
+        query = query.filter(Device.project_id == project_id)
+    matches = query.all()
+    if not matches:
         raise NotFoundError(f"Device {hostname} was not found.")
-    from ..governance.visibility import request_user
-    from ..governance.access import require
-    user = request_user()
-    if user:
-        require(user, "device.read", device=device)
-    return device
+    if len(matches) > 1:
+        raise ValidationError(
+            f"Hostname {hostname} exists in several projects; a project is required."
+        )
+    return matches[0]
 
 
-def create_device(payload: dict) -> Device:
-    data = _validate(DeviceCreateSchema, payload)
-    _assert_unique(data.hostname, data.management_ip)
+def _assert_quota(project) -> None:
+    from flask import current_app
 
-    device = Device(**data.model_dump())
+    limit = current_app.config.get("MAX_DEVICES_PER_PROJECT", 0)
+    if limit and db.session.query(Device).filter_by(project_id=project.id).count() >= limit:
+        raise ConflictError(f"A project holds at most {limit} devices.")
+
+
+def create_device(payload: dict, project) -> Device:
+    data = _validate(DeviceCreateSchema, payload, project)
+    _assert_unique(project.id, data.hostname, data.management_ip)
+    _assert_quota(project)
+
+    fields = data.model_dump(exclude={"credential"})
+    fields["managed"] = data.device_type != "generic"
+    credential = data.credential
+    if credential is not None:
+        _require_cipher()
+
+    device = Device(project_id=project.id, **fields)
     device.status = "unknown"
     db.session.add(device)
+    db.session.flush()
+    if credential is not None:
+        _store_credential(device, credential)
     db.session.commit()
     return device
 
 
-def update_device(device_id: int, payload: dict) -> Device:
-    device = get_device(device_id)
-    data = _validate(DeviceUpdateSchema, payload)
-    changes = data.model_dump(exclude_unset=True)
-    from ..governance.model import DeviceLease
-    if db.session.get(DeviceLease, device_id):
-        raise ConflictError("Device is locked by a deployment.")
-    if any(value is None for key, value in changes.items() if key not in {"description", "recovery_instructions"}):
-        from ..errors import ValidationError
-        raise ValidationError("Required device fields cannot be null.")
+def update_device(device_id: int, payload: dict, project) -> Device:
+    device = get_device(device_id, project.id)
+    data = _validate(DeviceUpdateSchema, payload, project)
+    changes = data.model_dump(exclude_unset=True, exclude={"credential"})
 
     _assert_unique(
-        changes.get("hostname"), changes.get("management_ip"), exclude_id=device_id
+        project.id,
+        changes.get("hostname"),
+        changes.get("management_ip"),
+        exclude_id=device_id,
     )
+
+    if data.credential is not None:
+        _require_cipher()
+    _check_update_allowed(device, changes, data.credential)
 
     for field, value in changes.items():
         setattr(device, field, value)
+    if data.credential is not None:
+        _store_credential(device, data.credential)
     db.session.commit()
     return device
+
+
+def _check_update_allowed(device: Device, changes: dict, credential) -> None:
+    """An edit may not turn a managed device into an unmanaged one (or back), and
+    unmanaged devices have no management address or login."""
+    new_type = changes.get("device_type", device.device_type)
+    if (new_type == "generic") != (not device.managed):
+        raise ValidationError("A device cannot switch between managed and unmanaged; create a new one.")
+    managed_roles = ("isp", "firewall", "core", "distribution", "access", "dmz", "management")
+    new_role = changes.get("role", device.role)
+    if device.managed and new_role not in managed_roles:
+        raise ValidationError(f"role {new_role} is for unmanaged devices.")
+    if not device.managed:
+        if new_role in managed_roles:
+            raise ValidationError(f"role {new_role} needs a managed device.")
+        if changes.get("management_ip") or credential is not None:
+            raise ValidationError("An unmanaged device has no management IP or SSH login.")
+    if changes.get("kind"):
+        kinds_ok = ("pc", "server", "cloud", "ap", "segment") if not device.managed else (
+            "router", "l3_switch", "switch", "firewall")
+        if changes["kind"] not in kinds_ok:
+            raise ValidationError(f"kind {changes['kind']} does not fit this device.")
+
+
+def provision_device(device_id: int, payload: dict, project) -> Device:
+    """Planned -> provisioned: give a designed device its management address."""
+    device = get_device(device_id, project.id)
+    if not device.managed:
+        raise ValidationError("Unmanaged devices are never provisioned.")
+    if device.lifecycle == "provisioned":
+        raise ConflictError(f"{device.hostname} is already provisioned.")
+    data = _validate(DeviceUpdateSchema, {
+        k: payload[k] for k in ("management_ip", "ssh_port", "credential") if k in payload
+    }, project)
+    if not data.management_ip:
+        raise ValidationError("management_ip is required to provision a device.",
+                              {"management_ip": ["Required."]})
+    _assert_unique(project.id, None, data.management_ip, exclude_id=device.id)
+    if data.credential is not None:
+        _require_cipher()
+    device.management_ip = data.management_ip
+    if data.ssh_port:
+        device.ssh_port = data.ssh_port
+    device.lifecycle = "provisioned"
+    if data.credential is not None:
+        _store_credential(device, data.credential)
+    db.session.commit()
+    return device
+
+
+def _require_cipher() -> None:
+    from ..credentials.service import get_cipher
+
+    try:
+        get_cipher()
+    except ValueError as exc:
+        raise ValidationError(
+            "Device credentials cannot be stored: the server has no valid "
+            "CREDENTIAL_ENCRYPTION_KEY."
+        ) from exc
+
+
+def _store_credential(device: Device, credential) -> None:
+    from ..credentials.service import store_device_credential
+
+    store_device_credential(
+        device.id, credential.username, credential.password, credential.enable_secret
+    )
 
 
 _ACTIVE_BATCH_STATUSES = ("pending_approval", "approved", "running")
@@ -129,21 +261,74 @@ def _assert_no_active_batch(device_id: int) -> None:
         )
 
 
-def delete_device(device_id: int) -> None:
-    device = get_device(device_id)
-    _assert_no_active_batch(device_id)
-    from ..changes.model import ChangeRequest
-    if db.session.query(ChangeRequest).filter_by(device_id=device_id).first():
-        raise ConflictError("Device has change history and must be retained for audit.")
+def purge_devices(device_ids: list[int], commit: bool = True) -> None:
+    """Delete devices and everything that hangs off them.
+
+    The schema declares ON DELETE CASCADE / SET NULL for these relations but
+    SQLite does not enforce foreign keys by default, so they are removed here
+    explicitly instead of relying on the database.
+    """
+    if not device_ids:
+        return
+
+    from ..audit.model import AuditLog
     from ..backups.model import ConfigBackup
+    from ..changes.model import ChangeRequest
     from ..commands.model import CommandExecution
+    from ..credentials.model import DeviceCredential
     from ..monitoring.model import DeviceSnapshot
-    from ..governance.model import Assignment, Draft, Grant, Reservation
-    for model in (ConfigBackup, CommandExecution, DeviceSnapshot, Assignment, Draft, Reservation, Grant):
-        if db.session.query(model).filter_by(device_id=device_id).first():
-            raise ConflictError("Device has historical or teaching records; retain it for audit.")
-    db.session.delete(device)
-    db.session.commit()
+    from ..topology.model import (
+        DesignAccessPort,
+        DesignLoopback,
+        DesignOspf,
+        DesignStaticRoute,
+        DesignSubif,
+        DesignSvi,
+        TopologyLink,
+    )
+
+    def where(model):
+        return model.device_id.in_(device_ids)
+
+    # Changes reference backups, so they go first.
+    db.session.query(ChangeRequest).filter(where(ChangeRequest)).delete(
+        synchronize_session=False
+    )
+    db.session.query(ConfigBackup).filter(where(ConfigBackup)).delete(
+        synchronize_session=False
+    )
+    db.session.query(DeviceSnapshot).filter(where(DeviceSnapshot)).delete(
+        synchronize_session=False
+    )
+    db.session.query(DeviceCredential).filter(where(DeviceCredential)).delete(
+        synchronize_session=False
+    )
+    db.session.query(CommandExecution).filter(where(CommandExecution)).update(
+        {CommandExecution.device_id: None}, synchronize_session=False
+    )
+    db.session.query(AuditLog).filter(where(AuditLog)).update(
+        {AuditLog.device_id: None}, synchronize_session=False
+    )
+    for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf):
+        db.session.query(model).filter(where(model)).delete(synchronize_session=False)
+    db.session.query(TopologyLink).filter(
+        db.or_(
+            TopologyLink.device_a_id.in_(device_ids),
+            TopologyLink.device_b_id.in_(device_ids),
+        )
+    ).delete(synchronize_session=False)
+    db.session.query(Device).filter(Device.id.in_(device_ids)).delete(
+        synchronize_session=False
+    )
+    db.session.expire_all()
+    if commit:
+        db.session.commit()
+
+
+def delete_device(device_id: int, project_id: int | None = None) -> None:
+    device = get_device(device_id, project_id)
+    _assert_no_active_batch(device_id)
+    purge_devices([device.id])
 
 
 def set_device_status(device: Device, status: str) -> Device:

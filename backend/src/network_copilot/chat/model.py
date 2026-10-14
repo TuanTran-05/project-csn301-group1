@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 CHAT_ROLES = ("user", "assistant", "system")
 
@@ -10,8 +10,8 @@ CHAT_ROLES = ("user", "assistant", "system")
 class ChatSession(db.Model):
     """A named conversation thread within the shared team chat.
 
-    Sessions are shared across the whole team, not private per user: any
-    authenticated user can see and switch to any session. created_by_id
+    Sessions are shared across a project's team, not private per user: any
+    user with access to the project can see and switch to any of its sessions. created_by_id
     only records who started it - it does not restrict who can read it.
     There is no stored title: it is derived from the session's first
     message by chat/session_service.py, computed at read time.
@@ -20,6 +20,13 @@ class ChatSession(db.Model):
     __tablename__ = "chat_sessions"
 
     id = db.Column(db.Integer, primary_key=True)
+    # Sessions are shared by the members of one project, not across projects.
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     created_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -56,6 +63,11 @@ class ChatMessage(db.Model):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         index=True,
+    )
+
+    __table_args__ = (
+        in_check("role", CHAT_ROLES, "role_valid"),
+        db.Index("ix_chat_messages_session_created", "session_id", "created_at"),
     )
 
     def to_dict(self) -> dict:

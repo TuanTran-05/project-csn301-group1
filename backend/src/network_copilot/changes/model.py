@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import event
 
-from ..extensions import db
+from ..extensions import db, in_check
 
 CHANGE_STATUSES = (
     "pending_approval",
@@ -20,6 +20,10 @@ BATCH_STATUSES = (
 
 RISK_LEVELS = ("low", "medium", "high")
 
+# Where a change came from: a direct API call, the AI copilot, or a topology
+# design turned into configuration.
+CHANGE_SOURCES = ("api", "ai", "design")
+
 
 class ChangeBatch(db.Model):
     """A batch of configuration changes to be applied together."""
@@ -27,6 +31,13 @@ class ChangeBatch(db.Model):
     __tablename__ = "change_batches"
 
     id = db.Column(db.Integer, primary_key=True)
+    # A batch never spans projects: every child targets a device of this one.
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     status = db.Column(db.String(32), nullable=False, default="pending_approval")
     risk_level = db.Column(db.String(16), nullable=False, default="low")
     requires_confirmation = db.Column(
@@ -49,6 +60,12 @@ class ChangeBatch(db.Model):
     approved_at = db.Column(db.DateTime)
     applied_at = db.Column(db.DateTime)
 
+    __table_args__ = (
+        in_check("status", BATCH_STATUSES, "status_valid"),
+        in_check("risk_level", RISK_LEVELS, "risk_level_valid"),
+        in_check("source", CHANGE_SOURCES, "source_valid"),
+    )
+
     changes = db.relationship(
         "ChangeRequest",
         back_populates="batch",
@@ -70,6 +87,7 @@ class ChangeBatch(db.Model):
         sorted_changes = sorted(self.changes, key=lambda c: c.target_hostname or "")
         return {
             "id": self.id,
+            "project_id": self.project_id,
             "status": self.status,
             "risk_level": self.risk_level,
             "requires_confirmation": self.requires_confirmation,
@@ -171,6 +189,14 @@ class ChangeRequest(db.Model):
     )
     approved_at = db.Column(db.DateTime)
     applied_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        in_check("status", CHANGE_STATUSES, "status_valid"),
+        in_check("risk_level", RISK_LEVELS, "risk_level_valid"),
+        in_check("source", CHANGE_SOURCES, "source_valid"),
+        in_check("execution_mode", ("config", "exec"), "execution_mode_valid"),
+        db.Index("ix_change_requests_device_status", "device_id", "status"),
+    )
 
     device = db.relationship("Device")
     requested_by = db.relationship("User", foreign_keys=[requested_by_id])
