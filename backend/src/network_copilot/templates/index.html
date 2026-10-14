@@ -22,11 +22,51 @@
         <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
       </label>
       <p class="error-text" x-show="loginError" x-text="loginError"></p>
+      <label>
+        Mã xác thực hai bước (nếu đã bật)
+        <input type="text" x-model="loginForm.code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" />
+      </label>
+      <label>
+        Mã khôi phục (nếu không dùng được ứng dụng xác thực)
+        <input type="text" x-model="loginForm.recovery_code" autocomplete="off" />
+      </label>
       <button type="submit">Đăng nhập</button>
     </form>
   </section>
 
-  <div class="app-shell" x-show="currentUser" x-cloak>
+  <section class="login-screen" x-show="currentUser && authBlocked" x-cloak>
+    <div class="login-form">
+      <h1>Xác thực hai bước</h1>
+      <div x-show="mfaSetupRequired">
+        <p>Tài khoản Admin cần bật xác thực hai bước để sử dụng hệ thống.</p>
+        <form @submit.prevent="setupMfa()" x-show="!mfaSecret">
+          <label>Mật khẩu hiện tại
+            <input type="password" x-model="mfaForm.password" required autocomplete="current-password" />
+          </label>
+          <button type="submit" :disabled="mfaBusy">Bắt đầu thiết lập</button>
+        </form>
+        <form @submit.prevent="enableMfa()" x-show="mfaSecret">
+          <p>Trong Google Authenticator hoặc ứng dụng tương tự, thêm tài khoản bằng khóa thiết lập, chọn mã theo thời gian (TOTP), rồi nhập khóa này:</p>
+          <code class="mfa-secret" x-text="mfaSecret"></code>
+          <label>Mã 6 chữ số từ ứng dụng xác thực
+            <input type="text" x-model="mfaForm.code" required pattern="[0-9]{6}" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
+          </label>
+          <button type="submit" :disabled="mfaBusy">Xác nhận và bật</button>
+        </form>
+      </div>
+      <div x-show="mfaRecoveryCodes.length">
+        <p>Đã bật xác thực hai bước. Lưu các mã khôi phục vào nơi an toàn trước khi tiếp tục. Mỗi mã chỉ dùng được một lần.</p>
+        <template x-for="code in mfaRecoveryCodes" :key="code">
+          <code class="mfa-secret" x-text="code"></code>
+        </template>
+        <button type="button" @click="finishMfa()">Đã lưu mã, tiếp tục</button>
+      </div>
+      <p class="error-text" x-show="mfaError" x-text="mfaError"></p>
+      <button type="button" @click="logout()">Đăng xuất</button>
+    </div>
+  </section>
+
+  <div class="app-shell" x-show="currentUser && !authBlocked" x-cloak>
     <header class="top-bar">
       <span class="app-title">Network Copilot</span>
       <label class="project-switch" x-show="projects.length" x-cloak>

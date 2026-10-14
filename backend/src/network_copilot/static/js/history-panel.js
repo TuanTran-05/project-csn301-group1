@@ -14,6 +14,7 @@ document.addEventListener("alpine:init", () => {
     init() {
       this.$watch("token", () => this.connectHistory());
       this.$watch("currentUser", () => this.connectHistory());
+      this.$watch("authBlocked", () => this.connectHistory());
       this.$watch("pendingHistoryRevision", () => this.scheduleHistoryRefresh());
       this.connectHistory();
     },
@@ -33,9 +34,9 @@ document.addEventListener("alpine:init", () => {
       this.draftSnapshot = null;
       this.pendingEditor = null;
       this._pendingEditorOpening = null;
-      if (!this.token || this.currentUser?.role !== "ADMIN") return;
+      if (!this.token || this.currentUser?.role !== "ADMIN" || this.authBlocked) return;
       const token = this.token;
-      const isCurrentSession = () => this.token === token && this.currentUser?.role === "ADMIN";
+      const isCurrentSession = () => this.token === token && this.currentUser?.role === "ADMIN" && !this.authBlocked;
       this.historyPanel = NetAIHistory.mount(this.$el, {
         apiBase: this.historyApiBase,
         request: async (url, options) => {

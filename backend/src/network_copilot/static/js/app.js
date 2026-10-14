@@ -13,8 +13,14 @@ document.addEventListener("alpine:init", () => {
     // -- auth state --
     token: localStorage.getItem("nc_token") || null,
     currentUser: storedUser(),
-    loginForm: { username: "", password: "" },
+    loginForm: { username: "", password: "", code: "", recovery_code: "" },
     loginError: "",
+    mfaSetupRequired: false,
+    mfaForm: { password: "", code: "" },
+    mfaSecret: "",
+    mfaRecoveryCodes: [],
+    mfaError: "",
+    mfaBusy: false,
     _sessionGeneration: 0,
     _authRetryTimer: null,
 
@@ -189,6 +195,10 @@ document.addEventListener("alpine:init", () => {
       );
     },
 
+    get authBlocked() {
+      return this.mfaSetupRequired || this.mfaRecoveryCodes.length > 0;
+    },
+
     get pendingBatches() {
       return Object.values(this.batchesById).filter(
         (batch) =>
@@ -209,6 +219,7 @@ document.addEventListener("alpine:init", () => {
           clearTimeout(this._authRetryTimer);
           this._authRetryTimer = null;
           this.currentUser = user;
+          this.mfaSetupRequired = user.role === "ADMIN" && !user.mfa_enabled;
           localStorage.setItem("nc_user", JSON.stringify(user));
           return this.startApp();
         })
@@ -217,7 +228,10 @@ document.addEventListener("alpine:init", () => {
             generation !== this._sessionGeneration ||
             token !== this.token
           ) return;
-          if (this.currentUser) return this.startApp();
+          if (this.currentUser) {
+            this.mfaSetupRequired = this.currentUser.role === "ADMIN" && !this.currentUser.mfa_enabled;
+            return this.startApp();
+          }
           clearTimeout(this._authRetryTimer);
           this._authRetryTimer = setTimeout(() => {
             if (
@@ -265,18 +279,22 @@ document.addEventListener("alpine:init", () => {
       this.loginError = "";
       const generation = this._sessionGeneration;
       try {
-        const data = await this.authFetch("/api/auth/login", {
+        const response = await fetch("/api/auth/login", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(this.loginForm),
         });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || `Đăng nhập thất bại (${response.status}).`);
         if (generation !== this._sessionGeneration) return;
         this.token = data.access_token;
         this.currentUser = data.user;
+        this.mfaSetupRequired = Boolean(data.mfa_setup_required);
         clearTimeout(this._authRetryTimer);
         this._authRetryTimer = null;
         localStorage.setItem("nc_token", this.token);
         localStorage.setItem("nc_user", JSON.stringify(this.currentUser));
-        this.loginForm = { username: "", password: "" };
+        this.loginForm = { username: "", password: "", code: "", recovery_code: "" };
         await this.startApp();
       } catch (err) {
         this.loginError = err.message || "Đăng nhập thất bại.";
@@ -334,6 +352,56 @@ document.addEventListener("alpine:init", () => {
       await this.startApp({ skipProjects: true });
     },
 
+    async setupMfa() {
+      if (this.mfaBusy) return;
+      this.mfaBusy = true;
+      this.mfaError = "";
+      const generation = this._sessionGeneration;
+      try {
+        const data = await this.authFetch("/api/auth/mfa/setup", {
+          method: "POST", body: JSON.stringify({ password: this.mfaForm.password }),
+        });
+        if (generation !== this._sessionGeneration) return;
+        this.mfaSecret = data.secret;
+        this.mfaForm.password = "";
+        this.mfaForm.code = "";
+      } catch (err) {
+        if (generation === this._sessionGeneration) this.mfaError = err.message;
+      } finally {
+        if (generation === this._sessionGeneration) this.mfaBusy = false;
+      }
+    },
+
+    async enableMfa() {
+      if (this.mfaBusy) return;
+      this.mfaBusy = true;
+      this.mfaError = "";
+      const generation = this._sessionGeneration;
+      try {
+        const data = await this.authFetch("/api/auth/mfa/enable", {
+          method: "POST", body: JSON.stringify({ code: this.mfaForm.code }),
+        });
+        if (generation !== this._sessionGeneration) return;
+        this.token = data.access_token;
+        localStorage.setItem("nc_token", this.token);
+        this.currentUser = { ...this.currentUser, mfa_enabled: true };
+        localStorage.setItem("nc_user", JSON.stringify(this.currentUser));
+        this.mfaRecoveryCodes = data.recovery_codes;
+        this.mfaSetupRequired = false;
+        this.mfaSecret = "";
+        this.mfaForm = { password: "", code: "" };
+      } catch (err) {
+        if (generation === this._sessionGeneration) this.mfaError = err.message;
+      } finally {
+        if (generation === this._sessionGeneration) this.mfaBusy = false;
+      }
+    },
+
+    async finishMfa() {
+      this.mfaRecoveryCodes = [];
+      await this.startApp();
+    },
+
     logout() {
       this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
@@ -343,6 +411,12 @@ document.addEventListener("alpine:init", () => {
       this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
+      this.mfaSetupRequired = false;
+      this.mfaForm = { password: "", code: "" };
+      this.mfaSecret = "";
+      this.mfaRecoveryCodes = [];
+      this.mfaError = "";
+      this.mfaBusy = false;
       clearTimeout(this._authRetryTimer);
       this._authRetryTimer = null;
       localStorage.removeItem("nc_token");
@@ -372,6 +446,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     async startApp(options = {}) {
+      if (this.authBlocked) return;
       const generation = this._sessionGeneration;
       if (!options.skipProjects) {
         try {

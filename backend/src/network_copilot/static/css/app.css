@@ -100,6 +100,19 @@ body {
   margin: 0;
 }
 
+.mfa-secret {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+  user-select: all;
+}
+
+.login-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 /* -- App shell -- */
 
 .app-shell {
