@@ -1,9 +1,10 @@
-"""Shared team chat transcript with the AI copilot.
+"""Account-scoped chat transcripts with the AI copilot.
 
 Every exchange through POST /api/ai/chat is recorded here, whether it
 succeeded, was blocked by the policy engine, or failed upstream, so anyone
 reopening the page sees exactly what happened, not just the calls that
-returned 200. Every message belongs to exactly one chat session (see
+returned 200 within their own account. Admin retains global audit visibility.
+Every message belongs to exactly one chat session (see
 chat/session_service.py); a caller that does not know/care which session
 gets a sensible default rather than being forced to resolve one itself.
 """

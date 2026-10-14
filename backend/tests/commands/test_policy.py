@@ -4,6 +4,7 @@ from network_copilot.commands.policy import (
     CommandDecision,
     CommandPolicy,
     ai_policy,
+    analyze_risk,
     default_policy,
 )
 
@@ -153,6 +154,20 @@ def test_evaluate_rejects_non_string_input():
 
 
 @pytest.mark.parametrize(
+    ("commands", "device_role", "expected"),
+    [
+        (["hostname STUDENT-LAB"], "access", "LOW"),
+        (["configure terminal", "hostname STUDENT-LAB", "end"], "access", "LOW"),
+        (["configure terminal", "write erase", "end"], "access", "HIGH"),
+        (["router ospf 1"], "core", "HIGH"),
+        (["ip route 0.0.0.0 0.0.0.0 10.0.0.1"], "core", "HIGH"),
+    ],
+)
+def test_analyze_risk(commands, device_role, expected):
+    assert analyze_risk(commands, device_role) == expected
+
+
+@pytest.mark.parametrize(
     "command",
     ["show interface ip brief", "show route", "show access-list"],
 )
@@ -164,4 +179,3 @@ def test_asa_read_commands_are_allowed_on_any_role(command, role):
     are deliberately ungated."""
     decision = default_policy.evaluate(command, role)
     assert decision.allowed is True
-

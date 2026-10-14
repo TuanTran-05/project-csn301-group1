@@ -15,6 +15,7 @@ from ..ssh.exceptions import SSHError
 from ..ssh.messages import friendly_error
 from .model import CommandExecution
 from .policy import CommandDecision, default_policy, policy_for_source
+from ..governance.redaction import redact_output
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def _record(
     reason: str | None = None,
     duration_ms: int = 0,
     source: str = "api",
+    group_id: int | None = None,
 ) -> CommandExecution:
     execution = CommandExecution(
         device_id=device_id,
@@ -38,6 +40,7 @@ def _record(
         reason=reason,
         duration_ms=duration_ms,
         source=source,
+        group_id=group_id,
     )
     db.session.add(execution)
     db.session.commit()
@@ -53,6 +56,7 @@ def execute_readonly(
     command: str,
     user_id: int | None = None,
     source: str = "api",
+    group_id: int | None = None,
 ) -> CommandExecution:
     """Run a single read-only command after the policy engine approves it."""
     if not isinstance(command, str) or not command.strip():
@@ -60,6 +64,15 @@ def execute_readonly(
 
     # Raises NotFoundError when the device does not exist.
     device = device_service.get_device(device_id)
+    from ..governance.access import actor, permitted, require, role
+    user = actor(user_id)
+    if group_id is None and role(user) != "ADMIN":
+        scopes = [g.id for g in device.groups if permitted(user, "device.observe", g.id, device)]
+        if len(scopes) != 1:
+            from ..errors import ForbiddenError
+            raise ForbiddenError("Select exactly one authorized group for this observation.")
+        group_id = scopes[0]
+    require(user, "device.observe", group_id, device)
 
     decision = policy_for_source(source).evaluate(command, device.role)
     if not decision.allowed:
@@ -70,6 +83,7 @@ def execute_readonly(
             status="blocked",
             reason=decision.reason,
             source=source,
+            group_id=group_id,
         )
         logger.warning(
             "Blocked command on %s: %s", device.hostname, decision.reason
@@ -101,6 +115,7 @@ def execute_readonly(
             status="failed",
             reason=exc.message,
             source=source,
+            group_id=group_id,
         )
         device_service.set_device_status(device, "offline")
         record_event(
@@ -123,9 +138,10 @@ def execute_readonly(
         user_id=user_id,
         command=decision.normalized_command,
         status="success",
-        output=result.output,
+        output=redact_output(result.output),
         duration_ms=result.duration_ms,
         source=source,
+        group_id=group_id,
     )
     record_event(
         action="command.readonly",
@@ -154,7 +170,8 @@ def list_history(
         query = query.filter(CommandExecution.user_id == user_id)
     if status:
         query = query.filter(CommandExecution.status == status)
-    return (
+    from ..governance.visibility import events
+    return events(
         query.order_by(CommandExecution.created_at.desc(), CommandExecution.id.desc())
         .limit(min(max(limit, 1), 500))
         .all()

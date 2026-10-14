@@ -44,11 +44,11 @@ def test_anonymous_cannot_list_devices(client):
     assert client.get("/api/devices").status_code == 401
 
 
-def test_viewer_can_list_devices(client, admin_headers, viewer_headers):
+def test_legacy_viewer_has_no_implicit_device_access(client, admin_headers, viewer_headers):
     client.post("/api/devices", headers=admin_headers, json=VALID_DEVICE)
     response = client.get("/api/devices", headers=viewer_headers)
     assert response.status_code == 200
-    assert len(response.get_json()["items"]) == 1
+    assert response.get_json()["items"] == []
 
 
 def test_get_device_by_id(client, admin_headers):

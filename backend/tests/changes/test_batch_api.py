@@ -48,7 +48,7 @@ def test_batch_list_requires_authentication(client):
     assert client.get("/api/change-batches").status_code == 401
 
 
-def test_authenticated_user_can_list_and_get_batches(
+def test_legacy_viewer_cannot_read_unallocated_batches(
     client, viewer_headers, batch
 ):
     list_response = client.get("/api/change-batches", headers=viewer_headers)
@@ -57,9 +57,8 @@ def test_authenticated_user_can_list_and_get_batches(
     )
 
     assert list_response.status_code == 200
-    assert [item["id"] for item in list_response.get_json()["items"]] == [batch.id]
-    assert get_response.status_code == 200
-    assert get_response.get_json()["id"] == batch.id
+    assert list_response.get_json()["items"] == []
+    assert get_response.status_code == 403
 
 
 @pytest.mark.parametrize("suffix", ["approve", "apply", "cancel"])

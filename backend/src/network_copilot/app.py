@@ -67,16 +67,34 @@ def _register_models() -> None:
     from .commands import model as _command_model  # noqa: F401
     from .credentials import model as _credential_model  # noqa: F401
     from .devices import model as _device_model  # noqa: F401
+    from .groups import model as _group_model  # noqa: F401
     from .monitoring import model as _monitoring_model  # noqa: F401
+    from .governance import model as _governance_model  # noqa: F401
 
 
 def _register_request_hooks(app: Flask) -> None:
     @app.before_request
     def assign_request_id():
         g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        from flask_jwt_extended import verify_jwt_in_request, get_jwt
+        if request.headers.get("Authorization"):
+            verify_jwt_in_request()
+            claims = get_jwt()
+            if claims.get("mfa_pending") and request.endpoint not in {
+                "auth.me", "governance.mfa_setup", "governance.mfa_enable"
+            }:
+                from .errors import ForbiddenError
+                raise ForbiddenError("Complete two-factor enrollment before using the platform.")
 
     @app.after_request
     def apply_security_headers(response):
+        if response.is_json and request.path.startswith("/api/") and not request.path.startswith("/api/auth/"):
+            from .governance.visibility import request_user
+            from .governance.access import role
+            user = request_user()
+            if user and role(user) != "ADMIN":
+                from .governance.redaction import redact_output
+                response.set_data(app.json.dumps(redact_output(response.get_json())))
         for header, value in SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
         request_id = getattr(g, "request_id", None)
@@ -95,9 +113,13 @@ def _register_blueprints(app: Flask) -> None:
     from .commands.routes import bp as commands_bp
     from .dashboard.routes import bp as dashboard_bp
     from .devices.routes import bp as devices_bp
+    from .groups.routes import bp as groups_bp
     from .monitoring.routes import bp as monitoring_bp
+    from .governance.routes import bp as governance_bp
+    from .governance.learning import bp as learning_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(groups_bp)
     app.register_blueprint(devices_bp)
     app.register_blueprint(commands_bp)
     app.register_blueprint(monitoring_bp)
@@ -107,6 +129,8 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(ai_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(governance_bp)
+    app.register_blueprint(learning_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
@@ -120,6 +144,7 @@ def _register_error_handlers(app: Flask) -> None:
         # Keep the exception's own code: several failures share one HTTP status
         # (policy_violation and forbidden are both 403, ssh_timeout and
         # device_unreachable are both 502) and clients need to tell them apart.
+        db.session.rollback()
         payload = exc.to_dict()
         payload["request_id"] = getattr(g, "request_id", None)
         return jsonify(payload), exc.status_code
@@ -165,6 +190,18 @@ def _register_error_handlers(app: Flask) -> None:
     @jwt.revoked_token_loader
     def handle_revoked_token(header, payload):
         return _respond(401, "The access token has been revoked.")
+
+    @jwt.token_in_blocklist_loader
+    def token_revoked(header, payload):
+        from .auth.model import User
+        try:
+            user = db.session.get(User, int(payload["sub"]))
+        except (ValueError, TypeError, KeyError):
+            return True
+        if not user or not user.is_active or payload.get("version", 0) != user.token_version:
+            return True
+        return bool(user.role == "ADMIN" and app.config.get("ADMIN_MFA_REQUIRED", True)
+                    and not user.mfa_enabled and not payload.get("mfa_pending"))
 
 
 def _start_scheduler(app: Flask) -> None:

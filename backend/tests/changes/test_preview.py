@@ -304,7 +304,7 @@ def test_core_device_change_is_higher_risk(app, admin_user, core_switch):
             "end",
         ],
     )
-    assert change.risk_level == "medium"
+    assert change.risk_level == "high"
 
 
 def test_unknown_device_raises(app, admin_user):

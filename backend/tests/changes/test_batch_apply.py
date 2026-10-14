@@ -8,7 +8,7 @@ from network_copilot.changes import batch_service
 from network_copilot.changes.batch_service import BatchOperation
 from network_copilot.changes.model import ChangeRequest
 from network_copilot.devices import service as device_service
-from network_copilot.errors import ConflictError, InvalidStateError, ValidationError
+from network_copilot.errors import ConflictError, InvalidStateError, NotFoundError, ValidationError
 from network_copilot.extensions import db
 from network_copilot.ssh.exceptions import SSHConnectionError
 
@@ -215,7 +215,7 @@ def test_live_connection_identity_mutation_fails_child_without_connecting(
     assert ssh_factory.clients == {}
 
 
-def test_deleted_target_fails_child_and_later_child_still_runs(
+def test_deleted_target_aborts_batch_preflight_before_any_writes(
     app, admin_user, access_switch, dist_switch, ssh_factory
 ):
     batch = make_write_batch(admin_user.id, [access_switch, dist_switch])
@@ -231,15 +231,10 @@ def test_deleted_target_fails_child_and_later_child_still_runs(
     db.session.delete(access_switch)
     db.session.commit()
 
-    result = batch_service.apply_batch(
-        batch.id, admin_user.id, confirmation="CONFIRM ALL"
-    )
-    assert result.status == "partial_success"
-    assert {change.target_hostname: change.status for change in result.changes} == {
-        "ACC-SW1": "failed",
-        "DIST-SW1": "success",
-    }
-    assert set(ssh_factory.clients) == {"DIST-SW1"}
+    with pytest.raises(NotFoundError, match="target no longer exists"):
+        batch_service.apply_batch(batch.id, admin_user.id, confirmation="CONFIRM ALL")
+    assert batch.status == "approved"
+    assert ssh_factory.get(dist_switch.hostname).calls == []
 
 
 def test_device_service_rejects_deleting_a_nonterminal_batch_target(

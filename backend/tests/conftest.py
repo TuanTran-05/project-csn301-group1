@@ -103,6 +103,8 @@ def _create_device(hostname: str, ip: str, role: str, device_type="cisco_ios") -
         ssh_port=22,
         status="unknown",
         monitoring_enabled=True,
+        environment="virtual",
+        isolated=True,
     )
     _db.session.add(device)
     _db.session.commit()

@@ -71,6 +71,7 @@ class Config:
     AI_API_KEY = os.environ.get("AI_API_KEY")
 
     TESTING = False
+    ADMIN_MFA_REQUIRED = True
 
 
 class TestConfig(Config):
@@ -82,3 +83,4 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
+    ADMIN_MFA_REQUIRED = False

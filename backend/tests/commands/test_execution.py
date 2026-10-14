@@ -29,14 +29,15 @@ def test_readonly_command_executes_and_returns_output(
     assert body["duration_ms"] >= 0
 
 
-def test_viewer_can_run_readonly_commands(client, viewer_headers, device, ssh_factory):
+def test_legacy_viewer_cannot_run_commands_without_permissions(client, viewer_headers, device, ssh_factory):
     ssh_factory.set_client(device.hostname, default_output="ok")
     response = client.post(
         "/api/commands/execute-readonly",
         headers=viewer_headers,
         json={"device_id": device.id, "command": "show ip route"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
+    assert ssh_factory.get(device.hostname).show_commands == []
 
 
 def test_anonymous_cannot_run_commands(client, device):
@@ -72,13 +73,14 @@ def test_blocked_command_is_recorded(client, admin_headers, device, ssh_factory)
     assert record.command == "reload"
 
 
-def test_ai_source_blocks_running_config_before_ssh(app, device, ssh_factory):
+def test_ai_source_blocks_running_config_before_ssh(app, device, ssh_factory, admin_user):
     with app.app_context():
         with pytest.raises(PolicyViolationError):
             execute_readonly(
                 device_id=device.id,
                 command="show running-config",
                 source="ai",
+                user_id=admin_user.id,
             )
 
         record = db.session.query(CommandExecution).one()

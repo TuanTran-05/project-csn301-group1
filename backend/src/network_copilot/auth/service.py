@@ -17,10 +17,11 @@ def authenticate(username: str, password: str) -> User | None:
     return user
 
 
-def issue_token(user: User) -> str:
+def issue_token(user: User, mfa_pending: bool = False) -> str:
     return create_access_token(
         identity=str(user.id),
-        additional_claims={"role": user.role, "username": user.username},
+        additional_claims={"role": user.role, "username": user.username,
+                           "version": user.token_version, "mfa_pending": mfa_pending},
     )
 
 
@@ -28,18 +29,19 @@ def current_user() -> User | None:
     identity = get_jwt_identity()
     if identity is None:
         return None
-    return db.session.get(User, int(identity))
+    user = db.session.get(User, int(identity))
+    return user if user and user.is_active else None
 
 
 def roles_required(*roles: str):
-    """Reject requests whose JWT role claim is not in ``roles``."""
+    """Check the live account role; token claims never override current authority."""
 
     def decorator(view):
         @wraps(view)
         def wrapper(*args, **kwargs):
             verify_jwt_in_request()
-            claims = get_jwt()
-            if claims.get("role") not in roles:
+            user = current_user()
+            if user is None or user.role not in roles:
                 return (
                     jsonify(
                         {

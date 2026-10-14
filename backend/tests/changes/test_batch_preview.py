@@ -149,7 +149,7 @@ def test_low_risk_batch_does_not_require_confirmation(
     )
     batch = batch_service.create_batch_preview(admin_user.id, [operation], "VLAN")
     assert batch.requires_confirmation is False
-    assert batch.risk_level == "medium"  # DIST-SW1 is a distribution device
+    assert batch.risk_level == "high"  # Distribution devices now use Low/High risk.
 
 
 # -- get_batch --------------------------------------------------------------

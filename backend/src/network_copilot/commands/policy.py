@@ -43,6 +43,53 @@ DANGEROUS_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"^squeeze\b", "flash maintenance is not permitted"),
 )
 
+HIGH_RISK_COMMANDS = frozenset(
+    {
+        "write erase",
+        "erase startup-config",
+        "erase nvram:",
+        "reload",
+        "reload force",
+        "clear ip route *",
+        "no ip routing",
+        "shutdown",
+    }
+)
+
+HIGH_RISK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.I)
+    for pattern in (
+        r"^(?:no\s+)?ip\s+route\b",
+        r"^(?:no\s+)?router\s+(?:ospf|bgp|eigrp|rip)\b",
+        r"^(?:no\s+)?(?:network|neighbor|redistribute|default-information)\b",
+        r"^(?:no\s+)?(?:route-map|ip\s+prefix-list)\b",
+        r"^(?:write|erase|reload|delete|format|copy|clear|shutdown|reset)\b",
+        r"^no\s+",
+    )
+)
+
+
+def analyze_risk(commands: list[str], device_role: str | None = None) -> str:
+    """Return HIGH if any command is destructive or changes routing; otherwise LOW."""
+    for command in commands:
+        if not isinstance(command, str):
+            return "HIGH"
+        normalized = re.sub(r"\s+", " ", command.strip()).lower()
+        if normalized in {"configure terminal", "conf t", "end", "exit"}:
+            continue
+        if normalized in HIGH_RISK_COMMANDS:
+            return "HIGH"
+        if any(pattern.search(normalized) for pattern in HIGH_RISK_PATTERNS):
+            return "HIGH"
+        if any(re.search(pattern, normalized, re.I) for pattern, _ in DANGEROUS_PATTERNS):
+            return "HIGH"
+        if device_role in ROUTING_ROLES and re.match(
+            r"^(?:ip\s+(?:route|ospf|routing)|no\s+ip\s+(?:route|ospf|routing))\b",
+            normalized,
+        ):
+            return "HIGH"
+    return "LOW"
+
 
 def _is_ipv4(value: str) -> bool:
     try:

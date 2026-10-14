@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
@@ -15,7 +15,7 @@ def login():
     username = payload.get("username")
     password = payload.get("password")
 
-    if not username or not password:
+    if not isinstance(username, str) or not isinstance(password, str) or not username or not password or len(password) > 128 or len(username) > 64:
         return (
             jsonify(
                 {
@@ -40,6 +40,14 @@ def login():
             401,
         )
 
+    from ..governance import mfa
+    if user.mfa_enabled:
+        valid = mfa.verify(user, payload.get("code"))
+        if not valid and payload.get("recovery_code"):
+            valid = mfa.recover(user, payload["recovery_code"])
+        if not valid:
+            return jsonify(error="unauthorized", message="A valid two-factor or recovery code is required."), 401
+    pending = user.role == "ADMIN" and current_app.config.get("ADMIN_MFA_REQUIRED", True) and not user.mfa_enabled
     record_event(
         action="auth.login",
         result="success",
@@ -47,7 +55,7 @@ def login():
         username=user.username,
         details={"role": user.role},
     )
-    return jsonify({"access_token": issue_token(user), "user": user.to_dict()}), 200
+    return jsonify({"access_token": issue_token(user, mfa_pending=pending), "user": user.to_dict(), "mfa_setup_required": pending}), 200
 
 
 @bp.get("/me")

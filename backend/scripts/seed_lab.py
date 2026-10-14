@@ -44,10 +44,15 @@ def seed_admin() -> int:
     username = os.environ.get("SEED_ADMIN_USERNAME", "admin")
     password = os.environ.get("SEED_ADMIN_PASSWORD")
 
+    existing_admin = db.session.query(User).filter_by(role="ADMIN").first()
+    if existing_admin is not None:
+        print("  sole Administrator already initialized; use the transfer API to change ownership")
+        return 0
+
     user = db.session.query(User).filter_by(username=username).one_or_none()
     if user is not None:
-        print(f"  admin user '{username}' already exists")
-        return 0
+        print("ERROR: initial Admin username belongs to another role.", file=sys.stderr)
+        raise SystemExit(1)
 
     if not password:
         print(

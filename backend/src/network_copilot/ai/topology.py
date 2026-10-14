@@ -137,9 +137,9 @@ def _routing_for(devices, snapshots, networks) -> list[dict]:
     return routing
 
 
-def build_topology() -> dict:
+def build_topology(devices=None) -> dict:
     """The network as the model is allowed to see it."""
-    devices = device_service.list_devices()
+    devices = device_service.list_devices() if devices is None else devices
     snapshots = {device.id: latest_snapshot(device.id) for device in devices}
     management_ips = _management_ips(devices)
 

@@ -11,6 +11,7 @@ class CommandExecution(db.Model):
     __tablename__ = "command_executions"
 
     id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("groups.id"))
     device_id = db.Column(
         db.Integer, db.ForeignKey("devices.id", ondelete="SET NULL"), index=True
     )
@@ -37,6 +38,7 @@ class CommandExecution(db.Model):
         payload = {
             "id": self.id,
             "device_id": self.device_id,
+            "group_id": self.group_id,
             "user_id": self.user_id,
             "command": self.command,
             "status": self.status,

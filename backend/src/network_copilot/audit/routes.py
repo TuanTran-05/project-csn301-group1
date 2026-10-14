@@ -22,7 +22,7 @@ def _timestamp_arg(name: str) -> datetime | None:
 
 
 @bp.get("")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "TEACHER", "STUDENT")
 def list_audit_logs():
     events = service.list_events(
         user_id=request.args.get("user_id", type=int),
