@@ -13,14 +13,8 @@ document.addEventListener("alpine:init", () => {
     // -- auth state --
     token: localStorage.getItem("nc_token") || null,
     currentUser: storedUser(),
-    loginForm: { username: "", password: "", code: "", recovery_code: "" },
+    loginForm: { username: "", password: "" },
     loginError: "",
-    mfaSetupRequired: false,
-    mfaForm: { password: "", code: "" },
-    mfaSecret: "",
-    mfaRecoveryCodes: [],
-    mfaError: "",
-    mfaBusy: false,
     _sessionGeneration: 0,
     _authRetryTimer: null,
 
@@ -75,6 +69,8 @@ document.addEventListener("alpine:init", () => {
     sending: false,
     _messagesRefreshGeneration: 0,
     _clientMessageSequence: 0,
+    topologyChoiceBusy: false,
+    topologyChoiceError: "",
     sessions: [],
     // A per-browser bookmark of which shared session this browser was last
     // looking at (see the design spec: sessions are shared team data, but
@@ -88,6 +84,12 @@ document.addEventListener("alpine:init", () => {
     // Starter prompts built from this project's real devices, so a new chat
     // is never a blank box.
     get suggestions() {
+      if (this.currentUser && this.currentUser.role === "OPERATOR") {
+        return ["Tạo project mới", "Gợi ý cách kết nối các thiết bị trong sơ đồ"];
+      }
+      if (this.currentUser && this.currentUser.role === "VIEWER") {
+        return ["Giải thích topology hiện tại", "Cần cấu hình gì để các mạng liên thông?"];
+      }
       const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
       const router = byRole("core", "isp");
       const switchDevice = byRole("access", "distribution");
@@ -126,6 +128,52 @@ document.addEventListener("alpine:init", () => {
           this.autoGrow(box);
         }
       });
+    },
+
+    topologyPreview(option) {
+      const count = Math.max(2, Math.min(25, Number(option.device_count) || 2));
+      let nodes = [];
+      let links = [];
+      const addNode = (x, y, label) => {
+        const id = nodes.length;
+        nodes.push({ id, x, y, label });
+        return id;
+      };
+      const connect = (a, b) => links.push([a, b]);
+      if (option.key === "ring") {
+        for (let i = 0; i < count; i++) {
+          const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
+          addNode(140 + 98 * Math.cos(angle), 48 + 32 * Math.sin(angle), "R");
+        }
+        for (let i = 0; i < count; i++) connect(i, (i + 1) % count);
+      } else if (option.key === "campus") {
+        const fw = addNode(140, 11, "FW");
+        const d1 = addNode(95, 43, "L3");
+        const d2 = addNode(185, 43, "L3");
+        connect(fw, d1); connect(fw, d2); connect(d1, d2);
+        const access = count - 3;
+        for (let i = 0; i < access; i++) {
+          const x = access === 1 ? 140 : 18 + (244 * i) / (access - 1);
+          const id = addNode(x, 79, "SW");
+          connect(id, d1); connect(id, d2);
+        }
+      } else {
+        const centerLabel = option.key === "hub_spoke" ? "R" : "L3";
+        const center = addNode(140, 12, centerLabel);
+        const leaves = count - 1;
+        for (let i = 0; i < leaves; i++) {
+          const x = leaves === 1 ? 140 : 18 + (244 * i) / (leaves - 1);
+          const leaf = addNode(x, 78, option.key === "hub_spoke" ? "R" : "SW");
+          connect(center, leaf);
+        }
+      }
+      const edges = links.map(([a, b]) =>
+        `<line x1="${nodes[a].x}" y1="${nodes[a].y}" x2="${nodes[b].x}" y2="${nodes[b].y}"/>`
+      ).join("");
+      const vertices = nodes.map((node) =>
+        `<g><circle cx="${node.x}" cy="${node.y}" r="9"/><text x="${node.x}" y="${node.y + 3}" text-anchor="middle">${node.label}</text></g>`
+      ).join("");
+      return `<svg class="topology-preview" viewBox="0 0 280 94" role="img" aria-label="Sơ đồ xem trước">${edges}${vertices}</svg>`;
     },
 
     // Enter sends, Shift+Enter breaks the line. Enter while an input method
@@ -195,10 +243,6 @@ document.addEventListener("alpine:init", () => {
       );
     },
 
-    get authBlocked() {
-      return this.mfaSetupRequired || this.mfaRecoveryCodes.length > 0;
-    },
-
     get pendingBatches() {
       return Object.values(this.batchesById).filter(
         (batch) =>
@@ -219,7 +263,6 @@ document.addEventListener("alpine:init", () => {
           clearTimeout(this._authRetryTimer);
           this._authRetryTimer = null;
           this.currentUser = user;
-          this.mfaSetupRequired = user.role === "ADMIN" && !user.mfa_enabled;
           localStorage.setItem("nc_user", JSON.stringify(user));
           return this.startApp();
         })
@@ -229,7 +272,6 @@ document.addEventListener("alpine:init", () => {
             token !== this.token
           ) return;
           if (this.currentUser) {
-            this.mfaSetupRequired = this.currentUser.role === "ADMIN" && !this.currentUser.mfa_enabled;
             return this.startApp();
           }
           clearTimeout(this._authRetryTimer);
@@ -289,12 +331,11 @@ document.addEventListener("alpine:init", () => {
         if (generation !== this._sessionGeneration) return;
         this.token = data.access_token;
         this.currentUser = data.user;
-        this.mfaSetupRequired = Boolean(data.mfa_setup_required);
         clearTimeout(this._authRetryTimer);
         this._authRetryTimer = null;
         localStorage.setItem("nc_token", this.token);
         localStorage.setItem("nc_user", JSON.stringify(this.currentUser));
-        this.loginForm = { username: "", password: "", code: "", recovery_code: "" };
+        this.loginForm = { username: "", password: "" };
         await this.startApp();
       } catch (err) {
         this.loginError = err.message || "Đăng nhập thất bại.";
@@ -352,56 +393,6 @@ document.addEventListener("alpine:init", () => {
       await this.startApp({ skipProjects: true });
     },
 
-    async setupMfa() {
-      if (this.mfaBusy) return;
-      this.mfaBusy = true;
-      this.mfaError = "";
-      const generation = this._sessionGeneration;
-      try {
-        const data = await this.authFetch("/api/auth/mfa/setup", {
-          method: "POST", body: JSON.stringify({ password: this.mfaForm.password }),
-        });
-        if (generation !== this._sessionGeneration) return;
-        this.mfaSecret = data.secret;
-        this.mfaForm.password = "";
-        this.mfaForm.code = "";
-      } catch (err) {
-        if (generation === this._sessionGeneration) this.mfaError = err.message;
-      } finally {
-        if (generation === this._sessionGeneration) this.mfaBusy = false;
-      }
-    },
-
-    async enableMfa() {
-      if (this.mfaBusy) return;
-      this.mfaBusy = true;
-      this.mfaError = "";
-      const generation = this._sessionGeneration;
-      try {
-        const data = await this.authFetch("/api/auth/mfa/enable", {
-          method: "POST", body: JSON.stringify({ code: this.mfaForm.code }),
-        });
-        if (generation !== this._sessionGeneration) return;
-        this.token = data.access_token;
-        localStorage.setItem("nc_token", this.token);
-        this.currentUser = { ...this.currentUser, mfa_enabled: true };
-        localStorage.setItem("nc_user", JSON.stringify(this.currentUser));
-        this.mfaRecoveryCodes = data.recovery_codes;
-        this.mfaSetupRequired = false;
-        this.mfaSecret = "";
-        this.mfaForm = { password: "", code: "" };
-      } catch (err) {
-        if (generation === this._sessionGeneration) this.mfaError = err.message;
-      } finally {
-        if (generation === this._sessionGeneration) this.mfaBusy = false;
-      }
-    },
-
-    async finishMfa() {
-      this.mfaRecoveryCodes = [];
-      await this.startApp();
-    },
-
     logout() {
       this._sessionGeneration += 1;
       this._deviceRefreshGeneration += 1;
@@ -411,12 +402,6 @@ document.addEventListener("alpine:init", () => {
       this._messagesRefreshGeneration += 1;
       this.token = null;
       this.currentUser = null;
-      this.mfaSetupRequired = false;
-      this.mfaForm = { password: "", code: "" };
-      this.mfaSecret = "";
-      this.mfaRecoveryCodes = [];
-      this.mfaError = "";
-      this.mfaBusy = false;
       clearTimeout(this._authRetryTimer);
       this._authRetryTimer = null;
       localStorage.removeItem("nc_token");
@@ -446,7 +431,6 @@ document.addEventListener("alpine:init", () => {
     },
 
     async startApp(options = {}) {
-      if (this.authBlocked) return;
       const generation = this._sessionGeneration;
       if (!options.skipProjects) {
         try {
@@ -1142,6 +1126,13 @@ document.addEventListener("alpine:init", () => {
           }),
         });
         if (generation !== this._messagesRefreshGeneration) return;
+        if (payload.project && payload.session_id) {
+          localStorage.setItem("nc_project_id", String(payload.project.id));
+          localStorage.setItem("nc_session_id", String(payload.session_id));
+          this._messagesRefreshGeneration += 1;
+          window.location.assign("/");
+          return;
+        }
         this._ingestMessage(
           this._clientMessage(
             "assistant",
@@ -1179,6 +1170,26 @@ document.addEventListener("alpine:init", () => {
           // Give the box back to the user so the next question needs no click.
           this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
         }
+      }
+    },
+
+    async buildTopologyChoice(projectId, option) {
+      if (this.topologyChoiceBusy || !option || !this.currentProject ||
+          Number(projectId) !== Number(this.currentProject.id) ||
+          this.currentProject.access !== "owner" ||
+          !this.currentUser || this.currentUser.role !== "OPERATOR") return;
+      this.topologyChoiceBusy = true;
+      this.topologyChoiceError = "";
+      try {
+        await this.authFetch(`/api/projects/${projectId}/topology/blueprints/${option.key}`, {
+          method: "POST",
+          body: JSON.stringify({ params: option.params, planned: true }),
+        });
+        window.location.assign(`/projects?project_id=${projectId}&tab=topology`);
+      } catch (error) {
+        this.topologyChoiceError = error.message || "Không thể tạo topology.";
+      } finally {
+        this.topologyChoiceBusy = false;
       }
     },
   }));

@@ -26,19 +26,23 @@ Migration `9e54c2bd3d7e`:
 
 Các kiểm tra migration trong quá trình phát triển dùng cơ sở dữ liệu thử riêng, không nâng cấp cơ sở dữ liệu đang vận hành.
 
-## Admin và xác thực hai bước
+## Đăng nhập Admin
 
-`POST /api/auth/login` nhận `username`, `password` và, khi đã bật MFA, `code` hoặc `recovery_code`.
+`POST /api/auth/login` chỉ cần `username` và `password`. Admin có thể đăng nhập đồng thời trên nhiều máy; đăng nhập mới không thu hồi phiên trước đó.
 
-Admin chưa bật MFA nhận token có `mfa_setup_required: true`. Token này chỉ dùng được cho `/api/auth/me`, `/api/auth/mfa/setup` và `/api/auth/mfa/enable`:
+Phản hồi chứa token đầy đủ và `mfa_setup_required: false` để tương thích với ứng dụng cũ. Không còn màn hình thiết lập, yêu cầu mã TOTP hay mã khôi phục. Các API `/api/auth/mfa/setup`, `/api/auth/mfa/enable` và `/api/auth/mfa/reset` đã được gỡ bỏ.
 
-1. `POST /api/auth/mfa/setup` với `password`: trả secret và URI cho ứng dụng authenticator.
-2. `POST /api/auth/mfa/enable` với `code`: trả token đầy đủ và tám mã khôi phục, chỉ hiển thị một lần.
-3. `POST /api/auth/mfa/reset` với mật khẩu cùng mã TOTP mới hoặc mã khôi phục chưa sử dụng để đổi authenticator. Admin phải đăng ký lại MFA trước khi dùng platform.
+Đổi mật khẩu, đổi quyền hoặc thay đổi trạng thái tài khoản vẫn làm token cũ mất hiệu lực trên mọi máy. Các cột MFA trong migration cũ được giữ nguyên để không sửa lịch sử nâng cấp; ứng dụng không sử dụng chúng.
 
-TOTP đã dùng không dùng lại được; mã khôi phục chỉ dùng một lần. Secret được mã hóa bằng khóa bảo vệ credential của backend. Khóa/mở khóa tài khoản, đổi mật khẩu, thay đổi MFA và chuyển giao Admin làm token cũ mất hiệu lực. Không có API đọc secret đã lưu hay xóa Admin.
+`POST /api/admin/transfer` nhận `user_id` và `password` của Admin hiện tại. Người nhận phải là Teacher đang hoạt động. Chuyển giao làm token cũ của cả hai tài khoản mất hiệu lực. Các grant gốc do Admin cấp được chuyển quyền sở hữu cho Admin mới.
 
-`POST /api/admin/transfer` nhận `user_id`, mật khẩu Admin hiện tại và mã `code` mới. Người nhận phải là Teacher đang hoạt động, đã bật MFA. Việc hạ role cũ/nâng role mới nằm trong một transaction; unique index bảo đảm tối đa một Admin. Các grant gốc do Admin cấp được chuyển quyền sở hữu cho Admin mới.
+## Lab dùng chung, project và chat topology
+
+Tài khoản Operator và Viewer đều thấy project lab mặc định (project seed `PNETLab`, hoặc tên đặt trong `SEED_PROJECT_NAME`) ở chế độ xem. Khung chat dùng được trên lab này; Viewer và Operator nhận tư vấn AI dựa trên topology của project. AI giải thích yêu cầu bằng thuật ngữ mạng và đề xuất cách kết nối, không chạy cấu hình.
+
+Operator có thể nhập “Tạo project mới” trong chat. Hệ thống tạo project và hỏi số thiết bị mạng (2–25), sau đó hiển thị các sơ đồ hình sao, vòng, campus hoặc hub and spoke phù hợp với số lượng. Chọn một phương án sẽ tạo các thiết bị ở dạng kế hoạch và mở canvas topology để Operator thêm, sửa hoặc xóa. Thiết bị phải được cấp IP và thông tin truy cập trước khi có thể cấu hình thật.
+
+Project là phạm vi chia sẻ của nhóm: Operator thêm tài khoản Viewer từ tab “Nhóm / chia sẻ”. Viewer xem topology, dùng chat tư vấn và đọc các phiên chat trong project; chỉ người có quyền sửa project mới thay đổi sơ đồ.
 
 ## Cấp quyền ban đầu
 

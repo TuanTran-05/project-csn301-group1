@@ -60,3 +60,25 @@ def test_login_rejects_unknown_user(client, admin_user):
 def test_login_requires_credentials(client):
     response = client.post("/api/auth/login", json={})
     assert response.status_code == 400
+
+
+def test_admin_sessions_coexist_and_password_change_revokes_both(app, admin_user):
+    clients = [app.test_client(), app.test_client()]
+    tokens = []
+    for client in clients:
+        response = client.post("/api/auth/login", json={"username": "admin", "password": "StrongPass123!"})
+        assert response.status_code == 200
+        tokens.append({"Authorization": "Bearer " + response.json["access_token"]})
+    assert tokens[0] != tokens[1]
+    for client, token in zip(clients, tokens):
+        assert client.get("/api/users", headers=token).status_code == 200
+    changed = clients[0].post("/api/auth/change-password", headers=tokens[0], json={
+        "current_password": "StrongPass123!", "new_password": "NewStrongPass456!"})
+    assert changed.status_code == 200
+    for client, token in zip(clients, tokens):
+        assert client.get("/api/users", headers=token).status_code == 401
+    fresh = {"Authorization": "Bearer " + changed.json["access_token"]}
+    assert clients[0].get("/api/users", headers=fresh).status_code == 200
+    login = clients[1].post("/api/auth/login", json={"username": "admin", "password": "NewStrongPass456!"})
+    assert login.status_code == 200
+    assert clients[1].get("/api/users", headers={"Authorization": "Bearer " + login.json["access_token"]}).status_code == 200

@@ -1,5 +1,3 @@
-import base64
-import time
 from datetime import timedelta
 
 import pytest
@@ -9,7 +7,6 @@ from network_copilot.auth.service import issue_token
 from network_copilot.changes import service as changes
 from network_copilot.chat.model import ChatSession
 from network_copilot.credentials.service import get_cipher
-from network_copilot.governance import mfa
 from network_copilot.governance.access import issue_grant
 from network_copilot.governance.model import Lab, Policy, now
 from network_copilot.extensions import db
@@ -75,15 +72,15 @@ def test_group_transfer_invalidates_old_teacher_chain(client, admin_user, classr
     assert client.patch(f"/api/groups/{group.id}", headers=headers(teacher), json={"name": "Hijacked"}).status_code == 403
 
 
-def test_transfer_admin_revokes_both_old_tokens(client, admin_user, classroom):
-    teacher, _, _, _, _ = classroom
-    secret = base64.b32encode(b"12345678901234567890").decode()
-    for user in (admin_user, teacher):
-        user.mfa_enabled = True
-        user.mfa_secret = get_cipher().encrypt(secret)
+def test_transfer_admin_revokes_both_old_tokens(client, admin_user):
+    teacher = User(username="next_admin", role="TEACHER")
+    teacher.set_password("StrongPass123!")
+    db.session.add(teacher)
     db.session.commit()
     old_admin, old_teacher = headers(admin_user), headers(teacher)
-    result = client.post("/api/admin/transfer", headers=old_admin, json={"user_id": teacher.id, "password": "StrongPass123!", "code": mfa.totp(secret, int(time.time() // 30))})
+    denied = client.post("/api/admin/transfer", headers=old_admin, json={"user_id": teacher.id, "password": "wrong"})
+    assert denied.status_code == 403
+    result = client.post("/api/admin/transfer", headers=old_admin, json={"user_id": teacher.id, "password": "StrongPass123!"})
     assert result.status_code == 200
     assert result.json["role"] == "ADMIN"
     assert db.session.query(User).filter_by(role="ADMIN").count() == 1

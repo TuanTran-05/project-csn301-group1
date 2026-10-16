@@ -110,6 +110,8 @@ def share_candidates(project_id: int):
     user = current_user()
     project = service.require_project(user, project_id, "owner")
     found = service.search_share_candidates(project, request.args.get("q", ""))
+    if user.role == "OPERATOR":
+        found = [candidate for candidate in found if candidate.role == "VIEWER"]
     return jsonify({"items": [{"id": u.id, "username": u.username} for u in found]}), 200
 
 

@@ -100,13 +100,6 @@ body {
   margin: 0;
 }
 
-.mfa-secret {
-  display: block;
-  overflow-wrap: anywhere;
-  margin: 12px 0;
-  user-select: all;
-}
-
 .login-form form {
   display: flex;
   flex-direction: column;
@@ -341,6 +334,14 @@ a:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.topology-choice-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 12px; }
+.topology-choice { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.topology-choice p { margin: 6px 0; font-size: 12px; }
+.topology-preview { display: block; width: 100%; height: auto; margin: 6px 0; overflow: visible; }
+.topology-preview line { stroke: #7890a9; stroke-width: 2; }
+.topology-preview circle { fill: var(--surface-raised); stroke: var(--accent); stroke-width: 2; }
+.topology-preview text { fill: var(--text); font-size: 7px; }
 
 .operational-results {
   border-top: 1px solid var(--border);
