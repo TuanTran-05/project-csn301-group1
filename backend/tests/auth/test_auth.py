@@ -60,3 +60,19 @@ def test_login_rejects_unknown_user(client, admin_user):
 def test_login_requires_credentials(client):
     response = client.post("/api/auth/login", json={})
     assert response.status_code == 400
+
+
+def test_login_token_survives_nonzero_account_version(client, viewer_user, db):
+    viewer_user.token_version = 7
+    db.session.commit()
+    response = client.post("/api/auth/login", json={
+        "username": "viewer", "password": "ViewerPass123!",
+    })
+    assert response.status_code == 200
+    headers = {"Authorization": "Bearer " + response.json["access_token"]}
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    assert client.get("/api/projects", headers=headers).status_code == 200
+
+    viewer_user.token_version += 1
+    db.session.commit()
+    assert client.get("/api/auth/me", headers=headers).status_code == 401

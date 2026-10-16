@@ -84,7 +84,8 @@ def chat():
         project_id=project.id,
     )
     result = AIService().handle(
-        data.message, user_id, session_id=data.session_id, project_id=project.id
+        data.message, user_id, session_id=data.session_id, project_id=project.id,
+        group_id=data.group_id,
     )
     record_chat_message(
         user_id,

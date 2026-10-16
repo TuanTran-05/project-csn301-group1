@@ -99,6 +99,7 @@ class Config:
 
 class TestConfig(Config):
     TESTING = True
+    ADMIN_MFA_REQUIRED = False
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     SECRET_KEY = "test-secret-key-for-pytest-only-0123456789"
     JWT_SECRET_KEY = "test-jwt-secret-key-for-pytest-only-0123456789"

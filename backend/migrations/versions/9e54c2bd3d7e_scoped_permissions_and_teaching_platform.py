@@ -222,8 +222,10 @@ def upgrade():
         batch_op.create_foreign_key('fk_change_requests_group_id', 'groups', ['group_id'], ['id'])
         batch_op.create_foreign_key('fk_change_requests_assignment_id', 'assignments', ['assignment_id'], ['id'])
 
+    device_columns = {column['name'] for column in sa.inspect(connection).get_columns('devices')}
     with op.batch_alter_table('devices', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('environment', sa.String(length=32), server_default='physical_lab', nullable=False))
+        if 'environment' not in device_columns:
+            batch_op.add_column(sa.Column('environment', sa.String(length=32), server_default='physical_lab', nullable=False))
         batch_op.add_column(sa.Column('isolated', sa.Boolean(), server_default=sa.text('0'), nullable=False))
         batch_op.add_column(sa.Column('baseline_revision', sa.Integer(), server_default='0', nullable=False))
         batch_op.add_column(sa.Column('recovery_instructions', sa.Text(), nullable=True))
@@ -231,8 +233,10 @@ def upgrade():
     with op.batch_alter_table('groups', schema=None) as batch_op:
         batch_op.add_column(sa.Column('archived', sa.Boolean(), server_default=sa.text('0'), nullable=False))
 
+    user_columns = {column['name'] for column in sa.inspect(connection).get_columns('users')}
     with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('token_version', sa.Integer(), server_default='0', nullable=False))
+        if 'token_version' not in user_columns:
+            batch_op.add_column(sa.Column('token_version', sa.Integer(), server_default='0', nullable=False))
         batch_op.add_column(sa.Column('display_name', sa.String(length=100), nullable=True))
         batch_op.add_column(sa.Column('mfa_secret', sa.Text(), nullable=True))
         batch_op.add_column(sa.Column('mfa_pending_secret', sa.Text(), nullable=True))

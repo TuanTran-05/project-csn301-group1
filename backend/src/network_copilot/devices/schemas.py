@@ -20,7 +20,7 @@ _KIND_BY_ROLE = {"core": "router", "distribution": "l3_switch", "firewall": "fir
 _UNMANAGED_DEFAULTS = {
     "pc": "host", "server": "server", "cloud": "internet", "ap": "wireless", "segment": "segment",
 }
-DeviceEnvironment = Literal["pnetlab", "physical"]
+DeviceEnvironment = Literal["pnetlab", "physical", "virtual", "physical_lab", "production"]
 
 
 def management_network(info: ValidationInfo | None = None) -> ipaddress.IPv4Network:

@@ -74,7 +74,9 @@ def list_devices(
         query = query.filter(Device.role == role)
     if status:
         query = query.filter(Device.status == status)
-    return query.order_by(Device.hostname, Device.id).all()
+    from ..governance.visibility import devices as visible_devices
+
+    return visible_devices(query.order_by(Device.hostname, Device.id).all())
 
 
 def ensure_deployable(device: Device) -> Device:

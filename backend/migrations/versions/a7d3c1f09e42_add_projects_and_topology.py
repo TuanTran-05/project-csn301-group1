@@ -80,9 +80,11 @@ def upgrade():
     op.create_index("ix_topology_links_project_id", "topology_links", ["project_id"])
 
     # New columns start nullable so existing rows can be backfilled.
+    device_columns = {column["name"] for column in sa.inspect(bind).get_columns("devices")}
     with op.batch_alter_table("devices") as batch_op:
         batch_op.add_column(sa.Column("project_id", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("environment", sa.String(16), server_default="pnetlab", nullable=False))
+        if "environment" not in device_columns:
+            batch_op.add_column(sa.Column("environment", sa.String(16), server_default="pnetlab", nullable=False))
         batch_op.add_column(sa.Column("pos_x", sa.Float()))
         batch_op.add_column(sa.Column("pos_y", sa.Float()))
     with op.batch_alter_table("chat_sessions") as batch_op:

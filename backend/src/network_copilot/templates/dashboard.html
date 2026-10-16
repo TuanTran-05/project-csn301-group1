@@ -31,6 +31,11 @@
         Network Copilot — Dashboard
         <span class="project-tag" x-show="projectName" x-text="projectName"></span>
       </span>
+      <select class="project-switcher" x-model.number="currentProjectId" @change="selectProject(currentProjectId)" aria-label="Project">
+        <template x-for="project in projects" :key="project.id">
+          <option :value="project.id" x-text="project.name"></option>
+        </template>
+      </select>
       <a class="nav-link" href="/projects">Projects</a>
       <a class="nav-link" href="/users">Tài khoản</a>
       <a class="nav-link" href="/">Chat</a>
@@ -45,7 +50,9 @@
       Không tải được dữ liệu mới nhất lúc <span x-text="lastError"></span>
     </p>
 
-    <div class="dashboard-grid" x-show="summary" x-cloak>
+    <p class="project-empty" x-show="noProject" x-cloak>Chưa có project để hiển thị. <a href="/projects">Mở Projects</a> hoặc nhờ quản trị viên chia sẻ project.</p>
+    <template x-if="summary">
+    <div class="dashboard-grid">
       <section class="dashboard-panel">
         <h2>Trạng thái thiết bị</h2>
         <table class="dashboard-table">
@@ -131,6 +138,7 @@
         </ul>
       </section>
     </div>
+    </template>
   </div>
 
   <script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>

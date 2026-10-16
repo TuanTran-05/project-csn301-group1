@@ -152,6 +152,8 @@ def _register_blueprints(app: Flask) -> None:
     from .commands.routes import bp as commands_bp
     from .dashboard.routes import bp as dashboard_bp
     from .devices.routes import bp as devices_bp
+    from .governance.learning import bp as learning_bp
+    from .governance.routes import bp as governance_bp
     from .groups.routes import bp as groups_bp
     from .history_extension.routes import init_app as init_history_extension
     from .monitoring.routes import bp as monitoring_bp
@@ -243,7 +245,7 @@ def _register_error_handlers(app: Flask) -> None:
             user = db.session.get(User, int(payload["sub"]))
         except (ValueError, TypeError, KeyError):
             return True
-        if not user or not user.is_active or payload.get("version", 0) != user.token_version:
+        if not user or not user.is_active or payload.get("tv", 0) != user.token_version:
             return True
         return bool(user.role == "ADMIN" and app.config.get("ADMIN_MFA_REQUIRED", True)
                     and not user.mfa_enabled and not payload.get("mfa_pending"))

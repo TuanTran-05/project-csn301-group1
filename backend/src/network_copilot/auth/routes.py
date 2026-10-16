@@ -52,6 +52,12 @@ def login():
             401,
         )
 
+    from ..governance import mfa
+
+    if user.mfa_enabled and not mfa.verify(user, payload.get("code")) and not mfa.recover(user, payload.get("recovery_code")):
+        return jsonify({"error": "unauthorized", "message": "A valid two-factor code or recovery code is required."}), 401
+    pending = bool(current_app.config.get("ADMIN_MFA_REQUIRED", True) and user.role == "ADMIN" and not user.mfa_enabled)
+
     record_login(user)
     record_event(
         action="auth.login",

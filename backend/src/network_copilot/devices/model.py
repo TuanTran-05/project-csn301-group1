@@ -30,7 +30,7 @@ DEVICE_STATUSES = ("unknown", "online", "offline")
 # Where the device lives: a PNETLab emulated node or real hardware. Both are
 # reached the same way (SSH to the management IP); the value is kept so the
 # inventory, the diagram and reports can tell them apart.
-DEVICE_ENVIRONMENTS = ("pnetlab", "physical")
+DEVICE_ENVIRONMENTS = ("pnetlab", "physical", "virtual", "physical_lab", "production")
 
 
 class Device(db.Model):
@@ -63,8 +63,11 @@ class Device(db.Model):
     status = db.Column(db.String(16), nullable=False, default="unknown")
     monitoring_enabled = db.Column(db.Boolean, nullable=False, default=True)
     environment = db.Column(
-        db.String(16), nullable=False, default="pnetlab", server_default="pnetlab"
+        db.String(32), nullable=False, default="pnetlab", server_default="pnetlab"
     )
+    isolated = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    baseline_revision = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    recovery_instructions = db.Column(db.Text)
     description = db.Column(db.String(255))
     # Position on the topology canvas.
     pos_x = db.Column(db.Float)

@@ -95,10 +95,11 @@
       <button class="logout-btn" @click="logout()">Đăng xuất</button>
     </header>
     <p class="project-empty" x-show="noProject" x-cloak>
-      Bạn chưa có project nào. <a href="/projects">Tạo project</a> hoặc nhờ
-      người khác chia sẻ project cho bạn.
+      Bạn chưa được cấp quyền vào project nào nên chưa thể gửi chat.
+      <a href="/projects" x-show="currentUser && currentUser.role !== 'VIEWER'">Tạo project</a>
+      hoặc nhờ quản trị viên chia sẻ project cho bạn.
     </p>
-    <div class="main-grid" x-show="!noProject">
+    <div class="main-grid">
       <aside class="sidebar devices-panel">
         <h2>Thiết bị</h2>
         <p class="sidebar-state" x-show="!devices.length">Project chưa có thiết bị. <a href="/projects">Thêm thiết bị</a>.</p>
@@ -131,7 +132,7 @@
               <option :value="session.id" x-text="session.title"></option>
             </template>
           </select>
-          <button type="button" class="new-chat-btn" @click="startNewChat()">
+          <button type="button" class="new-chat-btn" @click="startNewChat()" :disabled="noProject">
             New chat
           </button>
         </div>
@@ -441,12 +442,12 @@
             x-ref="composer"
             rows="1"
             x-model="draftMessage"
-            :disabled="sending"
+            :disabled="sending || noProject"
             @keydown="onComposerKeydown($event)"
             @input="autoGrow($event.target)"
             placeholder="Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước"
           ></textarea>
-          <button type="submit" :disabled="sending || !draftMessage.trim()">Gửi</button>
+          <button type="submit" :disabled="sending || noProject || !draftMessage.trim()">Gửi</button>
         </form>
       </main>
       <aside class="sidebar changes-panel" x-data="historyDraft">

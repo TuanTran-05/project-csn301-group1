@@ -373,6 +373,8 @@ def create_preview(
     source: str = "api",
     execution_mode: str = "config",
     project_id: int | None = None,
+    group_id: int | None = None,
+    assignment_id: int | None = None,
 ) -> ChangeRequest:
     """Validate a change and store it as pending_approval. Never touches SSH.
 

@@ -58,6 +58,7 @@ def execute_readonly(
     user_id: int | None = None,
     source: str = "api",
     project_id: int | None = None,
+    group_id: int | None = None,
 ) -> CommandExecution:
     """Run a single read-only command after the policy engine approves it.
 

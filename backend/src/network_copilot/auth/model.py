@@ -27,6 +27,7 @@ class User(db.Model):
     username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     full_name = db.Column(db.String(120))
+    display_name = db.Column(db.String(100))
     email = db.Column(db.String(254), unique=True)
     role = db.Column(db.String(16), nullable=False, default="VIEWER")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
@@ -35,6 +36,17 @@ class User(db.Model):
     # user out everywhere instead of leaving old tokens valid until expiry.
     token_version = db.Column(
         db.Integer, nullable=False, default=0, server_default="0"
+    )
+    mfa_secret = db.Column(db.Text)
+    mfa_pending_secret = db.Column(db.Text)
+    mfa_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    mfa_last_counter = db.Column(db.BigInteger, nullable=False, default=-1, server_default="-1")
+    recovery_hashes = db.Column(db.JSON, nullable=False, default=list, server_default="[]")
+    teaching_groups = db.relationship(
+        "Group", secondary="teacher_groups", back_populates="teachers"
+    )
+    student_groups = db.relationship(
+        "Group", secondary="student_groups", back_populates="students"
     )
     last_login_at = db.Column(db.DateTime)
     password_changed_at = db.Column(db.DateTime)
@@ -68,6 +80,8 @@ class User(db.Model):
             "id": self.id,
             "username": self.username,
             "full_name": self.full_name,
+            "display_name": self.display_name,
+            "mfa_enabled": self.mfa_enabled,
             "email": self.email,
             "role": self.role,
             "is_active": self.is_active,

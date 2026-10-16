@@ -384,6 +384,7 @@ class AIService:
                 user_id=user_id,
                 source="ai",
                 project_id=device.project_id,
+                group_id=group_id,
             )
             results.append(
                 {
@@ -460,7 +461,8 @@ class AIService:
         }
 
     def _handle_configure(
-        self, action: AIAction, user_id: int | None, project_id: int | None = None
+        self, action: AIAction, user_id: int | None, project_id: int | None = None,
+        group_id: int | None = None,
     ) -> dict:
         operations = [
             BatchOperation(
@@ -504,6 +506,7 @@ class AIService:
         user_id: int | None,
         session_id: int | None = None,
         project_id: int | None = None,
+        group_id: int | None = None,
     ) -> dict:
         action = self.interpret(
             message, user_id, session_id=session_id, project_id=project_id
@@ -521,7 +524,7 @@ class AIService:
 
         if action.intent == "configure":
             self._require_admin(user_id)
-            return self._handle_configure(action, user_id, project_id)
+            return self._handle_configure(action, user_id, project_id, group_id)
 
         operation = self._readonly_operation(action)
         device = device_service.get_device_by_hostname(

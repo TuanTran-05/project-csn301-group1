@@ -1114,7 +1114,7 @@ document.addEventListener("alpine:init", () => {
 
     async sendMessage() {
       const text = this.draftMessage.trim();
-      if (!text || this.sending) return;
+      if (!text || this.sending || this.noProject || this.authBlocked) return;
       const generation = this._messagesRefreshGeneration;
       const knownServerIds = this.messages
         .filter((message) => !message._client)

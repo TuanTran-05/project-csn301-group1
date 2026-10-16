@@ -30,12 +30,12 @@ def _in(column, values):
 
 # (table, constraint name, expression)
 CHECKS = [
-    ("users", "ck_users_role_valid", _in("role", ("ADMIN", "OPERATOR", "VIEWER"))),
+    ("users", "ck_users_role_valid", _in("role", ("ADMIN", "TEACHER", "STUDENT", "OPERATOR", "VIEWER"))),
     ("devices", "ck_devices_device_type_valid", _in("device_type", ("cisco_ios", "cisco_asa"))),
     ("devices", "ck_devices_role_valid", _in("role", (
         "isp", "firewall", "core", "distribution", "access", "dmz", "management"))),
     ("devices", "ck_devices_status_valid", _in("status", ("unknown", "online", "offline"))),
-    ("devices", "ck_devices_environment_valid", _in("environment", ("pnetlab", "physical"))),
+    ("devices", "ck_devices_environment_valid", _in("environment", ("pnetlab", "physical", "virtual", "physical_lab", "production"))),
     ("devices", "ck_devices_ssh_port_range", "ssh_port BETWEEN 1 AND 65535"),
     ("projects", "ck_projects_environment_valid", _in("environment", ("pnetlab", "physical", "mixed"))),
     ("project_members", "ck_project_members_access_valid", _in("access", ("viewer", "editor"))),
@@ -98,10 +98,13 @@ def upgrade():
     _remove_orphans(bind)
 
     # -- users ----------------------------------------------------------
+    user_columns = {column["name"] for column in sa.inspect(bind).get_columns("users")}
     with op.batch_alter_table("users") as batch_op:
         batch_op.add_column(sa.Column("full_name", sa.String(120)))
         batch_op.add_column(sa.Column("email", sa.String(254)))
-        batch_op.add_column(sa.Column("token_version", sa.Integer(), server_default="0", nullable=False))
+        # The parallel governance branch also introduces token_version.
+        if "token_version" not in user_columns:
+            batch_op.add_column(sa.Column("token_version", sa.Integer(), server_default="0", nullable=False))
         batch_op.add_column(sa.Column("last_login_at", sa.DateTime()))
         batch_op.add_column(sa.Column("password_changed_at", sa.DateTime()))
         batch_op.add_column(sa.Column("created_by_id", sa.Integer()))
@@ -120,6 +123,8 @@ def upgrade():
         batch_op.create_unique_constraint("uq_topology_links_end_b", ["device_b_id", "interface_b"])
 
     # -- CHECK constraints ------------------------------------------------
+    # Older audit writers used "failed" for the current "failure" result.
+    bind.execute(sa.text("UPDATE audit_logs SET result = 'failure' WHERE result = 'failed'"))
     for table, name, expression in CHECKS:
         with op.batch_alter_table(table) as batch_op:
             batch_op.create_check_constraint(name, expression)

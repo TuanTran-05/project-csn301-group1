@@ -29,6 +29,7 @@ def issue_token(user: User, mfa_pending: bool = False) -> str:
             "role": user.role,
             "username": user.username,
             "tv": user.token_version,
+            "mfa_pending": mfa_pending,
         },
     )
 
