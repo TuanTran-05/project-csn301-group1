@@ -47,6 +47,9 @@ def access_level(user: User | None, project: Project) -> str | None:
     if user.role == "ADMIN":
         return "owner"
 
+    if project.id == default_lab_id():
+        return "viewer"
+
     if project.owner_id == user.id:
         level = "owner"
     else:
@@ -64,15 +67,40 @@ def access_level(user: User | None, project: Project) -> str | None:
 def accessible_projects(user: User | None) -> list[Project]:
     if user is None or not user.is_active:
         return []
+    default_id = default_lab_id()
     query = db.session.query(Project)
     if user.role != "ADMIN":
         shared = db.session.query(ProjectMember.project_id).filter(
             ProjectMember.user_id == user.id
         )
         query = query.filter(
-            db.or_(Project.owner_id == user.id, Project.id.in_(shared))
+            db.or_(Project.owner_id == user.id, Project.id.in_(shared), Project.id == default_id)
         )
     return query.order_by(Project.name, Project.id).all()
+
+
+def default_lab_id() -> int | None:
+    """Return the seeded lab project, creating an empty one on first use."""
+    name = current_app.config.get("DEFAULT_LAB_NAME", "PNETLab")
+    project = (
+        db.session.query(Project)
+        .outerjoin(User, Project.owner_id == User.id)
+        .filter(Project.name == name)
+        .filter(db.or_(Project.owner_id.is_(None), User.role == "ADMIN"))
+        .order_by(Project.id)
+        .first()
+    )
+    if project is None:
+        project = Project(
+            name=name,
+            description="Default shared network lab",
+            management_network=current_app.config.get("MANAGEMENT_NETWORK", "172.16.3.0/24"),
+            environment="pnetlab",
+            owner_id=None,
+        )
+        db.session.add(project)
+        db.session.commit()
+    return project.id
 
 
 def require_project(user: User | None, project_id: int, need: str = "viewer") -> Project:
@@ -147,6 +175,8 @@ def create_project(user: User, payload: dict) -> Project:
     if user.role == "VIEWER":
         raise ForbiddenError("A read-only account cannot create projects.")
     data = validate(ProjectCreateSchema, payload)
+    if user.role != "ADMIN" and data.name == current_app.config.get("DEFAULT_LAB_NAME", "PNETLab"):
+        raise ConflictError("That name is reserved for the shared default lab.")
     limit = current_app.config.get("MAX_PROJECTS_PER_USER", 0)
     if limit and user.role != "ADMIN":
         owned = db.session.query(Project).filter(Project.owner_id == user.id).count()
@@ -283,6 +313,8 @@ def share_project(project: Project, granted_by: User, payload: dict) -> ProjectM
     target = db.session.query(User).filter_by(username=data.username).one_or_none()
     if target is None or not target.is_active:
         raise NotFoundError(f"User {data.username} was not found.")
+    if granted_by.role == "OPERATOR" and target.role != "VIEWER":
+        raise ForbiddenError("Operators can add Viewer accounts to their project.")
     if target.id == project.owner_id:
         raise ConflictError("The owner already has full access to the project.")
 
@@ -296,7 +328,7 @@ def share_project(project: Project, granted_by: User, payload: dict) -> ProjectM
             project_id=project.id, user_id=target.id, granted_by_id=granted_by.id
         )
         db.session.add(member)
-    member.access = data.access
+    member.access = "viewer" if target.role == "VIEWER" else data.access
     db.session.commit()
     return member
 

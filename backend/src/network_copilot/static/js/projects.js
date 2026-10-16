@@ -125,6 +125,8 @@ document.addEventListener("alpine:init", () => {
     // -- projects --
     projects: [],
     currentProjectId: (() => {
+      const requested = new URLSearchParams(window.location.search).get("project_id");
+      if (requested && Number.isInteger(Number(requested))) return Number(requested);
       const stored = localStorage.getItem("nc_project_id");
       return stored ? Number(stored) : null;
     })(),
@@ -137,7 +139,7 @@ document.addEventListener("alpine:init", () => {
     settingsForm: null,
     projectError: "",
     projectNotice: "",
-    tab: "devices",
+    tab: new URLSearchParams(window.location.search).get("tab") === "topology" ? "topology" : "devices",
 
     // -- devices --
     devices: [],

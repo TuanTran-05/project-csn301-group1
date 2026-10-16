@@ -1,5 +1,4 @@
 from datetime import timedelta
-import time
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -9,10 +8,8 @@ from network_copilot.auth.service import issue_token
 from network_copilot.changes import service as changes
 from network_copilot.changes import batch_service
 from network_copilot.changes.batch_service import BatchOperation
-from network_copilot.credentials.service import get_cipher
 from network_copilot.errors import AppError, ConflictError, ForbiddenError, InvalidStateError
 from network_copilot.groups.model import Group
-from network_copilot.governance import mfa
 from network_copilot.governance.access import issue_grant, permitted
 from network_copilot.governance.model import Grant, Policy, Suspension, DeviceLease, now
 from network_copilot.governance.workflow import claim, risk
@@ -207,21 +204,13 @@ def test_admin_singleton_and_cannot_disable(db, client, admin_user):
     assert result.status_code == 403
 
 
-def test_mfa_enrollment_restricts_admin_and_recovery_is_one_use(app, db, client, admin_user):
-    app.config["ADMIN_MFA_REQUIRED"] = True
+def test_admin_login_does_not_require_mfa(app, client, admin_user):
+    app.config["ADMIN_MFA_REQUIRED"] = True  # Legacy config cannot re-enable enrollment.
     response = client.post("/api/auth/login", json={"username": "admin", "password": "StrongPass123!"})
+    assert response.status_code == 200
     token = {"Authorization": "Bearer " + response.json["access_token"]}
-    assert response.json["mfa_setup_required"]
-    assert client.get("/api/users", headers=token).status_code == 403
-    setup = client.post("/api/auth/mfa/setup", headers=token, json={"password": "StrongPass123!"})
-    code = mfa.totp(setup.json["secret"], int(time.time() // 30))
-    enabled = client.post("/api/auth/mfa/enable", headers=token, json={"code": code})
-    assert enabled.status_code == 200
-    assert not mfa.verify(admin_user, code)
-    recovery = enabled.json["recovery_codes"][0]
-    assert mfa.recover(admin_user, recovery)
-    assert not mfa.recover(admin_user, recovery)
-    assert client.get("/api/users", headers=token).status_code == 401
+    assert response.json["mfa_setup_required"] is False
+    assert client.get("/api/users", headers=token).status_code == 200
 
 
 def test_environments_and_risk(classroom):

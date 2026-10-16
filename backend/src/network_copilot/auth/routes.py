@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
@@ -66,7 +66,7 @@ def login():
         username=user.username,
         details={"role": user.role},
     )
-    return jsonify({"access_token": issue_token(user, mfa_pending=pending), "user": user.to_dict(), "mfa_setup_required": pending}), 200
+    return jsonify({"access_token": issue_token(user), "user": user.to_dict(), "mfa_setup_required": False}), 200
 
 
 @bp.get("/me")

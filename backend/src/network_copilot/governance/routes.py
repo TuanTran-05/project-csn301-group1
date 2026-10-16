@@ -1,8 +1,6 @@
-import base64
 import hashlib
 import secrets
 from datetime import timedelta
-from urllib.parse import quote
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
@@ -11,13 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from ..audit.model import AuditLog
 from ..audit.service import redact_sensitive
 from ..auth.model import Role, User
-from ..auth.service import current_user, issue_token, roles_required
-from ..credentials.service import get_cipher
+from ..auth.service import current_user, roles_required
 from ..devices.model import Device
 from ..errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from ..extensions import db
 from ..groups.model import Group
-from . import mfa
 from .access import actor, issue_grant, live, permitted, policy, require, require_group, role, timestamp
 from .model import Grant, Invitation, JoinRequest, Notification, Policy, Reservation, Suspension, now, public
 
@@ -123,10 +119,10 @@ def update_user(user_id):
 def transfer_admin():
     data, previous = payload(), current_user()
     target = actor(data.get("user_id"))
-    if target.id == previous.id or role(target) != "TEACHER" or not target.mfa_enabled:
-        raise ValidationError("Choose an active Teacher with two-factor authentication enabled.")
-    if not previous.check_password(data.get("password", "")) or not mfa.verify(previous, data.get("code")):
-        raise ForbiddenError("Current password and a fresh two-factor code are required.")
+    if target.id == previous.id or role(target) != "TEACHER":
+        raise ValidationError("Choose an active Teacher.")
+    if not previous.check_password(data.get("password", "")):
+        raise ForbiddenError("Current password is required.")
     previous.role = Role.TEACHER
     previous.token_version += 1
     db.session.flush()
@@ -160,49 +156,6 @@ def password():
     user.token_version += 1
     save("auth.password")
     return jsonify(message="Password changed; sign in again.")
-
-
-@bp.post("/auth/mfa/setup")
-@jwt_required()
-def mfa_setup():
-    user, data = current_user(), payload()
-    if user.mfa_enabled or not user.check_password(data.get("password", "")):
-        raise ForbiddenError("Valid password and an account without active MFA are required.")
-    secret = base64.b32encode(secrets.token_bytes(20)).decode()
-    user.mfa_pending_secret = get_cipher().encrypt(secret)
-    save("auth.mfa.setup")
-    return jsonify(secret=secret, otpauth_uri=f"otpauth://totp/NetworkCopilot:{quote(user.username, safe='')}?secret={secret}&issuer=NetworkCopilot")
-
-
-@bp.post("/auth/mfa/enable")
-@jwt_required()
-def mfa_enable():
-    user, data = current_user(), payload()
-    if user.mfa_enabled or not mfa.verify(user, data.get("code"), pending=True):
-        raise ForbiddenError("Invalid two-factor enrollment code.")
-    user.mfa_secret, user.mfa_pending_secret = user.mfa_pending_secret, None
-    user.mfa_enabled = True
-    user.token_version += 1
-    codes = mfa.recovery_codes(user)
-    save("auth.mfa.enable")
-    return jsonify(recovery_codes=codes, access_token=issue_token(user))
-
-
-@bp.post("/auth/mfa/reset")
-@jwt_required()
-def mfa_reset():
-    user, data = current_user(), payload()
-    if not user.check_password(data.get("password", "")):
-        raise ForbiddenError("Current password is required.")
-    if not mfa.verify(user, data.get("code")) and not mfa.recover(user, data.get("recovery_code")):
-        raise ForbiddenError("A fresh two-factor code or unused recovery code is required.")
-    user.mfa_enabled = False
-    user.mfa_secret = user.mfa_pending_secret = None
-    user.mfa_last_counter = -1
-    user.recovery_hashes = []
-    user.token_version += 1
-    save("auth.mfa.reset")
-    return jsonify(access_token=issue_token(user, mfa_pending=role(user) == "ADMIN"), message="Enroll a new authenticator.")
 
 
 @bp.get("/permissions")

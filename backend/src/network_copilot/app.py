@@ -114,15 +114,9 @@ def _register_request_hooks(app: Flask) -> None:
     @app.before_request
     def assign_request_id():
         g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        from flask_jwt_extended import verify_jwt_in_request, get_jwt
+        from flask_jwt_extended import verify_jwt_in_request
         if request.headers.get("Authorization"):
             verify_jwt_in_request()
-            claims = get_jwt()
-            if claims.get("mfa_pending") and request.endpoint not in {
-                "auth.me", "governance.mfa_setup", "governance.mfa_enable"
-            }:
-                from .errors import ForbiddenError
-                raise ForbiddenError("Complete two-factor enrollment before using the platform.")
 
     @app.after_request
     def apply_security_headers(response):
@@ -249,7 +243,6 @@ def _register_error_handlers(app: Flask) -> None:
             return True
         return bool(user.role == "ADMIN" and app.config.get("ADMIN_MFA_REQUIRED", True)
                     and not user.mfa_enabled and not payload.get("mfa_pending"))
-
 
 def _start_scheduler(app: Flask) -> None:
     from .monitoring.scheduler import init_scheduler
