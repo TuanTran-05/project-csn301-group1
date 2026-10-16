@@ -60,6 +60,14 @@ def star(b: Builder, access: int, hosts: int):
             b.link(switch, pc)
 
 
+def network_star(b: Builder, access: int):
+    """An exact-count design for the conversational topology builder."""
+    core = b.device("switch_l3", WIDTH / 2, 85)
+    switches = b.row("switch", access, 300)
+    for switch in switches:
+        b.link(core, switch, "trunk")
+
+
 def branch(b: Builder, hosts: int):
     cloud = b.device("cloud", WIDTH / 2, 50)
     router = b.device("router", WIDTH / 2, 190)
@@ -125,6 +133,11 @@ def _param(name, label, default, low, high):
 
 
 BLUEPRINTS = {
+    "network_star": {
+        "label": "Star (L3 core + access)", "build": network_star,
+        "description": "One L3 core switch with access switches connected by trunks.",
+        "params": [_param("access", "Access switches", 3, 1, 24)],
+    },
     "star": {
         "label": "Star (core + access)", "build": star,
         "description": "One router, switches around it, PCs on every switch.",

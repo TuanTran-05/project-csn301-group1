@@ -22,51 +22,11 @@
         <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
       </label>
       <p class="error-text" x-show="loginError" x-text="loginError"></p>
-      <label>
-        Mã xác thực hai bước (nếu đã bật)
-        <input type="text" x-model="loginForm.code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" />
-      </label>
-      <label>
-        Mã khôi phục (nếu không dùng được ứng dụng xác thực)
-        <input type="text" x-model="loginForm.recovery_code" autocomplete="off" />
-      </label>
       <button type="submit">Đăng nhập</button>
     </form>
   </section>
 
-  <section class="login-screen" x-show="currentUser && authBlocked" x-cloak>
-    <div class="login-form">
-      <h1>Xác thực hai bước</h1>
-      <div x-show="mfaSetupRequired">
-        <p>Tài khoản Admin cần bật xác thực hai bước để sử dụng hệ thống.</p>
-        <form @submit.prevent="setupMfa()" x-show="!mfaSecret">
-          <label>Mật khẩu hiện tại
-            <input type="password" x-model="mfaForm.password" required autocomplete="current-password" />
-          </label>
-          <button type="submit" :disabled="mfaBusy">Bắt đầu thiết lập</button>
-        </form>
-        <form @submit.prevent="enableMfa()" x-show="mfaSecret">
-          <p>Trong Google Authenticator hoặc ứng dụng tương tự, thêm tài khoản bằng khóa thiết lập, chọn mã theo thời gian (TOTP), rồi nhập khóa này:</p>
-          <code class="mfa-secret" x-text="mfaSecret"></code>
-          <label>Mã 6 chữ số từ ứng dụng xác thực
-            <input type="text" x-model="mfaForm.code" required pattern="[0-9]{6}" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
-          </label>
-          <button type="submit" :disabled="mfaBusy">Xác nhận và bật</button>
-        </form>
-      </div>
-      <div x-show="mfaRecoveryCodes.length">
-        <p>Đã bật xác thực hai bước. Lưu các mã khôi phục vào nơi an toàn trước khi tiếp tục. Mỗi mã chỉ dùng được một lần.</p>
-        <template x-for="code in mfaRecoveryCodes" :key="code">
-          <code class="mfa-secret" x-text="code"></code>
-        </template>
-        <button type="button" @click="finishMfa()">Đã lưu mã, tiếp tục</button>
-      </div>
-      <p class="error-text" x-show="mfaError" x-text="mfaError"></p>
-      <button type="button" @click="logout()">Đăng xuất</button>
-    </div>
-  </section>
-
-  <div class="app-shell" x-show="currentUser && !authBlocked" x-cloak>
+  <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       <span class="app-title">Network Copilot</span>
       <label class="project-switch" x-show="projects.length" x-cloak>
@@ -86,6 +46,8 @@
         </select>
       </label>
       <a class="nav-link" href="/projects">Projects</a>
+      <a class="nav-link" x-show="currentProject" x-cloak
+         :href="currentProject ? '/projects?project_id=' + currentProject.id + '&tab=topology' : '/projects'">Sơ đồ mạng</a>
       <a class="nav-link" href="/users">Tài khoản</a>
       <a class="nav-link" href="/dashboard">Dashboard</a>
       <span class="user-badge">
@@ -137,8 +99,8 @@
         </div>
         <div class="chat-empty" x-show="!messages.length && !sending" x-cloak>
           <h3>Bạn muốn làm gì với mạng này?</h3>
-          <p>Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ <em>đề xuất</em>: mọi thay đổi cấu hình
-            vẫn phải được ADMIN duyệt trước khi chạy.</p>
+          <p x-show="currentUser && ['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi tự nhiên về topology. AI giải thích khái niệm mạng và gợi ý cách kết nối theo sơ đồ hiện tại.</p>
+          <p x-show="currentUser && !['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ đề xuất; thay đổi cấu hình vẫn qua quy trình duyệt của hệ thống.</p>
           <div class="chips">
             <template x-for="prompt in suggestions" :key="prompt">
               <button type="button" class="chip" @click="useSuggestion(prompt)" x-text="prompt"></button>
@@ -153,6 +115,26 @@
                 <span x-text="new Date(message.created_at).toLocaleTimeString('vi-VN')"></span>
               </div>
               <div class="bubble-content" x-text="message.content"></div>
+
+              <template x-if="message.payload && message.payload.flow === 'topology_options'">
+                <div class="topology-choice-list">
+                  <template x-for="option in message.payload.options" :key="option.key">
+                    <article class="topology-choice">
+                      <strong x-text="option.title"></strong>
+                      <div x-html="topologyPreview(option)"></div>
+                      <p x-text="option.description"></p>
+                      <span class="hint" x-text="option.device_count + ' thiết bị mạng' + (option.key === 'campus' ? ' và Cloud mô phỏng Internet' : '')"></span>
+                      <button type="button" class="primary-btn"
+                        x-show="currentUser && currentUser.role === 'OPERATOR' && currentProject && currentProject.access === 'owner'"
+                        :disabled="topologyChoiceBusy"
+                        @click="buildTopologyChoice(message.payload.project_id, option)">
+                        <span x-text="topologyChoiceBusy ? 'Đang tạo…' : 'Chọn sơ đồ này'"></span>
+                      </button>
+                    </article>
+                  </template>
+                  <p class="error-text" x-show="topologyChoiceError" x-text="topologyChoiceError"></p>
+                </div>
+              </template>
 
               <template x-if="message.role === 'assistant' && message.payload && Array.isArray(message.payload.results)">
                 <div class="operational-results">

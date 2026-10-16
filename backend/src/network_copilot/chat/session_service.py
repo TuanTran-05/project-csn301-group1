@@ -1,4 +1,4 @@
-"""Session CRUD and listing with account ownership enforced on API requests."""
+"""Session CRUD and listing shared with everyone in a project."""
 
 from ..extensions import db
 from .model import ChatMessage, ChatSession
@@ -32,20 +32,11 @@ def resolve_or_create_session(
     back to the project's most recently created session, creating a brand new
     one only if the project has none at all.
     """
-    from ..governance.visibility import request_user
-    from ..governance.access import role
-    from ..errors import ForbiddenError
-    user = request_user()
     if session_id is not None:
         session = get_session(session_id, project_id)
         if session is not None:
-            if user and role(user) != "ADMIN" and session.created_by_id != user.id:
-                raise ForbiddenError("This chat belongs to another account.")
             return session
 
-    query = db.session.query(ChatSession)
-    if user and role(user) != "ADMIN":
-        query = query.filter_by(created_by_id=user.id)
     latest = (
         db.session.query(ChatSession)
         .filter(ChatSession.project_id == project_id)

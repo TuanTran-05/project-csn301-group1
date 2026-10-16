@@ -22,7 +22,7 @@ def authenticate(username: str, password: str) -> User | None:
     return user
 
 
-def issue_token(user: User, mfa_pending: bool = False) -> str:
+def issue_token(user: User) -> str:
     return create_access_token(
         identity=str(user.id),
         additional_claims={

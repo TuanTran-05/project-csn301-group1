@@ -53,6 +53,13 @@ class User(db.Model):
 
     __table_args__ = (in_check("role", ROLES, "role_valid"),)
 
+    teaching_groups = db.relationship(
+        "Group", secondary="teacher_groups", back_populates="teachers"
+    )
+    student_groups = db.relationship(
+        "Group", secondary="student_groups", back_populates="students"
+    )
+
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
         self.password_changed_at = datetime.now(timezone.utc)

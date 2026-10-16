@@ -53,6 +53,7 @@ class Config:
 
     # Management network every device must live in.
     MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "172.16.3.0/24")
+    DEFAULT_LAB_NAME = os.environ.get("SEED_PROJECT_NAME", "PNETLab")
 
     # SQLite ignores FOREIGN KEY clauses unless asked to enforce them per
     # connection. On, the ON DELETE CASCADE / SET NULL rules in the schema are
@@ -94,7 +95,6 @@ class Config:
     AI_API_KEY = os.environ.get("AI_API_KEY")
 
     TESTING = False
-    ADMIN_MFA_REQUIRED = True
 
 
 class TestConfig(Config):

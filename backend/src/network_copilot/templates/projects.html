@@ -130,7 +130,7 @@
               <button type="button" :class="{ active: tab === 'devices' }" @click="tab = 'devices'">Thiết bị</button>
               <button type="button" :class="{ active: tab === 'topology' }" @click="tab = 'topology'">Sơ đồ mạng</button>
               <button type="button" :class="{ active: tab === 'design' }" @click="tab = 'design'">Thiết kế L2/L3</button>
-              <button type="button" :class="{ active: tab === 'sharing' }" @click="tab = 'sharing'">Chia sẻ</button>
+              <button type="button" :class="{ active: tab === 'sharing' }" @click="tab = 'sharing'">Nhóm / chia sẻ</button>
               <button type="button" :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Cài đặt</button>
             </nav>
 
@@ -832,9 +832,9 @@
 
             <!-- ---------- Sharing ---------- -->
             <section x-show="tab === 'sharing'" x-cloak>
-              <h3>Chia sẻ project</h3>
+              <h3>Thành viên nhóm project</h3>
               <p class="hint">
-                Người được chia sẻ mới nhìn thấy project này. <strong>viewer</strong> chỉ xem;
+                Project là không gian nhóm chung: thành viên có thể xem cùng topology và khung chat. <strong>viewer</strong> chỉ xem;
                 <strong>editor</strong> thêm/sửa thiết bị và sơ đồ. ADMIN luôn thấy mọi project.
               </p>
               <p class="error-text" x-show="shareError" x-text="shareError"></p>
@@ -845,7 +845,7 @@
                     <tr>
                       <td x-text="member.username"></td>
                       <td>
-                        <select :value="member.access" :disabled="!isOwner"
+                        <select :value="member.access" :disabled="!isOwner || (currentUser && currentUser.role === 'OPERATOR')"
                                 @change="changeMemberAccess(member, $event.target.value)">
                           <option value="viewer">viewer</option>
                           <option value="editor">editor</option>
@@ -860,13 +860,13 @@
               </table>
               <p class="hint" x-show="!members.length">Chưa chia sẻ cho ai.</p>
               <form class="inline-form" @submit.prevent="shareProject()" x-show="isOwner">
-                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" placeholder="tên đăng nhập (gõ 2 ký tự để gợi ý)" required autocomplete="off" />
+                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" :placeholder="currentUser && currentUser.role === 'OPERATOR' ? 'tên Viewer (gõ 2 ký tự để gợi ý)' : 'tên đăng nhập (gõ 2 ký tự để gợi ý)'" required autocomplete="off" />
                 <datalist id="share-candidates"><template x-for="c in shareCandidates" :key="c"><option :value="c"></option></template></datalist>
-                <select x-model="shareForm.access">
+                <select x-model="shareForm.access" x-show="currentUser && currentUser.role !== 'OPERATOR'">
                   <option value="viewer">viewer</option>
                   <option value="editor">editor</option>
                 </select>
-                <button type="submit" class="primary-btn">Chia sẻ</button>
+                <button type="submit" class="primary-btn" x-text="currentUser && currentUser.role === 'OPERATOR' ? 'Thêm Viewer' : 'Chia sẻ'"></button>
               </form>
               <div class="form-actions" x-show="project && !isOwner">
                 <button type="button" class="danger-btn" @click="leaveCurrentProject()">Rời project này</button>
