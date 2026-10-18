@@ -199,6 +199,12 @@ def update_project(project: Project, payload: dict) -> Project:
     data = validate(ProjectUpdateSchema, payload)
     changes = data.model_dump(exclude_unset=True)
 
+    if (
+        changes.get("ai_management_enabled", project.ai_management_enabled)
+        and changes.get("environment", project.environment) != "pnetlab"
+    ):
+        raise ValidationError("AI Management can only be enabled for a PNETLab project.")
+
     new_network = changes.get("management_network")
     if new_network and new_network != project.management_network:
         _assert_devices_fit(project, ipaddress.ip_network(new_network))

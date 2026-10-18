@@ -27,15 +27,30 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">Network Copilot — Projects</span>
-      <a class="nav-link" href="/users">Tài khoản</a>
-      <a class="nav-link" href="/dashboard">Dashboard</a>
-      <a class="nav-link" href="/">Chat</a>
-      <span class="user-badge">
-        <span x-text="currentUser && currentUser.username"></span>
-        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
-      </span>
-      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      <span class="app-title">Network Copilot</span>
+      <nav class="top-bar-nav" aria-label="Điều hướng chính">
+        <div class="top-bar-project-slot">
+          <label class="project-switch" x-show="projects.length" x-cloak>
+            <span class="sr-only">Project</span>
+            <select class="project-select" :value="currentProjectId" @change="selectProject(Number($event.target.value))">
+              <template x-for="item in projects" :key="item.id">
+                <option :value="item.id" :selected="item.id === currentProjectId" x-text="item.name"></option>
+              </template>
+            </select>
+          </label>
+        </div>
+        <a class="nav-link nav-projects" href="/projects" aria-current="page">Projects</a>
+        <a class="nav-link nav-topology"
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
+        <a class="nav-link nav-account" href="/users">Tài khoản</a>
+        <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
+        <a class="nav-link nav-chat" href="/">Chat</a>
+        <span class="user-badge">
+          <span x-text="currentUser && currentUser.username"></span>
+          <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+        </span>
+        <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      </nav>
     </header>
 
     <div class="projects-layout">
@@ -121,8 +136,6 @@
               <div class="project-actions">
                 <button type="button" @click="exportProject()" title="Tải project thành file JSON (không kèm mật khẩu)">Xuất JSON</button>
                 <button type="button" @click="cloneProject()" x-show="canCreateProject" title="Tạo bản sao làm mẫu">Nhân bản</button>
-                <a class="nav-link" href="/">Mở Chat</a>
-                <a class="nav-link" href="/dashboard">Dashboard</a>
               </div>
             </div>
 
@@ -476,6 +489,7 @@
                             <option value="physical">Thiết bị thật</option>
                           </select>
                         </label>
+                        <label class="check" x-show="props.managed"><input type="checkbox" x-model="props.isolated" :disabled="!canEdit" /> Lab cô lập, được AI Management cấu hình</label>
                         <label x-show="props.managed">Cổng SSH <input type="number" min="1" max="65535" x-model="props.ssh_port" :disabled="!canEdit" /></label>
                         <label>Mô tả <input type="text" x-model="props.description" maxlength="255" :disabled="!canEdit" /></label>
                         <label class="check" x-show="props.managed"><input type="checkbox" x-model="props.monitoring_enabled" :disabled="!canEdit" /> Giám sát định kỳ</label>
@@ -483,6 +497,10 @@
                           Trạng thái <b x-text="selectedNode && selectedNode.status"></b> ·
                           <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
                         </p>
+                        <button type="button" x-show="props.managed && props.lifecycle === 'provisioned' && currentUser && ['ADMIN','TEACHER'].includes(currentUser.role)"
+                          :disabled="Boolean(baselineBusy[props.id])" @click="captureBaseline(props.id)">
+                          <span x-text="baselineBusy[props.id] ? 'Đang sao lưu…' : 'Lưu cấu hình nền cho AI Management'"></span>
+                        </button>
                       </div>
                     </template>
                     <p class="error-text" x-show="propsError" x-text="propsError"></p>
@@ -896,6 +914,11 @@
                     <option value="mixed">Cả hai</option>
                   </select>
                 </label>
+                <label class="check">
+                  <input type="checkbox" x-model="settingsForm.ai_management_enabled" />
+                  Bật AI Management cho project PNETLab này
+                </label>
+                <p class="hint">Khi bật, thành viên có thể duyệt từng gợi ý trong chat để gửi cấu hình tới thiết bị PNETLab đã cô lập và có SSH. Máy chủ sẽ tự lưu cấu hình nền sau khi được duyệt.</p>
                 <div class="form-actions">
                   <button type="submit" class="primary-btn">Lưu</button>
                 </div>

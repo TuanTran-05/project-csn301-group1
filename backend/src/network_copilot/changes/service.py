@@ -305,6 +305,7 @@ def prepare_change(
     execution_mode: str = "config",
     group_id: int | None = None,
     assignment_id: int | None = None,
+    ai_management_approved: bool = False,
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
     device_service.ensure_deployable(device)
@@ -351,6 +352,7 @@ def prepare_change(
         rollback_guidance=build_rollback_guidance(assessment, canonical),
         risk_level=classify_risk(canonical, device, requires_confirmation),
         requires_confirmation=requires_confirmation,
+        ai_management_approved=ai_management_approved,
         status="pending_approval",
         source=source,
     )
@@ -822,7 +824,9 @@ def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> Change
                 f"'{parent.status if parent else 'missing'}'."
             )
 
-    device = device_service.get_device(change.device_id)
+    device = device_service.get_device(
+        change.device_id, ai_management_change=change
+    )
 
     if (
         device.hostname != change.target_hostname

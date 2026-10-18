@@ -75,6 +75,8 @@ def create_batch_preview(
     description: str | None,
     source: str = "ai",
     project_id: int | None = None,
+    chat_message_id: int | None = None,
+    ai_management_approved: bool = False,
 ) -> ChangeBatch:
     """Resolve every operation's targets and build one ChangeRequest per
     device. Either the whole batch is created, or nothing is - a conflicting
@@ -116,6 +118,7 @@ def create_batch_preview(
         description=(description or "")[:255] or None,
         status="pending_approval",
         source=source,
+        chat_message_id=chat_message_id,
     )
     try:
         for device, operation in sorted(
@@ -131,6 +134,7 @@ def create_batch_preview(
                     source,
                     operation.execution_mode,
                     group_id=operation.group_id,
+                    ai_management_approved=ai_management_approved,
                 )
             )
         batch.requires_confirmation = any(c.requires_confirmation for c in batch.changes)

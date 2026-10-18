@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -17,6 +18,130 @@ class AIOperation(BaseModel):
         if "*" in self.device_hostnames and self.device_hostnames != ["*"]:
             raise ValueError("'*' cannot be mixed with explicit device hostnames")
         return self
+
+
+class DiagramNode(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=60)
+    kind: Literal["internet", "router", "firewall", "switch", "server", "host"]
+
+
+class DiagramLink(BaseModel):
+    source: str
+    target: str
+    label: str = Field(default="", max_length=80)
+
+
+class NetworkDiagram(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    nodes: list[DiagramNode] = Field(min_length=2, max_length=16)
+    links: list[DiagramLink] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_links(self):
+        ids = {node.id for node in self.nodes}
+        if len(ids) != len(self.nodes):
+            raise ValueError("Diagram node IDs must be unique")
+        for link in self.links:
+            if (
+                link.source not in ids
+                or link.target not in ids
+                or link.source == link.target
+            ):
+                raise ValueError("Diagram links must connect two distinct existing nodes")
+        return self
+
+
+class DeviceConfiguration(BaseModel):
+    hostname: str = Field(min_length=1, max_length=64)
+    device_type: Literal["cisco_ios", "cisco_asa"]
+    commands: list[str] = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_commands(self):
+        if any(
+            not command.strip()
+            or len(command) > 500
+            or any(char in command for char in "\r\n\x00")
+            or re.match(
+                r"(?i)^\s*(?:reload\b|write\s+erase\b|erase\b|format\b|delete\b)",
+                command,
+            )
+            for command in self.commands
+        ):
+            raise ValueError(
+                "Configuration commands must be safe, non-empty single lines"
+            )
+        return self
+
+
+class AIAdvice(BaseModel):
+    explanation: str = Field(min_length=1)
+    diagram: NetworkDiagram | None = None
+    configurations: list[DeviceConfiguration] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def validate_configuration_targets(self):
+        hostnames = [item.hostname.casefold() for item in self.configurations]
+        if len(hostnames) != len(set(hostnames)):
+            raise ValueError("Each device can only have one configuration file")
+        if self.configurations and self.diagram is None:
+            raise ValueError("Device configuration suggestions need a matching diagram")
+        return self
+
+
+def diagram_schema() -> dict:
+    # Gemini supports a subset of JSON Schema. Keep this provider schema
+    # deliberately small; Pydantic enforces the stronger runtime bounds.
+    return {
+        "type": "object",
+        "required": ["title", "nodes", "links"],
+        "properties": {
+            "title": {"type": "string"},
+            "nodes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "label", "kind"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "label": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["internet", "router", "firewall", "switch", "server", "host"],
+                        },
+                    },
+                },
+            },
+            "links": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["source", "target"],
+                    "properties": {
+                        "source": {"type": "string"},
+                        "target": {"type": "string"},
+                        "label": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
+
+def configurations_schema() -> dict:
+    return {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": ["hostname", "device_type", "commands"],
+            "properties": {
+                "hostname": {"type": "string"},
+                "device_type": {"type": "string", "enum": ["cisco_ios", "cisco_asa"]},
+                "commands": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    }
 
 
 class AIAction(BaseModel):
@@ -41,6 +166,7 @@ class AIAction(BaseModel):
     # a chat action must send an explicit empty list, never omit the field.
     operations: list[AIOperation]
     explanation: str
+    diagram: NetworkDiagram | None = None
 
     @model_validator(mode="after")
     def validate_operations_match_intent(self):
@@ -116,6 +242,7 @@ def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
                 },
             },
             "explanation": {"type": "string"},
+            "diagram": diagram_schema(),
         },
     }
 

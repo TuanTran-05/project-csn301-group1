@@ -24,6 +24,11 @@ class Project(db.Model):
     # Declared per project so labs and real networks can use their own ranges.
     management_network = db.Column(db.String(43), nullable=False)
     environment = db.Column(db.String(16), nullable=False, default="pnetlab")
+    # When enabled by the owner, project members may explicitly approve one
+    # AI-generated configuration at a time for isolated PNETLab devices.
+    ai_management_enabled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
     # The block link and VLAN subnets are carved from (e.g. 10.0.0.0/16).
     addressing_pool = db.Column(db.String(43))
     owner_id = db.Column(
@@ -55,6 +60,7 @@ class Project(db.Model):
             "description": self.description,
             "management_network": self.management_network,
             "environment": self.environment,
+            "ai_management_enabled": bool(self.ai_management_enabled),
             "addressing_pool": self.addressing_pool,
             "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,

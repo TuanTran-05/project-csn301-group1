@@ -29,32 +29,37 @@
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       <span class="app-title">Network Copilot</span>
-      <label class="project-switch" x-show="projects.length" x-cloak>
-        <span class="sr-only">Project</span>
-        <select
-          class="project-select"
-          :value="currentProjectId"
-          @change="switchProject(Number($event.target.value))"
-        >
-          <template x-for="project in projects" :key="project.id">
-            <option
-              :value="project.id"
-              :selected="project.id === currentProjectId"
-              x-text="project.name + (project.owner && currentUser && project.owner !== currentUser.username ? ' · ' + project.owner : '')"
-            ></option>
-          </template>
-        </select>
-      </label>
-      <a class="nav-link" href="/projects">Projects</a>
-      <a class="nav-link" x-show="currentProject" x-cloak
-         :href="currentProject ? '/projects?project_id=' + currentProject.id + '&tab=topology' : '/projects'">Sơ đồ mạng</a>
-      <a class="nav-link" href="/users">Tài khoản</a>
-      <a class="nav-link" href="/dashboard">Dashboard</a>
-      <span class="user-badge">
-        <span x-text="currentUser && currentUser.username"></span>
-        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
-      </span>
-      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      <nav class="top-bar-nav" aria-label="Điều hướng chính">
+        <div class="top-bar-project-slot">
+          <label class="project-switch" x-show="projects.length" x-cloak>
+            <span class="sr-only">Project</span>
+            <select
+              class="project-select"
+              :value="currentProjectId"
+              @change="switchProject(Number($event.target.value))"
+            >
+              <template x-for="project in projects" :key="project.id">
+                <option
+                  :value="project.id"
+                  :selected="project.id === currentProjectId"
+                  x-text="project.name + (project.owner && currentUser && project.owner !== currentUser.username ? ' · ' + project.owner : '')"
+                ></option>
+              </template>
+            </select>
+          </label>
+        </div>
+        <a class="nav-link nav-projects" href="/projects">Projects</a>
+        <a class="nav-link nav-topology"
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
+        <a class="nav-link nav-account" href="/users">Tài khoản</a>
+        <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
+        <a class="nav-link nav-chat" href="/" aria-current="page">Chat</a>
+        <span class="user-badge">
+          <span x-text="currentUser && currentUser.username"></span>
+          <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+        </span>
+        <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      </nav>
     </header>
     <p class="project-empty" x-show="noProject" x-cloak>
       Bạn chưa được cấp quyền vào project nào nên chưa thể gửi chat.
@@ -100,7 +105,7 @@
         </div>
         <div class="chat-empty" x-show="!messages.length && !sending" x-cloak>
           <h3>Bạn muốn làm gì với mạng này?</h3>
-          <p x-show="currentUser && ['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi tự nhiên về topology. AI giải thích khái niệm mạng và gợi ý cách kết nối theo sơ đồ hiện tại.</p>
+          <p x-show="currentUser && ['OPERATOR', 'VIEWER'].includes(currentUser.role)">AI có thể đề xuất sơ đồ và cấu hình riêng theo từng thiết bị. Bạn xem lại rồi xác nhận tải các file để tự nhập vào PNETLab.</p>
           <p x-show="currentUser && !['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ đề xuất; thay đổi cấu hình vẫn qua quy trình duyệt của hệ thống.</p>
           <div class="chips">
             <template x-for="prompt in suggestions" :key="prompt">
@@ -116,6 +121,52 @@
                 <span x-text="new Date(message.created_at).toLocaleTimeString('vi-VN')"></span>
               </div>
               <div class="bubble-content" x-text="message.content"></div>
+
+              <template x-if="message.role === 'assistant' && message.payload && message.payload.diagram">
+                <figure class="ai-diagram-card">
+                  <figcaption>
+                    <strong x-text="message.payload.diagram.title"></strong>
+                    <span class="hint">Mô hình AI gợi ý · Sơ đồ minh họa</span>
+                  </figcaption>
+                  <div class="ai-diagram-scroll" tabindex="0" aria-label="Sơ đồ mạng, cuộn ngang để xem đầy đủ" x-html="networkDiagram(message.payload.diagram)"></div>
+                  <details>
+                    <summary>Chi tiết kết nối</summary>
+                    <ul>
+                      <template x-for="(link, index) in message.payload.diagram.links" :key="index">
+                        <li x-text="(message.payload.diagram.nodes.find(n => n.id === link.source)?.label || link.source) + ' ↔ ' + (message.payload.diagram.nodes.find(n => n.id === link.target)?.label || link.target) + (link.label ? ': ' + link.label : '')"></li>
+                      </template>
+                    </ul>
+                  </details>
+                </figure>
+              </template>
+
+              <template x-if="message.role === 'assistant' && message.payload && message.payload.configurations && message.payload.configurations.length">
+                <section class="ai-config-card">
+                  <h4>Cấu hình gợi ý theo thiết bị</h4>
+                  <p class="hint">Tệp chỉ chứa cấu hình gợi ý. Hãy kiểm tra model, cổng kết nối, địa chỉ IP và sơ đồ lab trước khi nhập.</p>
+                  <details>
+                    <summary x-text="'Xem ' + message.payload.configurations.length + ' tệp cấu hình' "></summary>
+                    <template x-for="config in message.payload.configurations" :key="config.hostname">
+                      <article class="ai-config-device">
+                        <strong x-text="config.hostname + ' · ' + config.device_type"></strong>
+                        <pre x-text="config.commands.join('\n')"></pre>
+                      </article>
+                    </template>
+                  </details>
+                  <button type="button" class="primary-btn" :disabled="chatConfigBusy"
+                    @click="downloadChatConfigurations(message)">
+                    <span x-text="chatConfigBusy ? 'Đang chuẩn bị…' : 'Đồng ý, tải file để nhập vào PNETLab' "></span>
+                  </button>
+                  <template x-if="currentProject && currentProject.ai_management_enabled">
+                    <button type="button" class="primary-btn" x-show="!chatBatchFor(message)" :disabled="chatConfigBusy"
+                      @click="applyChatConfigurations(message)">
+                      <span x-text="chatConfigBusy ? 'Đang gửi cấu hình…' : 'Duyệt và áp dụng trên PNETLab' "></span>
+                    </button>
+                  </template>
+                  <p class="hint" x-show="currentProject && !currentProject.ai_management_enabled">Chủ project có thể bật AI Management trong Cài đặt project để gửi cấu hình đã duyệt tới thiết bị PNETLab.</p>
+                  <p class="error-text" x-show="chatConfigError" x-text="chatConfigError"></p>
+                </section>
+              </template>
 
               <template x-if="message.payload && message.payload.flow === 'topology_options'">
                 <div class="topology-choice-list">
@@ -280,10 +331,10 @@
                 </div>
               </template>
 
-              <template x-if="message.payload && message.payload.batch && batchesById[message.payload.batch.id]">
+              <template x-if="chatBatchFor(message) && batchesById[chatBatchFor(message).id]">
                 <div
                   class="action-card batch-action-card"
-                  x-data="{ get batch() { return batchesById[message.payload.batch.id]; } }"
+                  x-data="{ get batch() { return batchesById[chatBatchFor(message).id]; } }"
                 >
                   <div class="action-card-header">
                     <strong x-text="'Batch #' + batch.id"></strong>
@@ -307,13 +358,13 @@
 
                   <div
                     class="batch-confirmation"
-                    x-show="batch.status === 'approved' && batch.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                    x-show="batch.status === 'approved' && batch.requires_confirmation && ((batch.ai_management_approved && canApplyChatBatch(batch)) || (!batch.ai_management_approved && currentUser && currentUser.role === 'ADMIN'))"
                   >
                     <p class="batch-confirmation-warning">
-                      This batch contains dangerous commands. Type the exact confirmation phrase before applying:
+                      Cấu hình có lệnh cần xác nhận thêm. Nhập chính xác cụm từ sau để tiếp tục:
                       <code x-text="batch.confirmation_text"></code>
                     </p>
-                    <label class="operational-label" :for="'batch-confirm-' + batch.id">Exact confirmation phrase</label>
+                    <label class="operational-label" :for="'batch-confirm-' + batch.id">Cụm từ xác nhận</label>
                     <input
                       type="text"
                       :id="'batch-confirm-' + batch.id"
@@ -385,7 +436,19 @@
                     x-show="batchActionErrors[batch.id]"
                     x-text="batchActionErrors[batch.id]"
                   ></div>
-                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
+                  <div class="action-card-buttons" x-show="canApplyChatBatch(batch)">
+                    <button
+                      x-show="batch.status === 'approved'"
+                      :disabled="Boolean(batchActionIds[batch.id]) || !batchConfirmationMatches(batch.id)"
+                      @click="applyApprovedChatBatch(batch.id)"
+                    >Xác nhận và gửi lên PNETLab</button>
+                    <button
+                      x-show="batch.status === 'pending_approval' || batch.status === 'approved'"
+                      :disabled="Boolean(batchActionIds[batch.id])"
+                      @click="cancelApprovedChatBatch(batch.id)"
+                    >Hủy cấu hình</button>
+                  </div>
+                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN' && !batch.ai_management_approved">
                     <button
                       x-show="batch.status === 'pending_approval'"
                       :disabled="Boolean(batchActionIds[batch.id])"

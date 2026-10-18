@@ -4,6 +4,7 @@ from flask_jwt_extended import get_jwt_identity
 
 from ..auth.service import current_user
 from ..errors import ForbiddenError
+from ..extensions import db
 from .access import permitted, role
 
 
@@ -24,6 +25,23 @@ def devices(records, user=None):
 def can_read_change(user, change):
     if role(user) == "ADMIN":
         return True
+    if (
+        getattr(change, "ai_management_approved", False)
+        and change.requested_by_id == user.id
+        and role(user) in {"OPERATOR", "VIEWER"}
+    ):
+        from ..devices.model import Device
+        from ..projects.model import Project
+        device = db.session.get(Device, change.device_id)
+        project = db.session.get(Project, device.project_id) if device else None
+        if (
+            project
+            and project.environment == "pnetlab"
+            and device.environment == "pnetlab"
+            and device.isolated
+            and device.deployable
+        ):
+            return True
     if change.group_id is None and change.requested_by_id != user.id:
         return False
     if not permitted(user, "device.read", change.group_id, change.device):

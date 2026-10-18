@@ -71,6 +71,7 @@ class ProjectUpdateSchema(BaseModel):
     management_network: str | None = None
     environment: Environment | None = None
     addressing_pool: str | None = None
+    ai_management_enabled: bool = False
 
     _check_pool = field_validator("addressing_pool")(validate_addressing_pool)
 
