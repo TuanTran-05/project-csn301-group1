@@ -22,7 +22,7 @@ RISK_LEVELS = ("low", "medium", "high")
 
 # Where a change came from: a direct API call, the AI copilot, or a topology
 # design turned into configuration.
-CHANGE_SOURCES = ("api", "ai", "design")
+CHANGE_SOURCES = ("api", "ai", "design", "restore")
 
 
 class ChangeBatch(db.Model):

@@ -24,7 +24,7 @@ def assert_behavior_case(case_name: str):
 
 def test_index_contains_live_batch_card_contract(client):
     html = client.get("/").get_data(as_text=True)
-    assert "message.payload.batch" in html
+    assert "chatBatchFor(message)" in html
     assert "batchesById" in html
     assert "batch.confirmation_text" in html
     assert "approveBatch(batch.id)" in html
