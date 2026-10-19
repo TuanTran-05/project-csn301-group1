@@ -133,7 +133,7 @@ in the supplied project topology that needs configuration, also include one
 entry in configurations with its exact project hostname, device_type, and an
 ordered list of configuration-mode commands; that hostname must exactly match
 the id or label of a diagram node. These are downloadable lab
-proposals, never execute them or include credentials, passwords, secrets,
+proposals, never execute them or include credentials, secrets,
 management IPs, reloads, or destructive reset commands. Prefer short, complete
 snippets that match the suggested diagram. Return an empty configurations list
 when the request is conceptual or there are no matching Cisco devices. For
