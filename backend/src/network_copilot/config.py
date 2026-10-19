@@ -108,8 +108,9 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
-    # Tests create the projects they need; a seeded shared lab would show up
-    # in every listing and make project selection ambiguous.
+    # The fixtures' shared project is the default lab. Tests that never create
+    # it run without one, instead of a seeded lab showing up in every listing.
+    DEFAULT_LAB_NAME = "Default Lab"
     SEED_DEFAULT_LAB = False
     # Most fixtures insert rows with placeholder ids (user_id=1 ...), so the
     # shared test config leaves FK enforcement off; ForeignKeyTestConfig turns
