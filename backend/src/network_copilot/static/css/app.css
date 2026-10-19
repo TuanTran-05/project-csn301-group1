@@ -115,9 +115,10 @@ body {
 }
 
 .top-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   padding: 12px 20px;
   background: var(--surface-raised);
   color: var(--text);
@@ -125,7 +126,53 @@ body {
 
 .top-bar .app-title {
   font-weight: 600;
-  margin-right: auto;
+  white-space: nowrap;
+}
+
+.top-bar-nav {
+  display: grid;
+  grid-template-columns: 186px 88px 128px 96px 108px 78px 120px 108px;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-bar-project-slot,
+.top-bar-project-slot .project-switch {
+  width: 100%;
+  min-width: 0;
+}
+
+.top-bar-nav .project-select,
+.top-bar-nav .nav-link,
+.top-bar-nav .logout-btn {
+  box-sizing: border-box;
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.top-bar-nav .project-select {
+  max-width: none;
+}
+
+.top-bar-nav .user-badge {
+  width: 120px;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.top-bar-nav .user-badge > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-bar-nav .nav-link[aria-current="page"] {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .user-badge {
@@ -801,6 +848,11 @@ a:focus-visible {
   border-radius: 4px;
 }
 
+.top-bar-nav .nav-link {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
 .nav-link:hover {
   background: rgba(255, 255, 255, 0.08);
 }
@@ -1016,6 +1068,36 @@ a:focus-visible {
   padding: 5px 8px;
   font-size: 13px;
   max-width: 220px;
+}
+
+@media (max-width: 1220px) {
+  .top-bar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .top-bar-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .top-bar-project-slot {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 620px) {
+  .top-bar-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .top-bar-nav .top-bar-project-slot {
+    grid-column: 1 / -1;
+  }
+
+  .top-bar-nav .user-badge {
+    width: 100%;
+  }
 }
 
 .project-tag {
@@ -1429,3 +1511,19 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .lint-warning { border-left-color: #f0c674 !important; }
 .lint-info { border-left-color: var(--accent) !important; }
 .link-btn { background: none; border: 0; padding: 0; color: inherit; text-align: left; cursor: pointer; text-decoration: underline dotted; }
+/* AI suggestions are stored with the message and remain independent of the canvas. */
+.ai-diagram-card { margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); }
+.ai-diagram-card figcaption { display: flex; flex-direction: column; gap: 4px; }
+.ai-diagram-scroll { overflow-x: auto; margin: 12px 0; }
+.ai-network-diagram { display: block; width: 100%; }
+.ai-network-diagram line { stroke: var(--text-muted); stroke-width: 2; }
+.ai-network-diagram rect { fill: var(--surface-raised); stroke: var(--accent); stroke-width: 1.5; }
+.ai-network-diagram text { fill: var(--text); font: 12px system-ui, sans-serif; }
+.ai-network-diagram .diagram-kind { fill: var(--text-muted); font-size: 10px; }
+.ai-network-diagram .diagram-link-label { paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; font-size: 11px; }
+.ai-diagram-card summary { cursor: pointer; }
+.ai-config-card { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
+.ai-config-card h4 { margin: 0 0 8px; }
+.ai-config-card summary { cursor: pointer; }
+.ai-config-device { margin-top: 12px; }
+.ai-config-device pre { max-height: 240px; overflow: auto; padding: 10px; border-radius: 8px; background: var(--bg); white-space: pre-wrap; }

@@ -71,6 +71,8 @@ document.addEventListener("alpine:init", () => {
     _clientMessageSequence: 0,
     topologyChoiceBusy: false,
     topologyChoiceError: "",
+    chatConfigBusy: false,
+    chatConfigError: "",
     sessions: [],
     // A per-browser bookmark of which shared session this browser was last
     // looking at (see the design spec: sessions are shared team data, but
@@ -85,10 +87,10 @@ document.addEventListener("alpine:init", () => {
     // is never a blank box.
     get suggestions() {
       if (this.currentUser && this.currentUser.role === "OPERATOR") {
-        return ["Tạo project mới", "Gợi ý cách kết nối các thiết bị trong sơ đồ"];
+        return ["Tạo project mới", "Gợi ý sơ đồ và file cấu hình cho các thiết bị trong lab"];
       }
       if (this.currentUser && this.currentUser.role === "VIEWER") {
-        return ["Giải thích topology hiện tại", "Cần cấu hình gì để các mạng liên thông?"];
+        return ["Gợi ý sơ đồ và file cấu hình để dựng lab trên PNETLab", "Cần cấu hình gì để các mạng liên thông?"];
       }
       const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
       const router = byRole("core", "isp");
@@ -128,6 +130,42 @@ document.addEventListener("alpine:init", () => {
           this.autoGrow(box);
         }
       });
+    },
+
+    networkDiagram(diagram) {
+      if (!diagram || !Array.isArray(diagram.nodes) || !Array.isArray(diagram.links)) return "";
+      const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const kinds = ["internet", "firewall", "router", "switch", "server", "host"];
+      const names = { internet: "Internet", firewall: "Firewall", router: "Router", switch: "Switch", server: "Server", host: "Thiết bị đầu cuối" };
+      const nodes = diagram.nodes.slice(0, 16).filter((n) => n && kinds.includes(n.kind));
+      const rows = kinds.map((kind) => nodes.filter((n) => n.kind === kind)).filter((row) => row.length);
+      const circular = rows.length === 1 && nodes.length > 2;
+      const radius = Math.max(160, nodes.length * 30);
+      const width = circular ? radius * 2 + 180 : Math.max(480, ...rows.map((row) => row.length * 180));
+      const height = circular ? radius * 2 + 100 : Math.max(180, rows.length * 120);
+      const positions = new Map();
+      if (circular) {
+        nodes.forEach((n, i) => {
+          const angle = -Math.PI / 2 + 2 * Math.PI * i / nodes.length;
+          positions.set(n.id, { x: width / 2 + radius * Math.cos(angle), y: height / 2 + radius * Math.sin(angle) });
+        });
+      } else {
+        rows.forEach((row, y) => row.forEach((n, x) => positions.set(n.id, {
+          x: width * (x + 0.5) / row.length, y: y * 120 + 60,
+        })));
+      }
+      const edges = diagram.links.slice(0, 32).map((link) => {
+        if (!link) return "";
+        const a = positions.get(link.source), b = positions.get(link.target);
+        if (!a || !b) return "";
+        return `<g><line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><text class="diagram-link-label" x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2 - 7}" text-anchor="middle">${escape(link.label)}</text></g>`;
+      }).join("");
+      const vertices = nodes.map((node) => {
+        const { x, y } = positions.get(node.id);
+        return `<g><title>${escape(node.label)}</title><rect x="${x - 76}" y="${y - 27}" width="152" height="54" rx="10"/><text x="${x}" y="${y - 4}" text-anchor="middle">${escape(String(node.label).slice(0, 20))}</text><text class="diagram-kind" x="${x}" y="${y + 16}" text-anchor="middle">${names[node.kind]}</text></g>`;
+      }).join("");
+      return `<svg class="ai-network-diagram" style="min-width:${width}px" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escape(diagram.title)}">${edges}${vertices}</svg>`;
     },
 
     topologyPreview(option) {
@@ -174,6 +212,178 @@ document.addEventListener("alpine:init", () => {
         `<g><circle cx="${node.x}" cy="${node.y}" r="9"/><text x="${node.x}" y="${node.y + 3}" text-anchor="middle">${node.label}</text></g>`
       ).join("");
       return `<svg class="topology-preview" viewBox="0 0 280 94" role="img" aria-label="Sơ đồ xem trước">${edges}${vertices}</svg>`;
+    },
+
+    savedChatMessageId(message) {
+      if (!message) return null;
+      const payloadId = Number(message.payload && message.payload.chat_message_id);
+      const messageId = message._client
+        ? payloadId
+        : Number.isInteger(message.id) ? message.id : payloadId;
+      return Number.isInteger(messageId) && messageId > 0 ? messageId : null;
+    },
+
+    chatBatchFor(message) {
+      const messageId = this.savedChatMessageId(message);
+      if (!messageId) return null;
+      return Object.values(this.batchesById).find(
+        (batch) => batch.chat_message_id === messageId
+      ) || null;
+    },
+
+    canApplyChatBatch(batch) {
+      return Boolean(
+        batch && batch.ai_management_approved &&
+        batch.requested_by_id === this.currentUser?.id &&
+        this.currentUser && ["OPERATOR", "VIEWER"].includes(this.currentUser.role)
+      );
+    },
+
+    async downloadChatConfigurations(message, alreadyApproved = false) {
+      const messageId = this.savedChatMessageId(message);
+      if (!Number.isInteger(messageId) || messageId <= 0) {
+        this.chatConfigError = "Không tìm thấy tin nhắn đã lưu để tải cấu hình.";
+        return;
+      }
+      if (!alreadyApproved && !window.confirm("Bạn đồng ý với các gợi ý cấu hình này và muốn tải gói file để tự nhập vào PNETLab?")) return;
+      this.chatConfigBusy = true;
+      this.chatConfigError = "";
+      try {
+        const response = await fetch(`/api/chat/messages/${messageId}/config-files`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            "X-Project-Id": String(this.currentProjectId),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ approved: true }),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || `Không thể tải file (${response.status}).`);
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `network-config-${messageId}.zip`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        this.chatConfigError = error.message || "Không thể tải cấu hình.";
+      } finally {
+        this.chatConfigBusy = false;
+      }
+    },
+
+    async applyChatConfigurations(message) {
+      const messageId = this.savedChatMessageId(message);
+      if (!messageId || this.chatConfigBusy) {
+        this.chatConfigError = "Không tìm thấy tin nhắn cấu hình đã lưu.";
+        return;
+      }
+      if (!window.confirm("Duyệt cấu hình gợi ý này và gửi tới các thiết bị PNETLab đã kết nối? Mỗi thiết bị sẽ được kiểm tra trước khi áp dụng.")) return;
+      this.chatConfigBusy = true;
+      this.chatConfigError = "";
+      try {
+        const response = await fetch(`/api/chat/messages/${messageId}/apply-configurations`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            "X-Project-Id": String(this.currentProjectId),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ approved: true }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || `Không thể áp dụng cấu hình (${response.status}).`);
+        const batch = result.batch;
+        if (!batch || !Number.isInteger(batch.id)) throw new Error("Máy chủ không trả về kết quả triển khai hợp lệ.");
+        this.batchesById[batch.id] = batch;
+        if (!message.payload || typeof message.payload !== "object") message.payload = {};
+        message.payload.batch = batch;
+        this.batchConfirmInputs[batch.id] = "";
+        if (result.confirmation_required) {
+          this.chatConfigError = "Gợi ý cần xác nhận thêm bằng cụm từ hiển thị trước khi gửi cấu hình.";
+          return;
+        }
+        if (result.needs_apply || batch.status === "approved") {
+          this.chatConfigError = "Gợi ý đã được duyệt. Hãy xác nhận thao tác trong thẻ cấu hình bên dưới.";
+          return;
+        }
+        if (!["success", "partial_success", "failed"].includes(batch.status)) {
+          this.chatConfigError = "Gợi ý này chưa được áp dụng. Hãy xem trạng thái batch bên dưới.";
+          return;
+        }
+        await this.downloadChatConfigurations(message, true);
+      } catch (error) {
+        this.chatConfigError = error.message || "Không thể áp dụng cấu hình.";
+      } finally {
+        this.chatConfigBusy = false;
+      }
+    },
+
+    async applyApprovedChatBatch(id) {
+      const batch = this.batchesById[id];
+      if (!batch || !batch.ai_management_approved || batch.status !== "approved") return;
+      if (!this.batchConfirmationMatches(id)) {
+        this.batchActionErrors[id] = "Nhập chính xác cụm từ xác nhận trước khi tiếp tục.";
+        return;
+      }
+      if (!window.confirm("Xác nhận gửi cấu hình này tới PNETLab ngay bây giờ?")) return;
+      this.batchActionIds[id] = "ai_apply";
+      delete this.batchActionErrors[id];
+      try {
+        const response = await fetch(`/api/chat/batches/${id}/apply`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            "X-Project-Id": String(this.currentProjectId),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            approved: true,
+            confirmation: batch.requires_confirmation ? this.batchConfirmInputs[id] || "" : null,
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || `Không thể áp dụng batch (${response.status}).`);
+        this.batchesById[id] = result.batch;
+        delete this.batchConfirmInputs[id];
+        const message = this.messages.find(
+          (item) => this.savedChatMessageId(item) === result.batch.chat_message_id
+        );
+        if (message) await this.downloadChatConfigurations(message, true);
+      } catch (error) {
+        this.batchActionErrors[id] = error.message || "Không thể áp dụng batch.";
+      } finally {
+        delete this.batchActionIds[id];
+      }
+    },
+
+    async cancelApprovedChatBatch(id) {
+      const batch = this.batchesById[id];
+      if (!batch || !batch.ai_management_approved || !["pending_approval", "approved"].includes(batch.status)) return;
+      if (!window.confirm("Hủy cấu hình đang chờ áp dụng?")) return;
+      this.batchActionIds[id] = "ai_cancel";
+      delete this.batchActionErrors[id];
+      try {
+        const response = await fetch(`/api/chat/batches/${id}/cancel`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            "X-Project-Id": String(this.currentProjectId),
+          },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || `Không thể hủy batch (${response.status}).`);
+        this.batchesById[id] = result.batch;
+      } catch (error) {
+        this.batchActionErrors[id] = error.message || "Không thể hủy batch.";
+      } finally {
+        delete this.batchActionIds[id];
+      }
     },
 
     // Enter sends, Shift+Enter breaks the line. Enter while an input method

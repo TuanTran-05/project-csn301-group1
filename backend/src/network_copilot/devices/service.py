@@ -93,15 +93,28 @@ def ensure_deployable(device: Device) -> Device:
     return device
 
 
-def get_device(device_id: int, project_id: int | None = None) -> Device:
+def get_device(
+    device_id: int,
+    project_id: int | None = None,
+    *,
+    ai_management_change=None,
+) -> Device:
     device = db.session.get(Device, device_id)
     # A device in another project is indistinguishable from a missing one.
     if device is None or (project_id is not None and device.project_id != project_id):
         raise NotFoundError(f"Device {device_id} was not found.")
     from ..governance.visibility import request_user
-    from ..governance.access import require
+    from ..governance.access import permitted, require
     user = request_user()
-    if user:
+    if user and not permitted(user, "device.read", device=device):
+        from ..governance.workflow import _ai_management_consent
+        if (
+            ai_management_change is None
+            or ai_management_change.device_id != device.id
+            or not _ai_management_consent(ai_management_change, user.id, device)
+        ):
+            require(user, "device.read", device=device)
+    elif user:
         require(user, "device.read", device=device)
     return device
 

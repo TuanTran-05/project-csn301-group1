@@ -122,6 +122,21 @@ Open <http://127.0.0.1:5000/projects>.
   / subinterfaces `ip: "auto"` from the project's *addressing pool* (default
   `10.100.0.0/16`, set in project settings). *Kiểm tra* lists design problems and
   addressing use. Notes and group boxes document the diagram (never sent to a device).
+- **Chat configuration files and AI Management.** Viewer/Operator advice can
+  include a suggested diagram and one configuration snippet per Cisco device.
+  *Đồng ý, tải file để nhập vào PNETLab* downloads a ZIP with one `.cfg` per
+  device plus a review note. For live application, the project owner first
+  enables *AI Management* in project settings. Each target must be an imported,
+  provisioned Cisco PNETLab device marked as isolated, with saved SSH credentials.
+  After each approval, the server captures the current running config; just
+  before writing it takes another backup and refuses if the device changed.
+  The chat's *Duyệt và áp dụng trên PNETLab* button is a separate,
+  per-suggestion approval; commands then use the
+  existing SSH backup, policy, verification and audit workflow. Dangerous
+  commands ask for an additional exact phrase. The AI Server is the management
+  host; it must be deployed inside PNETLab with network reachability to the
+  devices. The PNETLab API integration imports lab inventory; device commands
+  are sent over SSH.
 - **Versions.** *Phiên bản* saves the diagram and design (no credentials), compares
   a version with the current state and restores it. Restore keeps devices that still
   exist (matched by hostname) so their SSH logins survive, recreates missing ones,
@@ -137,7 +152,12 @@ Open <http://127.0.0.1:5000/projects>.
   restores, imports and CSV imports are rate limited. A shared user can leave a
   project; owners get username suggestions when sharing.
 
-Approving and applying a change is still ADMIN-only, in every project.
+Ordinary configuration changes continue through the app's existing approval
+and role rules. The owner-gated AI Management flow is limited to one explicit
+chat approval at a time and isolated PNETLab devices; it cannot
+target physical or production devices. The AI Server described below can act as
+the management host when deployed inside PNETLab with SSH reachability to the
+lab devices.
 
 ### User administration
 
@@ -438,6 +458,7 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET/POST | `/api/devices` | viewer / editor | List / create devices in the current project |
 | GET/PUT/DELETE | `/api/devices/<id>` | viewer / editor | Read / update / delete |
 | POST | `/api/devices/<id>/test-connection` | editor | SSH reachability check |
+| POST | `/api/governance/devices/<id>/baseline` | permitted Admin/Teacher | Capture a running-config baseline |
 | GET | `/api/devices/<id>/status` | any | Latest monitoring snapshot |
 | GET | `/api/devices/<id>/snapshots` | any | Snapshot history |
 | POST | `/api/devices/<id>/refresh` | any | Poll now |
@@ -450,6 +471,9 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/changes/<id>` | any | One change |
 | POST | `/api/changes/<id>/approve` | ADMIN | Approve |
 | POST | `/api/changes/<id>/apply` | ADMIN | Backup → apply → verify (10 req/min) |
+| POST | `/api/chat/messages/<id>/config-files` | project viewer | Download an explicitly approved ZIP of suggested configs |
+| POST | `/api/chat/messages/<id>/apply-configurations` | Operator/Viewer, owner-enabled PNETLab | Per-suggestion approval and live apply to isolated devices |
+| POST | `/api/chat/batches/<id>/apply` · `/cancel` | submitting Operator/Viewer | Confirm a high-risk AI Management apply / cancel it |
 | POST | `/api/changes/<id>/cancel` | ADMIN | Cancel |
 | GET | `/api/change-batches` | any | List frozen multi-device batches |
 | GET | `/api/change-batches/<id>` | any | One batch with every child result |

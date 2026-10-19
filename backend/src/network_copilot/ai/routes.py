@@ -74,12 +74,14 @@ def _new_project_name(user: User) -> str:
 
 
 def _chat_reply(user, session_id, project_id, content, payload):
-    record_chat_message(
+    saved = record_chat_message(
         user.id, user.username, "assistant", content, payload,
         session_id=session_id, project_id=project_id,
     )
     return jsonify({"intent": payload.get("flow", "advice"), "explanation": content,
-                    "session_id": session_id, **payload}), 200
+                    "session_id": session_id,
+                    "chat_message_id": saved.id if saved else None,
+                    **payload}), 200
 
 
 @bp.post("/chat")
@@ -152,8 +154,8 @@ def chat():
             data.message, user_id, session_id=data.session_id, project_id=project.id,
             group_id=data.group_id,
         )
-    record_chat_message(
+    saved = record_chat_message(
         user_id, username, "assistant", result.get("explanation", ""), result,
         session_id=data.session_id, project_id=project.id,
     )
-    return jsonify(result), 200
+    return jsonify({**result, "chat_message_id": saved.id if saved else None}), 200

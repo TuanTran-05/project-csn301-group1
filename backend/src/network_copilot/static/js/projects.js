@@ -148,6 +148,7 @@ document.addEventListener("alpine:init", () => {
     deviceError: "",
     deviceNotice: "",
     deviceBusy: {},
+    baselineBusy: {},
 
     // -- network design (VLANs, ports, SVIs, routes, OSPF) --
     design: EMPTY_DESIGN(),
@@ -397,6 +398,7 @@ document.addEventListener("alpine:init", () => {
             management_network: project.management_network,
             environment: project.environment,
             addressing_pool: project.addressing_pool || "",
+            ai_management_enabled: Boolean(project.ai_management_enabled),
           }
         : null;
     },
@@ -489,6 +491,11 @@ document.addEventListener("alpine:init", () => {
     async saveSettings() {
       this.projectError = "";
       this.projectNotice = "";
+      if (
+        this.settingsForm.ai_management_enabled &&
+        this.project && !this.project.ai_management_enabled &&
+        !window.confirm("Bật AI Management cho phép thành viên duyệt từng gợi ý cấu hình trong chat để gửi tới thiết bị PNETLab đã cô lập. Tiếp tục bật tính năng này?")
+      ) return;
       try {
         await this.authFetch(`/api/projects/${this.currentProjectId}`, {
           method: "PUT",
@@ -498,6 +505,7 @@ document.addEventListener("alpine:init", () => {
             management_network: this.settingsForm.management_network,
             environment: this.settingsForm.environment,
             addressing_pool: this.settingsForm.addressing_pool || null,
+            ai_management_enabled: Boolean(this.settingsForm.ai_management_enabled),
           }),
         });
         await this.loadProjects();
@@ -1126,6 +1134,7 @@ document.addEventListener("alpine:init", () => {
             data_ip: device.data_ip || "",
             data_gateway: device.data_gateway || "",
             environment: device.environment,
+            isolated: Boolean(device.isolated),
             ssh_port: device.ssh_port,
             monitoring_enabled: device.monitoring_enabled,
             description: device.description || "",
@@ -1144,6 +1153,7 @@ document.addEventListener("alpine:init", () => {
           description: p.description || null,
           data_ip: p.data_ip || null,
           data_gateway: p.data_gateway || null,
+          isolated: Boolean(p.isolated),
         };
         if (p.managed) {
           body.role = p.role;
@@ -1161,6 +1171,23 @@ document.addEventListener("alpine:init", () => {
         this.syncProps();
       } catch (err) {
         this.propsError = this.describeError(err);
+      }
+    },
+
+    async captureBaseline(deviceId) {
+      if (this.baselineBusy[deviceId]) return;
+      this.deviceError = "";
+      this.deviceNotice = "";
+      this.baselineBusy[deviceId] = true;
+      try {
+        await this.authFetch(`/api/governance/devices/${deviceId}/baseline`, {
+          method: "POST",
+        });
+        this.deviceNotice = "Đã lưu cấu hình nền cho thiết bị. AI Management có thể dùng nó để kiểm tra trước khi áp dụng.";
+      } catch (err) {
+        this.deviceError = this.describeError(err);
+      } finally {
+        delete this.baselineBusy[deviceId];
       }
     },
 

@@ -40,6 +40,22 @@ class FakeAIProvider:
             payload = payload[min(self.calls - 1, len(payload) - 1)]
         if isinstance(payload, str):
             return payload
+        # Advice calls use a different response shape from device actions.
+        # Keep existing action fixtures useful for greeting and advice flows.
+        if (
+            isinstance(payload, dict)
+            and schema
+            and "diagram" in schema.get("properties", {})
+            and "intent" not in schema.get("properties", {})
+            and "explanation" in payload
+        ):
+            advice = {
+                "explanation": payload["explanation"],
+                "configurations": payload.get("configurations", []),
+            }
+            if "diagram" in payload:
+                advice["diagram"] = payload["diagram"]
+            return json.dumps(advice)
         return json.dumps(payload)
 
     def explain(self, system_prompt: str, user_message: str, context: dict) -> str:

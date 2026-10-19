@@ -105,6 +105,7 @@ class DeviceCreateSchema(BaseModel):
     ssh_port: int = Field(default=22, ge=1, le=65535)
     monitoring_enabled: bool = True
     environment: DeviceEnvironment = "pnetlab"
+    isolated: bool = False
     description: str | None = Field(default=None, max_length=255)
     credential: CredentialSchema | None = None
     pos_x: float | None = Field(default=None, ge=-100000, le=100000)
@@ -151,6 +152,7 @@ class DeviceUpdateSchema(BaseModel):
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     monitoring_enabled: bool | None = None
     environment: DeviceEnvironment | None = None
+    isolated: bool | None = None
     description: str | None = Field(default=None, max_length=255)
     credential: CredentialSchema | None = None
     kind: DeviceKind | None = None

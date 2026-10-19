@@ -38,6 +38,9 @@ class ChangeBatch(db.Model):
         nullable=False,
         index=True,
     )
+    chat_message_id = db.Column(
+        db.Integer, db.ForeignKey("chat_messages.id", ondelete="SET NULL")
+    )
     status = db.Column(db.String(32), nullable=False, default="pending_approval")
     risk_level = db.Column(db.String(16), nullable=False, default="low")
     requires_confirmation = db.Column(
@@ -64,6 +67,9 @@ class ChangeBatch(db.Model):
         in_check("status", BATCH_STATUSES, "status_valid"),
         in_check("risk_level", RISK_LEVELS, "risk_level_valid"),
         in_check("source", CHANGE_SOURCES, "source_valid"),
+        db.Index(
+            "uq_change_batches_chat_message", "chat_message_id", unique=True
+        ),
     )
 
     changes = db.relationship(
@@ -88,6 +94,10 @@ class ChangeBatch(db.Model):
         return {
             "id": self.id,
             "project_id": self.project_id,
+            "chat_message_id": self.chat_message_id,
+            "ai_management_approved": bool(self.changes) and all(
+                change.ai_management_approved for change in self.changes
+            ),
             "status": self.status,
             "risk_level": self.risk_level,
             "requires_confirmation": self.requires_confirmation,
@@ -114,6 +124,12 @@ class ChangeRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey("groups.id"))
     assignment_id = db.Column(db.Integer, db.ForeignKey("assignments.id"))
+    # Narrow exception for a viewer's explicit, per-message PNETLab approval.
+    # The project owner must enable AI Management and targets must remain
+    # isolated, provisioned PNETLab devices with a captured baseline.
+    ai_management_approved = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
     approval_digest = db.Column(db.String(64))
     baseline_revision = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     baseline_hash = db.Column(db.String(64))
@@ -234,6 +250,7 @@ class ChangeRequest(db.Model):
             "requested_by_id": self.requested_by_id,
             "group_id": self.group_id,
             "assignment_id": self.assignment_id,
+            "ai_management_approved": bool(self.ai_management_approved),
             "baseline_revision": self.baseline_revision,
             "baseline_hash": self.baseline_hash,
             "approval_digest": self.approval_digest,

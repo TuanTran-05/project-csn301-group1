@@ -27,23 +27,30 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">
-        Network Copilot — Dashboard
-        <span class="project-tag" x-show="projectName" x-text="projectName"></span>
-      </span>
-      <select class="project-switcher" x-model.number="currentProjectId" @change="selectProject(currentProjectId)" aria-label="Project">
-        <template x-for="project in projects" :key="project.id">
-          <option :value="project.id" x-text="project.name"></option>
-        </template>
-      </select>
-      <a class="nav-link" href="/projects">Projects</a>
-      <a class="nav-link" href="/users">Tài khoản</a>
-      <a class="nav-link" href="/">Chat</a>
-      <span class="user-badge">
-        <span x-text="currentUser && currentUser.username"></span>
-        <span class="role-pill" x-text="currentUser && currentUser.role"></span>
-      </span>
-      <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      <span class="app-title">Network Copilot</span>
+      <nav class="top-bar-nav" aria-label="Điều hướng chính">
+        <div class="top-bar-project-slot">
+          <label class="project-switch" x-show="projects.length" x-cloak>
+            <span class="sr-only">Project</span>
+            <select class="project-select" :value="currentProjectId" @change="selectProject(Number($event.target.value))">
+              <template x-for="project in projects" :key="project.id">
+                <option :value="project.id" :selected="project.id === currentProjectId" x-text="project.name"></option>
+              </template>
+            </select>
+          </label>
+        </div>
+        <a class="nav-link nav-projects" href="/projects">Projects</a>
+        <a class="nav-link nav-topology"
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
+        <a class="nav-link nav-account" href="/users">Tài khoản</a>
+        <a class="nav-link nav-dashboard" href="/dashboard" aria-current="page">Dashboard</a>
+        <a class="nav-link nav-chat" href="/">Chat</a>
+        <span class="user-badge">
+          <span x-text="currentUser && currentUser.username"></span>
+          <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+        </span>
+        <button class="logout-btn" @click="logout()">Đăng xuất</button>
+      </nav>
     </header>
 
     <p class="dashboard-error" x-show="lastError" x-cloak>

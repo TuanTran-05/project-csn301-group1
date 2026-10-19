@@ -34,7 +34,7 @@ class AIProvider(Protocol):
         context: dict,
         schema: dict | None = None,
     ) -> str:
-        """Return a JSON string matching AIAction.
+        """Return a JSON string matching the supplied response schema.
 
         ``schema`` lets a provider constrain decoding server-side. Providers
         that cannot do that ignore it; the response is validated either way.

@@ -48,14 +48,43 @@ def risk(commands, device):
     return "low" if analyze_risk(commands, device.role) == "LOW" else "high"
 
 
+def _ai_management_consent(change, user_id, device=None):
+    """Validate the narrowly scoped, explicit chat approval for PNETLab."""
+    if not getattr(change, "ai_management_approved", False) or change.source != "ai":
+        return False
+    user = db.session.get(User, user_id) if type(user_id) is int else None
+    if (
+        user is None
+        or user.id != change.requested_by_id
+        or role(user) not in {"OPERATOR", "VIEWER"}
+    ):
+        return False
+    device = device or db.session.get(Device, change.device_id)
+    if device is None:
+        return False
+    from ..projects.model import Project
+    project = db.session.get(Project, device.project_id)
+    return bool(
+        project
+        and project.ai_management_enabled
+        and project.environment == "pnetlab"
+        and device.environment == "pnetlab"
+        and device.isolated
+        and device.deployable
+        and getattr(device, "credential", None) is not None
+    )
+
+
 def bind(change, user_id, device, group_id=None):
     user = actor(user_id)
-    if role(user) != "ADMIN" and group_id is None:
+    ai_management = _ai_management_consent(change, user_id, device)
+    if role(user) != "ADMIN" and group_id is None and not ai_management:
         scopes = [g.id for g in device.groups if permitted(user, "config.create", g.id, device)]
         if len(scopes) != 1:
             raise ForbiddenError("Select exactly one authorized group for this change.")
         group_id = scopes[0]
-    require(user, "config.create", group_id, device)
+    if not ai_management:
+        require(user, "config.create", group_id, device)
     if group_id is not None:
         group = db.session.get(Group, group_id)
         if not group or group.archived or device not in group.devices:
@@ -94,8 +123,12 @@ def digest(change):
     content = {key: getattr(change, key) for key in (
         "commands", "execution_mode", "source", "device_id", "group_id", "assignment_id", "target_hostname", "target_management_ip",
         "target_ssh_port", "target_device_type", "baseline_revision", "baseline_hash", "verification_commands",
-        "verification_plan", "operation_expectations", "requires_confirmation", "risk_level")}
+        "verification_plan", "operation_expectations", "requires_confirmation", "risk_level",
+        "ai_management_approved")}
     content["environment"] = [device.environment, device.isolated, device.role]
+    from ..projects.model import Project
+    project = db.session.get(Project, device.project_id)
+    content["ai_management_enabled"] = bool(project and project.ai_management_enabled)
     content["policy"] = [p.independent_approval, p.production_admin_only, p.approval_minutes, p.forbidden_commands,
                          p.high_risk_commands, p.physical_lab_low_risk_commands]
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -103,19 +136,23 @@ def digest(change):
 
 def approve_allowed(change, user_id):
     user = actor(user_id)
-    if role(user) != "ADMIN" and change.group_id is None:
+    ai_management = _ai_management_consent(change, user_id)
+    if role(user) != "ADMIN" and change.group_id is None and not ai_management:
         raise ForbiddenError("A non-Admin reviewer requires an explicit group scope.")
-    if role(user) == "STUDENT":
+    if role(user) == "STUDENT" and not ai_management:
         raise ForbiddenError("Students cannot approve changes.")
     device = db.session.get(Device, change.device_id)
     if device is None:
         raise NotFoundError("Approved target no longer exists.")
-    require(user, "config.approve", change.group_id, device)
-    if policy().independent_approval and role(user) != "ADMIN" and user.id == change.requested_by_id:
+    if not ai_management:
+        require(user, "config.approve", change.group_id, device)
+    if (not ai_management and policy().independent_approval
+            and role(user) != "ADMIN" and user.id == change.requested_by_id):
         raise ForbiddenError("Independent approval is required; send this change to Admin.")
     if device.environment == "production" and policy().production_admin_only and role(user) != "ADMIN":
         raise ForbiddenError("Production changes require Administrator approval.")
-    require(actor(change.requested_by_id), "config.create", change.group_id, device)
+    if not ai_management:
+        require(actor(change.requested_by_id), "config.create", change.group_id, device)
     if device.baseline_revision != change.baseline_revision:
         raise InvalidStateError("Device baseline changed; create a new preview.")
     risk(change.commands, device)
@@ -124,21 +161,24 @@ def approve_allowed(change, user_id):
 
 def deployment_allowed(change, user_id):
     user = actor(user_id)
-    if role(user) != "ADMIN" and change.group_id is None:
+    ai_management = _ai_management_consent(change, user_id)
+    if role(user) != "ADMIN" and change.group_id is None and not ai_management:
         raise ForbiddenError("A non-Admin deployment requires an explicit group scope.")
     device = db.session.get(Device, change.device_id)
     if device is None:
         raise NotFoundError("Approved target no longer exists.")
     if (device.environment != "virtual" or not device.isolated) and not change.baseline_hash:
         raise InvalidStateError("Capture a device baseline before previewing a physical or shared-lab change.")
-    require(user, "config.deploy", change.group_id, device)
+    if not ai_management:
+        require(user, "config.deploy", change.group_id, device)
     if change.source == "restore":
         require(user, "config.restore", change.group_id, device)
-    require(actor(change.requested_by_id), "config.create", change.group_id, device)
+    if not ai_management:
+        require(actor(change.requested_by_id), "config.create", change.group_id, device)
     check_assignment(change)
-    if role(user) == "STUDENT" and user.id != change.requested_by_id:
+    if role(user) == "STUDENT" and user.id != change.requested_by_id and not ai_management:
         raise ForbiddenError("Students may deploy only their own approved changes.")
-    if change.group_id:
+    if change.group_id and not ai_management:
         group = db.session.get(Group, change.group_id)
         if not group or group.archived or device not in group.devices:
             raise ForbiddenError("Target group or allocation is no longer active.")
@@ -157,7 +197,7 @@ def deployment_allowed(change, user_id):
                                                  Reservation.starts_at <= now(), Reservation.ends_at > now()).all()
     if any(r.maintenance for r in active):
         raise ForbiddenError("Device is in a maintenance window.")
-    if device.environment != "virtual" and role(user) != "ADMIN":
+    if device.environment != "virtual" and role(user) != "ADMIN" and not ai_management:
         if not any(r.group_id == change.group_id and not r.maintenance for r in active):
             raise ForbiddenError("A current reservation for this group is required on physical devices.")
     if device.status == "offline":
