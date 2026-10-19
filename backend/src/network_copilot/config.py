@@ -54,6 +54,7 @@ class Config:
     # Management network every device must live in.
     MANAGEMENT_NETWORK = os.environ.get("MANAGEMENT_NETWORK", "172.16.3.0/24")
     DEFAULT_LAB_NAME = os.environ.get("SEED_PROJECT_NAME", "PNETLab")
+    SEED_DEFAULT_LAB = True
 
     # SQLite ignores FOREIGN KEY clauses unless asked to enforce them per
     # connection. On, the ON DELETE CASCADE / SET NULL rules in the schema are
@@ -107,9 +108,9 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
-    # The fixtures' shared project is the app's default lab, so it is not
-    # seeded a second time next to it.
-    DEFAULT_LAB_NAME = "Default Lab"
+    # Tests create the projects they need; a seeded shared lab would show up
+    # in every listing and make project selection ambiguous.
+    SEED_DEFAULT_LAB = False
     # Most fixtures insert rows with placeholder ids (user_id=1 ...), so the
     # shared test config leaves FK enforcement off; ForeignKeyTestConfig turns
     # it on for the tests that check the schema's integrity rules.

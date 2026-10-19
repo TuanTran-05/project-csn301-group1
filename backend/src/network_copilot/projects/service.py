@@ -91,6 +91,8 @@ def default_lab_id() -> int | None:
         .first()
     )
     if project is None:
+        if not current_app.config.get("SEED_DEFAULT_LAB", True):
+            return None
         project = Project(
             name=name,
             description="Default shared network lab",
