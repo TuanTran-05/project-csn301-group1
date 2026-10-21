@@ -91,7 +91,11 @@
       // ---- node text -------------------------------------------------------
       nodeSubtitle(device) {
         if (device.managed === false) return esc(device.data_ip || device.kind || device.role);
-        if (device.lifecycle === "planned") return "kế hoạch · " + esc(device.role);
+        if (device.lifecycle === "planned") {
+          return device.data_ip
+            ? "AI · " + esc(device.data_ip)
+            : "kế hoạch · " + esc(device.role);
+        }
         return esc(device.management_ip || device.role);
       },
 

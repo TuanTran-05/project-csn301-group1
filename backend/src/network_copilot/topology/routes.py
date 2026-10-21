@@ -8,7 +8,9 @@ from ..auth.service import current_user
 from ..chat.model import ChatMessage, ChatSession
 from ..extensions import db, limiter
 from ..projects import service as project_service
+from ..projects.model import Project
 from . import blueprints, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
+from . import chat_import
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
 
@@ -51,15 +53,97 @@ def latest_ai_suggestion(project_id: int):
             diagram = NetworkDiagram.model_validate(raw_diagram).model_dump()
         except PydanticValidationError:
             continue
+        from ..devices.model import Device
+
+        import_marker = f"[chat:{message.id}]"
+        imported = db.session.query(Device.id).filter(
+            Device.project_id == project.id,
+            Device.description.contains(import_marker),
+        ).first() is not None
         return jsonify({
             "suggestion": {
                 "message_id": message.id,
                 "session_id": message.session_id,
                 "explanation": message.content,
                 "diagram": diagram,
+                "imported": imported,
             }
         }), 200
     return jsonify({"suggestion": None}), 200
+
+
+@bp.post("/import/chat-diagram")
+@jwt_required()
+@limiter.limit("10 per minute")
+def import_chat_diagram(project_id: int):
+    project = _project(project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    message_id = payload.get("message_id")
+    if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id < 1:
+        from ..errors import ValidationError
+
+        raise ValidationError("'message_id' must be a positive integer.")
+    result = chat_import.import_diagram(project, message_id)
+    if result["created"]:
+        record_event(
+            action="topology.chat_diagram_import",
+            result="success",
+            user_id=current_user().id,
+            details={
+                "message_id": message_id,
+                "devices": len(result["devices"]),
+                "links": len(result["links"]),
+            },
+        )
+    return jsonify(result), 201 if result["created"] else 200
+
+
+@bp.post("/copy-chat-diagram")
+@jwt_required()
+@limiter.limit("5 per minute")
+def copy_chat_diagram(project_id: int):
+    """Create an editable personal project from a diagram the user can view."""
+    source = _project(project_id, "viewer")
+    payload = request.get_json(silent=True) or {}
+    message_id = payload.get("message_id")
+    if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id < 1:
+        from ..errors import ValidationError
+
+        raise ValidationError("'message_id' must be a positive integer.")
+
+    message, diagram = chat_import.get_suggestion(source.id, message_id)
+    user = current_user()
+    base_name = f"{source.name} - {diagram.title}"[:80].strip()
+    name = base_name
+    suffix = 2
+    while db.session.query(Project.id).filter_by(owner_id=user.id, name=name).first():
+        tail = f" ({suffix})"
+        name = f"{base_name[:80 - len(tail)].rstrip()}{tail}"
+        suffix += 1
+
+    new_project = project_service.create_project(user, {
+        "name": name,
+        "description": f"Bản chỉnh sửa từ sơ đồ Chat #{message.id} của project {source.name}.",
+        "management_network": source.management_network,
+        "environment": source.environment,
+        "addressing_pool": source.addressing_pool,
+    })
+    try:
+        result = chat_import.import_diagram(new_project, message.id, source_project_id=source.id)
+    except Exception:
+        db.session.rollback()
+        db.session.delete(new_project)
+        db.session.commit()
+        raise
+
+    record_event(
+        action="topology.chat_diagram_copy",
+        result="success",
+        user_id=user.id,
+        details={"source_project_id": source.id, "project_id": new_project.id, "message_id": message.id},
+    )
+    result["project"] = project_service.project_view(user, new_project)
+    return jsonify(result), 201
 
 
 @bp.get("")

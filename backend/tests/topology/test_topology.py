@@ -1,5 +1,6 @@
 import pytest
 
+from network_copilot.auth.model import User
 from network_copilot.changes.model import ChangeBatch
 from network_copilot.chat.service import record_message
 from network_copilot.chat.session_service import create_session
@@ -102,6 +103,131 @@ def test_ai_suggestion_ignores_invalid_saved_diagrams(client, admin_headers, adm
 
     assert response.status_code == 200
     assert response.get_json()["suggestion"] is None
+
+
+def test_chat_diagram_imports_editable_devices_and_links_idempotently(
+    client, admin_headers, admin_user, project, base
+):
+    session = create_session(project.id, created_by_id=admin_user.id)
+    message = record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Kết nối router, switch và máy chủ.",
+        {"diagram": {
+            "title": "Office network",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router", "ip_addresses": ["10.20.0.1/30"]},
+                {"id": "sw1", "label": "SW1", "kind": "switch", "ip_addresses": ["10.20.0.2/30"]},
+                {"id": "srv1", "label": "Server 1", "kind": "server", "ip_addresses": ["10.20.1.10/24"]},
+            ],
+            "links": [
+                {"source": "r1", "target": "sw1", "label": "Gi0/0", "network": "10.20.0.0/30", "ip_source": "10.20.0.1/30", "ip_target": "10.20.0.2/30"},
+                {"source": "sw1", "target": "srv1", "label": "LAN server"},
+            ],
+        }},
+        session_id=session.id,
+        project_id=project.id,
+    )
+
+    response = client.post(
+        f"{base}/import/chat-diagram", headers=admin_headers, json={"message_id": message.id}
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["created"] is True
+    assert {device["hostname"] for device in result["devices"]} == {"R1", "SW1", "SERVER-1"}
+    devices = {device["hostname"]: device for device in result["devices"]}
+    assert devices["R1"]["lifecycle"] == "planned"
+    assert devices["R1"]["management_ip"] is None
+    assert devices["R1"]["data_ip"] == "10.20.0.1/30"
+    assert devices["SW1"]["data_ip"] == "10.20.0.2/30"
+    assert len(result["links"]) == 2
+    assert "Mạng: 10.20.0.0/30" in result["links"][0]["description"]
+    assert "IP đích: 10.20.0.2/30" in result["links"][0]["description"]
+
+    suggestion = client.get(f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers)
+    assert suggestion.get_json()["suggestion"]["imported"] is True
+    topology = client.get(base, headers=admin_headers).get_json()
+    assert len(topology["nodes"]) == 3
+    assert len(topology["links"]) == 2
+
+    repeated = client.post(
+        f"{base}/import/chat-diagram", headers=admin_headers, json={"message_id": message.id}
+    )
+    assert repeated.status_code == 200
+    assert repeated.get_json()["created"] is False
+    assert len(client.get(base, headers=admin_headers).get_json()["nodes"]) == 3
+
+
+def test_viewer_cannot_import_chat_diagram(client, viewer_headers, admin_user, project, base):
+    session = create_session(project.id, created_by_id=admin_user.id)
+    message = record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Two nodes.",
+        {"diagram": {
+            "title": "Read only",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router"},
+                {"id": "sw1", "label": "SW1", "kind": "switch"},
+            ],
+            "links": [{"source": "r1", "target": "sw1"}],
+        }},
+        session_id=session.id,
+        project_id=project.id,
+    )
+
+    response = client.post(
+        f"{base}/import/chat-diagram", headers=viewer_headers, json={"message_id": message.id}
+    )
+
+    assert response.status_code == 403
+
+
+def test_viewer_can_copy_chat_diagram_into_an_editable_project(
+    client, db, admin_headers, admin_user, project, base
+):
+    session = create_session(project.id, created_by_id=admin_user.id)
+    message = record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Router and switch.",
+        {"diagram": {
+            "title": "Branch office",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router", "ip_addresses": ["10.30.0.1/30"]},
+                {"id": "sw1", "label": "SW1", "kind": "switch", "ip_addresses": ["10.30.0.2/30"]},
+            ],
+            "links": [{"source": "r1", "target": "sw1", "network": "10.30.0.0/30"}],
+        }},
+        session_id=session.id,
+        project_id=project.id,
+    )
+    operator = User(username="operator", role="OPERATOR")
+    operator.set_password("OperatorPass123!")
+    db.session.add(operator)
+    db.session.commit()
+    login = client.post(
+        "/api/auth/login", json={"username": "operator", "password": "OperatorPass123!"}
+    )
+    operator_headers = {"Authorization": f"Bearer {login.get_json()['access_token']}"}
+
+    response = client.post(
+        f"{base}/copy-chat-diagram", headers=operator_headers, json={"message_id": message.id}
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["project"]["access"] == "owner"
+    copied_topology = client.get(
+        f"/api/projects/{result['project']['id']}/topology", headers=operator_headers
+    ).get_json()
+    assert {device["hostname"] for device in copied_topology["nodes"]} == {"R1", "SW1"}
+    assert len(copied_topology["links"]) == 1
 
 
 def test_layout_is_saved_per_device(client, admin_headers, base, lab):
