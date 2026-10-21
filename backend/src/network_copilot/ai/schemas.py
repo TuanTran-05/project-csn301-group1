@@ -253,3 +253,5 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     session_id: int | None = None
     group_id: int | None = None
+    # "design": answer with a whole L2/L3 design for the project to apply.
+    mode: Literal["design"] | None = None

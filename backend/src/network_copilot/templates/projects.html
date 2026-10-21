@@ -697,10 +697,31 @@
             <!-- ---------- Design: L2 / L3 ---------- -->
             <section x-show="tab === 'design'" x-cloak>
               <h3>Thiết kế L2/L3</h3>
-              <p class="hint">Khai báo VLAN, cổng access, SVI, route tĩnh và OSPF. Cấu hình được sinh ở tab Sơ đồ mạng
-                (cùng với IP và trunk của các dây nối) và chỉ chạy sau khi ADMIN duyệt. OSPF dùng một area 0 và tự lấy mạng từ
-                các dây routed và SVI của thiết bị.</p>
+              <div class="card design-ai-cta">
+                <p>Bạn không cần tự nhập VLAN, IP hay định tuyến. Mở khung chat, bật <strong>Thiết kế mạng</strong> rồi mô tả
+                  mạng bạn muốn, ví dụ “3 VLAN Kế toán, Kỹ thuật, Khách, quản trị qua VLAN 99”. AI đề xuất thiết kế đầy đủ,
+                  bạn xem lại và bấm Áp dụng.</p>
+                <a class="primary-btn" href="/" @click="openDesignChat()">Thiết kế bằng AI trong chat</a>
+              </div>
               <p class="error-text" x-show="designError" x-text="designError"></p>
+
+              <div class="card">
+                <h4>Thiết kế hiện tại</h4>
+                <p class="hint" x-show="!design.vlans.length && !designRoutingSummary.length">Chưa có thiết kế.</p>
+                <table class="data-table" x-show="design.vlans.length">
+                  <thead><tr><th>VLAN</th><th>Mạng / gateway</th><th>Cổng access</th></tr></thead>
+                  <tbody><template x-for="row in designVlanSummary" :key="row.vlan_id">
+                    <tr><td x-text="row.vlan_id + ' · ' + row.name"></td><td x-text="row.gateways || '—'"></td><td x-text="row.ports || '—'"></td></tr>
+                  </template></tbody>
+                </table>
+                <ul class="design-summary-list" x-show="designRoutingSummary.length">
+                  <template x-for="line in designRoutingSummary" :key="line"><li x-text="line"></li></template>
+                </ul>
+                <p class="hint">Cấu hình được sinh ở tab Sơ đồ mạng và chỉ chạy sau khi được duyệt.</p>
+              </div>
+
+              <details class="design-manual">
+                <summary>Chỉnh tay (nâng cao)</summary>
 
               <div class="card">
                 <h4>VLAN</h4>
@@ -849,6 +870,7 @@
                   <button type="submit" class="primary-btn">Bật / sửa OSPF</button>
                 </form>
               </div>
+              </details>
             </section>
 
             <!-- ---------- Sharing ---------- -->

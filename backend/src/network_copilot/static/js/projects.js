@@ -1599,6 +1599,35 @@ document.addEventListener("alpine:init", () => {
       });
     },
 
+    // Read-only summary of the design, the same view the chat shows for an AI proposal.
+    get designVlanSummary() {
+      const d = this.design;
+      const short = (name) => name.replace("GigabitEthernet", "Gi");
+      return d.vlans.map((v) => ({
+        vlan_id: v.vlan_id,
+        name: v.name,
+        gateways: [
+          ...d.svis.filter((x) => x.vlan_id === v.vlan_id).map((x) => `${x.hostname} ${x.ip}/${x.prefix_length}`),
+          ...d.subinterfaces.filter((x) => x.vlan_id === v.vlan_id)
+            .map((x) => `${x.hostname} ${short(x.interface)}.${x.vlan_id} ${x.ip}/${x.prefix_length}`),
+        ].join(", "),
+        ports: d.access_ports.filter((x) => x.vlan_id === v.vlan_id).map((x) => `${x.hostname} ${short(x.interface)}`).join(", "),
+      }));
+    },
+
+    get designRoutingSummary() {
+      const d = this.design;
+      const lines = [];
+      if (d.ospf.length) lines.push(`OSPF area 0 trên ${d.ospf.map((o) => o.hostname).join(", ")}`);
+      for (const r of d.routes) lines.push(`Route tĩnh ${r.hostname}: ${r.network}/${r.prefix_length} qua ${r.next_hop}`);
+      for (const l of d.loopbacks) lines.push(`${l.hostname} Loopback${l.number}: ${l.ip}`);
+      return lines;
+    },
+
+    openDesignChat() {
+      try { localStorage.setItem("nc_design_mode", "1"); } catch { /* optional */ }
+    },
+
     async undoDeviceDelete() {
       this.deviceUndoable = false;
       this.deviceNotice = "";

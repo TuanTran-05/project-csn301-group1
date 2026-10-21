@@ -13,6 +13,7 @@ from ..projects.scope import current_project
 from ..projects import service as project_service
 from ..projects.model import Project
 from ..audit.service import record_event
+from . import design_assistant
 from .schemas import ChatRequest
 from .service import AIService
 
@@ -147,7 +148,13 @@ def chat():
         user_id, username, "user", data.message,
         session_id=data.session_id, project_id=project.id,
     )
-    if user.role in {"OPERATOR", "VIEWER"}:
+    if data.mode == "design":
+        service = AIService()
+        result = design_assistant.propose(
+            service.provider, data.message, project,
+            service._recent_history(data.session_id, data.message, project.id),
+        )
+    elif user.role in {"OPERATOR", "VIEWER"}:
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
         result = AIService().handle(
