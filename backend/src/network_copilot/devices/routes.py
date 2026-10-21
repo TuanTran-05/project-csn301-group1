@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required
 from ..audit.service import record_event
 from ..auth.service import current_user
 from ..projects.scope import current_project, write_project
-from . import service
+from . import service, trash
 
 bp = Blueprint("devices", __name__, url_prefix="/api/devices")
 
@@ -86,6 +86,8 @@ def delete_device(device_id: int):
     project = write_project()
     device = service.get_device(device_id, project.id)
     hostname = device.hostname
+    # ?undo=1 asks for a token that POST /restore turns back into the device.
+    token = trash.snapshot(device) if request.args.get("undo") == "1" else None
     service.delete_device(device_id, project.id)
     record_event(
         action="device.delete",
@@ -93,7 +95,24 @@ def delete_device(device_id: int):
         user_id=_current_user_id(),
         details={"device_id": device_id, "hostname": hostname},
     )
-    return "", 204
+    if token is None:
+        return "", 204
+    return jsonify({"restore_token": token}), 200
+
+
+@bp.post("/restore")
+@jwt_required()
+def restore_device():
+    project = write_project()
+    device = trash.restore((request.get_json(silent=True) or {}).get("restore_token"), project)
+    record_event(
+        action="device.restore",
+        result="success",
+        user_id=_current_user_id(),
+        device_id=device.id,
+        details={"device_id": device.id, "hostname": device.hostname},
+    )
+    return jsonify(device.to_dict()), 201
 
 
 @bp.get("/<int:device_id>/backups")

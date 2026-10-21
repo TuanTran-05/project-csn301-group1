@@ -220,7 +220,10 @@
                 </div>
               </template>
               <p class="error-text" x-show="deviceError" x-text="deviceError"></p>
-              <p class="ok-text" x-show="deviceNotice" x-text="deviceNotice"></p>
+              <p class="ok-text" x-show="deviceNotice">
+                <span x-text="deviceNotice"></span>
+                <button type="button" class="link-btn" x-show="deviceUndoable && canUndo" @click="undoDeviceDelete()">Hoàn tác</button>
+              </p>
 
               <form class="card form-grid" @submit.prevent="saveDevice()" x-show="deviceFormOpen" x-cloak>
                 <h4 x-text="deviceForm.id ? 'Sửa thiết bị' : 'Thêm thiết bị'"></h4>

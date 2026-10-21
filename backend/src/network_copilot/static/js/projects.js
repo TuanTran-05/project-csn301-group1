@@ -182,6 +182,7 @@ document.addEventListener("alpine:init", () => {
     undoStack: [],
     redoStack: [],
     historyBusy: false,
+    deviceUndoable: false,
     templates: [],
     defaultSsh: { username: "", password: "" },
     dropBusy: false,
@@ -430,6 +431,7 @@ document.addEventListener("alpine:init", () => {
       this.deviceFormOpen = false;
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       this.topologyError = "";
       this.shareError = "";
       this.projectError = "";
@@ -547,6 +549,7 @@ document.addEventListener("alpine:init", () => {
     openDeviceForm(device) {
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       if (device) {
         this.deviceForm = {
           ...EMPTY_DEVICE_FORM(),
@@ -577,6 +580,7 @@ document.addEventListener("alpine:init", () => {
     async saveDevice() {
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       const form = this.deviceForm;
       const payload = {
         hostname: form.hostname.trim(),
@@ -628,16 +632,16 @@ document.addEventListener("alpine:init", () => {
       }
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       try {
-        await this.authFetch(`/api/devices/${device.id}`, { method: "DELETE" });
-        // Earlier steps may refer to this device or its cables: history ends here.
-        this.undoStack = [];
-        this.redoStack = [];
+        const result = await this.authFetch(`/api/devices/${device.id}?undo=1`, { method: "DELETE" });
+        this._rememberDevicesDeleted([{ id: device.id, token: result.restore_token }], `Xoá ${device.hostname}`);
         this.multi = [];
         await this.loadDevices();
         await this.loadTopology();
         await this.loadProjects();
         this.deviceNotice = `Đã xoá ${device.hostname}.`;
+        this.deviceUndoable = true;
       } catch (err) {
         this.deviceError = this.describeError(err);
       }
@@ -646,6 +650,7 @@ document.addEventListener("alpine:init", () => {
     async testConnection(device) {
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       this.deviceBusy = { ...this.deviceBusy, [device.id]: true };
       try {
         const result = await this.authFetch(
@@ -753,6 +758,7 @@ document.addEventListener("alpine:init", () => {
       if (!file) return;
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       try {
         const result = await this.authFetch(`/api/projects/${this.currentProjectId}/devices/import-csv`, {
           method: "POST",
@@ -1178,6 +1184,7 @@ document.addEventListener("alpine:init", () => {
       if (this.baselineBusy[deviceId]) return;
       this.deviceError = "";
       this.deviceNotice = "";
+      this.deviceUndoable = false;
       this.baselineBusy[deviceId] = true;
       try {
         await this.authFetch(`/api/governance/devices/${deviceId}/baseline`, {
@@ -1410,19 +1417,20 @@ document.addEventListener("alpine:init", () => {
       const devices = this.multi.map((id) => this.deviceById(id)).filter(Boolean);
       if (!devices.length) return;
       const names = devices.map((d) => d.hostname).join(", ");
-      if (!window.confirm(`Xoá ${devices.length} thiết bị (${names}) và các liên kết của chúng?\nKhông thể hoàn tác.`)) return;
+      if (!window.confirm(`Xoá ${devices.length} thiết bị (${names}) và các liên kết của chúng?`)) return;
       this.topologyError = "";
+      const deleted = [];
       try {
         for (const device of devices) {
-          await this.authFetch(`/api/devices/${device.id}`, { method: "DELETE" });
+          const result = await this.authFetch(`/api/devices/${device.id}?undo=1`, { method: "DELETE" });
+          deleted.push({ id: device.id, token: result.restore_token });
         }
       } catch (err) {
         this.topologyError = this.describeError(err);
       }
+      if (deleted.length) this._rememberDevicesDeleted(deleted, `Xoá ${deleted.length} thiết bị`);
       this.multi = [];
       this.selectedNodeId = null;
-      this.undoStack = [];
-      this.redoStack = [];
       await this.loadTopology();
       await this.loadProjects();
     },
@@ -1560,8 +1568,47 @@ document.addEventListener("alpine:init", () => {
       this.addTemplate(raw.slice("template:".length), point);
     },
 
+    // Undo of a deletion restores each device from the token the server sealed
+    // when deleting it, SSH login included. The last one deleted comes back
+    // first, so a cable between two of them is restored with the second one.
+    _rememberDevicesDeleted(items, label) {
+      const refs = items.map((item) => ({ ...item }));
+      const reload = async () => {
+        await this.loadDevices();
+        await this.loadProjects();
+      };
+      this._pushUndo({
+        label,
+        undo: async () => {
+          for (const ref of [...refs].reverse()) {
+            const device = await this.authFetch("/api/devices/restore", {
+              method: "POST",
+              body: JSON.stringify({ restore_token: ref.token }),
+            });
+            ref.id = device.id;
+          }
+          await reload();
+        },
+        redo: async () => {
+          for (const ref of refs) {
+            const result = await this.authFetch(`/api/devices/${ref.id}?undo=1`, { method: "DELETE" });
+            ref.token = result.restore_token;
+          }
+          await reload();
+        },
+      });
+    },
+
+    async undoDeviceDelete() {
+      this.deviceUndoable = false;
+      this.deviceNotice = "";
+      this.deviceUndoable = false;
+      await this.undo();
+      if (this.topologyError) this.deviceError = this.topologyError;
+      else this.deviceNotice = "Đã khôi phục thiết bị.";
+    },
+
     // A device that was just dropped can be removed again (and dropped again).
-    // Deleting an existing device is not undoable: its SSH login is gone.
     _rememberDeviceAdded(device, key, point) {
       const ref = { id: device.id };
       this._pushUndo({
