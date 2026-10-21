@@ -50,7 +50,7 @@
         </div>
         <a class="nav-link nav-projects" href="/projects">Projects</a>
         <a class="nav-link nav-topology"
-           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (currentSessionId ? '&session_id=' + currentSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-account" href="/users">Tài khoản</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/" aria-current="page">Chat</a>
@@ -594,6 +594,7 @@
     </div>
   </div>
 
+  <script src="{{ url_for('static', filename='js/network_diagram.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/history-toolbar.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/history-panel.js') }}" defer></script>
