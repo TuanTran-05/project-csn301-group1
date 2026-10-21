@@ -39,9 +39,12 @@
       Quản lý người dùng
     </a>
 
-    <button type="button" class="user-menu-password-toggle" @click="passwordOpen = !passwordOpen; passwordError = ''; passwordNotice = ''">
-      <span x-text="passwordOpen ? 'Ẩn đổi mật khẩu' : 'Đổi mật khẩu'"></span>
-    </button>
+    <div class="user-menu-actions">
+      <button type="button" class="user-menu-password-toggle" @click="passwordOpen = !passwordOpen; passwordError = ''; passwordNotice = ''">
+        <span x-text="passwordOpen ? 'Ẩn đổi mật khẩu' : 'Đổi mật khẩu'"></span>
+      </button>
+      <button type="button" class="user-menu-logout" @click="logout()">Đăng xuất</button>
+    </div>
     <form class="user-menu-password-form" x-show="passwordOpen" x-cloak @submit.prevent="changePassword()">
       <label>Mật khẩu hiện tại
         <input type="password" x-model="passwordForm.current_password" required autocomplete="current-password" />

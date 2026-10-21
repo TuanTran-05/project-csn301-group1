@@ -39,13 +39,13 @@
             </select>
           </label>
         </div>
-        <a class="nav-link nav-projects" href="/projects" aria-current="page">Projects</a>
+        <a class="nav-link nav-projects" aria-current="page"
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects'">Projects</a>
         <a class="nav-link nav-topology"
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/">Chat</a>
         {% include "_account_menu.html" %}
-        <button class="logout-btn" @click="logout()">Đăng xuất</button>
       </nav>
     </header>
 
@@ -382,7 +382,10 @@
                 </div>
               </div>
               <p class="error-text" x-show="topologyError" x-text="topologyError"></p>
-              <p class="ok-text" x-show="topologyNotice" x-text="topologyNotice" @click="topologyNotice = ''"></p>
+              <p class="ok-text" x-show="topologyNotice" @click="topologyNotice = ''">
+                <span x-text="topologyNotice"></span>
+                <button type="button" class="link-btn" x-show="deviceUndoable && canUndo" @click.stop="undoDeviceDelete()">Hoàn tác</button>
+              </p>
 
               <p class="hint" x-show="linkMode" x-cloak>
                 <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Kéo từ thiết bị nguồn thả vào thiết bị đích, hoặc bấm thiết bị nguồn rồi thiết bị đích.'"></span>

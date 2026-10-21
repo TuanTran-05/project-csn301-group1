@@ -48,13 +48,13 @@
             </select>
           </label>
         </div>
-        <a class="nav-link nav-projects" href="/projects">Projects</a>
+        <a class="nav-link nav-projects"
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (currentSessionId ? '&session_id=' + currentSessionId : '') : '/projects'">Projects</a>
         <a class="nav-link nav-topology"
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (currentSessionId ? '&session_id=' + currentSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/" aria-current="page">Chat</a>
         {% include "_account_menu.html" %}
-        <button class="logout-btn" @click="logout()">Đăng xuất</button>
       </nav>
     </header>
     <p class="project-empty" x-show="noProject" x-cloak>

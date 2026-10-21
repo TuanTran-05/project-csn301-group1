@@ -161,6 +161,19 @@ def chat():
             data.message, user_id, session_id=data.session_id, project_id=project.id,
             group_id=data.group_id,
         )
+    if isinstance(result.get("diagram"), dict):
+        from ..topology.chat_import import complete_diagram_addresses
+
+        result["diagram"], generated_addresses = complete_diagram_addresses(
+            project, result["diagram"]
+        )
+        if generated_addresses:
+            pool = result.get("addressing_pool") or project.addressing_pool or "10.100.0.0/16"
+            result["explanation"] = (
+                result.get("explanation", "")
+                + f"\n\nCác địa chỉ IP còn thiếu được đề xuất từ dải {pool}; "
+                "chưa được áp dụng lên thiết bị."
+            )
     saved = record_chat_message(
         user_id, username, "assistant", result.get("explanation", ""), result,
         session_id=data.session_id, project_id=project.id,

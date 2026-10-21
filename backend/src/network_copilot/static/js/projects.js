@@ -655,23 +655,35 @@ document.addEventListener("alpine:init", () => {
     },
 
     async deleteDevice(device) {
+      if (!device || !this.canEdit) return;
       if (!window.confirm(`Xoá thiết bị ${device.hostname} và các liên kết của nó?`)) {
         return;
       }
       this.deviceError = "";
       this.deviceNotice = "";
+      this.topologyError = "";
       this.deviceUndoable = false;
       try {
         const result = await this.authFetch(`/api/devices/${device.id}?undo=1`, { method: "DELETE" });
         this._rememberDevicesDeleted([{ id: device.id, token: result.restore_token }], `Xoá ${device.hostname}`);
-        this.multi = [];
+        this.deviceUndoable = true;
+        this.multi = this.multi.filter((id) => id !== device.id);
+        if (this.selectedNodeId === device.id) {
+          this.selectedNodeId = null;
+          this.props = null;
+        }
+        this.selectedLinkId = null;
+        this.menu = null;
+        this._fitted = false;
         await this.loadDevices();
         await this.loadTopology();
         await this.loadProjects();
         this.deviceNotice = `Đã xoá ${device.hostname}.`;
+        if (this.tab === "topology") this.topologyNotice = this.deviceNotice;
         this.deviceUndoable = true;
       } catch (err) {
         this.deviceError = this.describeError(err);
+        if (this.tab === "topology") this.topologyError = this.deviceError;
       }
     },
 
@@ -1060,9 +1072,15 @@ document.addEventListener("alpine:init", () => {
       this.aiSuggestionLoading = true;
       this.aiSuggestionError = "";
       try {
-        const params = this.chatSessionId ? `?session_id=${this.chatSessionId}` : "";
-        const data = await this.authFetch(this.topologyUrl(`/ai-suggestion${params}`));
-        if (projectId === this.currentProjectId) this.aiSuggestion = data.suggestion || null;
+        const query = this.chatSessionId
+          ? `?session_id=${encodeURIComponent(this.chatSessionId)}`
+          : "";
+        const data = await this.authFetch(this.topologyUrl(`/ai-suggestion${query}`));
+        if (projectId !== this.currentProjectId) return;
+        this.aiSuggestion = data.suggestion || null;
+        if (this.aiSuggestion && !this.aiSuggestion.imported && this.canEdit) {
+          await this.importChatDiagram();
+        }
       } catch (err) {
         if (projectId === this.currentProjectId) {
           this.aiSuggestion = null;
@@ -1525,6 +1543,8 @@ document.addEventListener("alpine:init", () => {
       const names = devices.map((d) => d.hostname).join(", ");
       if (!window.confirm(`Xoá ${devices.length} thiết bị (${names}) và các liên kết của chúng?`)) return;
       this.topologyError = "";
+      this.topologyNotice = "";
+      this.deviceUndoable = false;
       const deleted = [];
       try {
         for (const device of devices) {
@@ -1534,9 +1554,16 @@ document.addEventListener("alpine:init", () => {
       } catch (err) {
         this.topologyError = this.describeError(err);
       }
-      if (deleted.length) this._rememberDevicesDeleted(deleted, `Xoá ${deleted.length} thiết bị`);
+      if (deleted.length) {
+        this._rememberDevicesDeleted(deleted, `Xoá ${deleted.length} thiết bị`);
+        this.deviceUndoable = true;
+        this.topologyNotice = `Đã xoá ${deleted.length}/${devices.length} thiết bị.`;
+      }
       this.multi = [];
       this.selectedNodeId = null;
+      this.selectedLinkId = null;
+      this.props = null;
+      this._fitted = false;
       await this.loadTopology();
       await this.loadProjects();
     },

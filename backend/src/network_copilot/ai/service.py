@@ -138,12 +138,14 @@ the id or label of a diagram node. These are downloadable lab
 proposals, never execute them or include credentials, secrets, management IPs
 from device inventory, reloads, or destructive reset commands. Include
 user-provided device/interface IP addresses in the matching node's ip_addresses
-and routed-link network/IPs in the matching link fields. Propose new addresses
-only when an IP plan is part of the request, and label those addresses as
-proposed in the explanation. Keep all addresses identical across the diagram,
-explanation, and configuration commands; never claim a proposed address is
-already in use. Prefer short, complete snippets that match the suggested
-diagram. Return an empty configurations list
+and routed-link network/IPs in the matching link fields. Include at least one
+complete IPv4 interface address for every node, using context.addressing_pool
+for proposed data-plane addresses when the user did not provide a plan. Keep
+link endpoint IPs in both the corresponding node and link fields. Clearly say
+that any newly proposed address is only a suggestion and has not been applied.
+Keep all addresses identical across the diagram, explanation, and configuration
+commands; never claim a proposed address is already in use. Prefer short,
+complete snippets that match the suggested diagram. Return an empty configurations list
 when the request is conceptual or there are no matching Cisco devices. For
 greetings or answers that do not benefit from a network diagram, omit diagram.
 """
@@ -250,6 +252,7 @@ class AIService:
     def advise(self, message: str, session_id: int, project_id: int) -> dict:
         """Translate a member's request into safe, topology-aware guidance."""
         from ..projects.model import Project
+        from ..topology import ipam
         from ..topology.service import get_topology
 
         project = db.session.get(Project, project_id)
@@ -278,6 +281,7 @@ class AIService:
         ]
         context = {
             "project": project.name,
+            "addressing_pool": str(ipam.pool_for(project)),
             "devices": nodes,
             "links": links,
             "conversation": self._recent_history(session_id, message, project_id),

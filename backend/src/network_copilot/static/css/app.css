@@ -133,7 +133,7 @@ body {
 
 .top-bar-nav {
   display: grid;
-  grid-template-columns: 186px 88px 128px 108px 78px 140px 108px;
+  grid-template-columns: 186px 88px 128px 108px 78px 140px;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -165,7 +165,7 @@ body {
 .top-bar-nav .user-badge {
   width: 100%;
   min-width: 0;
-  justify-content: center;
+  justify-content: space-between;
   white-space: nowrap;
 }
 
@@ -188,7 +188,9 @@ body {
 .account-menu {
   position: relative;
   z-index: 20;
-  width: 100%;
+  justify-self: end;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -220,6 +222,7 @@ body {
 
 .user-menu-trigger:focus-visible,
 .user-menu-password-toggle:focus-visible,
+.user-menu-logout:focus-visible,
 .user-menu-panel a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -236,8 +239,8 @@ body {
   top: calc(100% + 8px);
   right: 0;
   box-sizing: border-box;
-  width: min(360px, calc(100vw - 24px));
-  min-width: min(300px, calc(100vw - 24px));
+  width: min(300px, calc(100vw - 24px));
+  min-width: min(280px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 84px);
   overflow-y: auto;
@@ -269,8 +272,8 @@ body {
 
 .user-menu-details {
   display: grid;
-  grid-template-columns: minmax(82px, 0.8fr) minmax(0, 1.2fr);
-  gap: 8px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
   margin: 12px 0;
   font-size: 13px;
 }
@@ -284,10 +287,16 @@ body {
 .user-menu-details dd {
   color: var(--text);
   min-width: 0;
+  padding-left: 20px;
+}
+
+.user-menu-details dt:not(:first-of-type) {
+  margin-top: 7px;
 }
 
 .user-menu-admin-link,
-.user-menu-password-toggle {
+.user-menu-password-toggle,
+.user-menu-logout {
   display: block;
   width: 100%;
   padding: 9px 10px;
@@ -302,8 +311,35 @@ body {
   cursor: pointer;
 }
 
-.user-menu-admin-link + .user-menu-password-toggle {
+.user-menu-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
   margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.user-menu-actions .user-menu-password-toggle,
+.user-menu-actions .user-menu-logout {
+  width: auto;
+  margin: 0;
+  text-align: center;
+}
+
+.user-menu-logout {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--danger-text);
+}
+
+.user-menu-admin-link:hover,
+.user-menu-password-toggle:hover {
+  border-color: var(--accent);
+}
+
+.user-menu-logout:hover {
+  border-color: var(--offline);
+  background: var(--danger-bg);
 }
 
 .user-menu-password-form {
@@ -1237,7 +1273,7 @@ a:focus-visible {
   max-width: 220px;
 }
 
-@media (max-width: 1220px) {
+@media (max-width: 1020px) {
   .top-bar {
     grid-template-columns: 1fr;
     gap: 10px;
@@ -1264,6 +1300,11 @@ a:focus-visible {
 
   .top-bar-nav .user-badge {
     width: 100%;
+  }
+
+  .user-menu-panel {
+    left: 0;
+    right: auto;
   }
 }
 

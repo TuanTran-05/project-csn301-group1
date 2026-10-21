@@ -28,7 +28,7 @@ def test_topology_lists_devices_and_links(client, admin_headers, base, lab):
     assert link["link_type"] == "physical"
 
 
-def test_ai_suggestion_matches_the_requested_chat_session(
+def test_ai_suggestion_is_session_specific_or_latest_for_project(
     client, viewer_headers, admin_user, project, base
 ):
     first = create_session(project.id, created_by_id=admin_user.id)
@@ -76,6 +76,11 @@ def test_ai_suggestion_matches_the_requested_chat_session(
     assert suggestion["diagram"]["title"] == "Chat topology"
     assert suggestion["diagram"]["nodes"][0]["ip_addresses"] == ["10.10.0.1/24"]
     assert suggestion["diagram"]["links"][0]["network"] == "10.10.0.0/24"
+
+    latest = client.get(f"{base}/ai-suggestion", headers=viewer_headers)
+    latest_suggestion = latest.get_json()["suggestion"]
+    assert latest_suggestion["diagram"]["title"] == "Other session"
+    assert all(node["ip_addresses"] for node in latest_suggestion["diagram"]["nodes"])
 
 
 def test_ai_suggestion_ignores_invalid_saved_diagrams(client, admin_headers, admin_user, project, base):
@@ -146,6 +151,9 @@ def test_chat_diagram_imports_editable_devices_and_links_idempotently(
     assert len(result["links"]) == 2
     assert "Mạng: 10.20.0.0/30" in result["links"][0]["description"]
     assert "IP đích: 10.20.0.2/30" in result["links"][0]["description"]
+    assert result["links"][0]["network"] == "10.20.0.0/30"
+    assert result["links"][0]["ip_a"] == "10.20.0.1/30"
+    assert result["links"][0]["ip_b"] == "10.20.0.2/30"
 
     suggestion = client.get(f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers)
     assert suggestion.get_json()["suggestion"]["imported"] is True
@@ -159,6 +167,77 @@ def test_chat_diagram_imports_editable_devices_and_links_idempotently(
     assert repeated.status_code == 200
     assert repeated.get_json()["created"] is False
     assert len(client.get(base, headers=admin_headers).get_json()["nodes"]) == 3
+
+
+def test_chat_diagram_fills_missing_ips_and_keeps_deletions(
+    client, admin_headers, admin_user, project, base
+):
+    session = create_session(project.id, created_by_id=admin_user.id)
+    message = record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Router, switch and server.",
+        {"diagram": {
+            "title": "Cafe network",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router"},
+                {"id": "sw1", "label": "SW-Cafe", "kind": "switch"},
+                {"id": "srv1", "label": "POS", "kind": "server"},
+            ],
+            "links": [
+                {"source": "r1", "target": "sw1", "network": "10.20.0.0/30"},
+                {"source": "sw1", "target": "srv1"},
+            ],
+        }},
+        session_id=session.id,
+        project_id=project.id,
+    )
+
+    suggestion = client.get(
+        f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers
+    )
+    diagram = suggestion.get_json()["suggestion"]["diagram"]
+    nodes = {node["id"]: node for node in diagram["nodes"]}
+    assert nodes["r1"]["ip_addresses"] == ["10.20.0.1/30"]
+    assert nodes["sw1"]["ip_addresses"] == ["10.20.0.2/30"]
+    assert nodes["srv1"]["ip_addresses"][0].startswith("10.100.")
+    assert message.payload["diagram"] == diagram
+
+    imported = client.post(
+        f"{base}/import/chat-diagram", headers=admin_headers, json={"message_id": message.id}
+    )
+    assert imported.status_code == 201
+    devices = {device["hostname"]: device for device in imported.get_json()["devices"]}
+    assert devices["R1"]["data_ip"] == "10.20.0.1/30"
+    assert devices["SW-CAFE"]["data_ip"] == "10.20.0.2/30"
+    assert devices["POS"]["data_ip"] == nodes["srv1"]["ip_addresses"][0]
+
+    # Migrate a legacy import marker from the device descriptions, then prove
+    # deleting every imported device does not cause the chat sync to recreate it.
+    payload = dict(message.payload)
+    payload.pop("_topology_imported_project_ids", None)
+    message.payload = payload
+    db.session.commit()
+    after_delete = client.get(
+        f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers
+    )
+    assert after_delete.get_json()["suggestion"]["imported"]
+    assert project.id in message.payload["_topology_imported_project_ids"]
+    for device in devices.values():
+        removed = client.delete(f"/api/devices/{device['id']}", headers=admin_headers)
+        assert removed.status_code == 204
+
+    after_all_removed = client.get(
+        f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers
+    )
+    assert after_all_removed.get_json()["suggestion"]["imported"]
+    repeated = client.post(
+        f"{base}/import/chat-diagram", headers=admin_headers, json={"message_id": message.id}
+    )
+    assert repeated.status_code == 200
+    assert repeated.get_json()["created"] is False
+    assert len(client.get(base, headers=admin_headers).get_json()["nodes"]) == 0
 
 
 def test_viewer_cannot_import_chat_diagram(client, viewer_headers, admin_user, project, base):

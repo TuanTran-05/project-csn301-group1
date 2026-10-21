@@ -2,10 +2,10 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError as PydanticValidationError
 
-from ..ai.schemas import NetworkDiagram
 from ..audit.service import record_event
 from ..auth.service import current_user
 from ..chat.model import ChatMessage, ChatSession
+from ..errors import AppError
 from ..extensions import db, limiter
 from ..projects import service as project_service
 from ..projects.model import Project
@@ -39,36 +39,41 @@ def latest_ai_suggestion(project_id: int):
         .join(ChatSession, ChatSession.id == ChatMessage.session_id)
         .filter(ChatSession.project_id == project.id, ChatMessage.role == "assistant")
     )
-    if session_id and db.session.query(ChatSession.id).filter_by(
-        id=session_id, project_id=project.id
-    ).scalar() is not None:
-        messages = messages.filter(ChatMessage.session_id == session_id)
 
-    for message in messages.order_by(ChatMessage.id.desc()).limit(500):
-        payload = message.payload if isinstance(message.payload, dict) else {}
-        raw_diagram = payload.get("diagram")
-        if not isinstance(raw_diagram, dict):
-            continue
-        try:
-            diagram = NetworkDiagram.model_validate(raw_diagram).model_dump()
-        except PydanticValidationError:
-            continue
-        from ..devices.model import Device
-
-        import_marker = f"[chat:{message.id}]"
-        imported = db.session.query(Device.id).filter(
-            Device.project_id == project.id,
-            Device.description.contains(import_marker),
-        ).first() is not None
-        return jsonify({
-            "suggestion": {
-                "message_id": message.id,
-                "session_id": message.session_id,
-                "explanation": message.content,
-                "diagram": diagram,
-                "imported": imported,
-            }
-        }), 200
+    searches = (
+        [messages.filter(ChatSession.id == session_id)]
+        if session_id is not None
+        else []
+    )
+    searches.append(messages)
+    for search in searches:
+        for message in search.order_by(ChatMessage.id.desc()).limit(500):
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            raw_diagram = payload.get("diagram")
+            if not isinstance(raw_diagram, dict):
+                continue
+            try:
+                diagram, _ = chat_import.complete_diagram_addresses(project, raw_diagram)
+            except (PydanticValidationError, AppError):
+                continue
+            if diagram != raw_diagram:
+                updated_payload = dict(payload)
+                updated_payload["diagram"] = diagram
+                message.payload = updated_payload
+                db.session.commit()
+            imported = chat_import.was_imported(project, message)
+            if imported:
+                chat_import.mark_imported(project, message)
+                db.session.commit()
+            return jsonify({
+                "suggestion": {
+                    "message_id": message.id,
+                    "session_id": message.session_id,
+                    "explanation": message.content,
+                    "diagram": diagram,
+                    "imported": imported,
+                }
+            }), 200
     return jsonify({"suggestion": None}), 200
 
 
