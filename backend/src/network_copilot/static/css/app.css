@@ -1610,6 +1610,8 @@ a:focus-visible {
 .projects-layout .file-button:hover { border-color: var(--accent); color: var(--accent); }
 
 .topo-node.selected rect { filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.6)); }
+.link-preview { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+.topo-node.link-target rect { stroke: var(--accent); stroke-width: 3; }
 .band { fill: rgba(6, 182, 212, 0.12); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 .align-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .align-bar .hint { margin: 0 6px 0 0; }
