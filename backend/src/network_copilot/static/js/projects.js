@@ -150,8 +150,13 @@ document.addEventListener("alpine:init", () => {
     aiSuggestion: null,
     aiSuggestionLoading: false,
     aiSuggestionError: "",
-    topologyView: "ai",
-    tab: new URLSearchParams(window.location.search).get("tab") === "topology" ? "topology" : "devices",
+    aiImportBusy: false,
+    tab: (() => {
+      const requested = new URLSearchParams(window.location.search).get("tab");
+      return ["devices", "topology", "design", "sharing", "settings"].includes(requested)
+        ? requested
+        : "topology";
+    })(),
 
     // -- devices --
     devices: [],
@@ -448,6 +453,7 @@ document.addEventListener("alpine:init", () => {
       this.aiSuggestion = null;
       this.aiSuggestionError = "";
       this.aiSuggestionLoading = false;
+      this.aiImportBusy = false;
       this.shareError = "";
       this.projectError = "";
       this.projectNotice = "";
@@ -1067,6 +1073,57 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    async importChatDiagram() {
+      if (!this.canEdit || !this.aiSuggestion || this.aiImportBusy || this.aiSuggestion.imported) return;
+      this.aiImportBusy = true;
+      this.topologyError = "";
+      this.topologyNotice = "";
+      try {
+        const result = await this.authFetch(this.topologyUrl("/import/chat-diagram"), {
+          method: "POST",
+          body: JSON.stringify({ message_id: this.aiSuggestion.message_id }),
+        });
+        this.aiSuggestion.imported = true;
+        this._fitted = false;
+        await this.loadTopology();
+        await this.loadProjects();
+        this.topologyNotice = result.created
+          ? `Đã thêm ${result.devices.length} thiết bị và ${result.links.length} đường nối từ sơ đồ Chat vào canvas project.`
+          : "Sơ đồ này đã được thêm vào canvas project trước đó.";
+      } catch (err) {
+        this.topologyError = this.describeError(err);
+      } finally {
+        this.aiImportBusy = false;
+      }
+    },
+
+    async copyChatDiagramToNewProject() {
+      if (!this.canCreateProject || !this.aiSuggestion || this.aiImportBusy) return;
+      this.aiImportBusy = true;
+      this.topologyError = "";
+      this.topologyNotice = "";
+      try {
+        const result = await this.authFetch(this.topologyUrl("/copy-chat-diagram"), {
+          method: "POST",
+          body: JSON.stringify({ message_id: this.aiSuggestion.message_id }),
+        });
+        this.chatSessionId = null;
+        localStorage.removeItem("nc_session_id");
+        await this.loadProjects();
+        await this.selectProject(result.project.id);
+        const url = new URL(window.location.href);
+        url.searchParams.set("project_id", result.project.id);
+        url.searchParams.set("tab", "topology");
+        url.searchParams.delete("session_id");
+        window.history.replaceState({}, "", url);
+        this.topologyNotice = `Đã tạo project “${result.project.name}” để bạn chỉnh sửa sơ đồ.`;
+      } catch (err) {
+        this.topologyError = this.describeError(err);
+      } finally {
+        this.aiImportBusy = false;
+      }
+    },
+
     async loadTopology() {
       const projectId = this.currentProjectId;
       const data = await this.authFetch(this.topologyUrl());
@@ -1117,6 +1174,7 @@ document.addEventListener("alpine:init", () => {
       else if (link.link_type === "trunk") {
         middle = (link.allowed_vlans ? `trunk ${link.allowed_vlans}` : "trunk") + (link.channel_id ? ` · Po${link.channel_id}` : "");
       }
+      else if (link.description) middle = link.description;
       const ifaceA = esc(this.shortInterface(link.interface_a));
       const ifaceB = esc(this.shortInterface(link.interface_b));
       const ipA = link.ip_a ? ` ${esc(link.ip_a)}` : "";

@@ -308,25 +308,35 @@
 
             <!-- ---------- Topology ---------- -->
             <section x-show="tab === 'topology'" x-cloak>
-              <nav class="tabs ai-topology-tabs" x-show="aiSuggestion" x-cloak aria-label="Chọn sơ đồ mạng">
-                <button type="button" :class="{ active: topologyView === 'ai' }" @click="topologyView = 'ai'">Sơ đồ từ Chat AI</button>
-                <button type="button" :class="{ active: topologyView === 'project' }" @click="topologyView = 'project'">Sơ đồ project</button>
-              </nav>
-              <template x-if="aiSuggestion">
-                <figure class="ai-diagram-card project-ai-diagram-card" x-show="topologyView === 'ai'">
-                  <figcaption>
-                    <strong x-text="aiSuggestion.diagram.title"></strong>
-                    <span class="hint">Đồng bộ từ gợi ý trong Chat · chỉ là sơ đồ đề xuất</span>
-                  </figcaption>
-                  <div class="ai-diagram-scroll" tabindex="0" aria-label="Sơ đồ AI gợi ý, cuộn ngang để xem đầy đủ"
-                       x-html="networkDiagram(aiSuggestion.diagram)"></div>
-                  <p class="hint" x-text="aiSuggestion.explanation"></p>
-                  <p class="hint">Sơ đồ này phản ánh đúng gợi ý trong chat; nó chưa thay đổi sơ đồ project hoặc thiết bị PNETLab.</p>
-                </figure>
-              </template>
+              <figure class="ai-diagram-card project-ai-diagram-card" x-show="aiSuggestion" x-cloak>
+                <figcaption>
+                  <strong x-text="aiSuggestion && aiSuggestion.diagram.title"></strong>
+                  <span class="hint">Sơ đồ gợi ý đồng bộ từ Chat</span>
+                </figcaption>
+                <div class="ai-diagram-scroll" tabindex="0" aria-label="Sơ đồ AI gợi ý, cuộn ngang để xem đầy đủ"
+                     x-html="aiSuggestion ? networkDiagram(aiSuggestion.diagram) : ''"></div>
+                <p class="hint" x-text="aiSuggestion && aiSuggestion.explanation"></p>
+                <div class="row-actions project-ai-actions">
+                  <button type="button" class="primary-btn" x-show="canEdit && aiSuggestion && !aiSuggestion.imported"
+                          :disabled="aiImportBusy" @click="importChatDiagram()">
+                    <span x-text="aiImportBusy ? 'Đang thêm vào sơ đồ…' : 'Thêm vào sơ đồ project để chỉnh sửa'"></span>
+                  </button>
+                  <button type="button" class="primary-btn" x-show="!canEdit && canCreateProject"
+                          :disabled="aiImportBusy" @click="copyChatDiagramToNewProject()">
+                    <span x-text="aiImportBusy ? 'Đang tạo project…' : 'Tạo project riêng để chỉnh sửa sơ đồ này'"></span>
+                  </button>
+                  <span class="ok-text" x-show="aiSuggestion && aiSuggestion.imported">Sơ đồ này đã có trong canvas project.</span>
+                  <span class="hint" x-show="!canEdit && !canCreateProject">Project đang ở chế độ chỉ xem. Hãy nhờ chủ project cấp quyền chỉnh sửa.</span>
+                  <span class="hint" x-show="!canEdit && canCreateProject">Bạn chỉ có quyền xem project nguồn; có thể tạo một project riêng để chỉnh sửa bản sao.</span>
+                </div>
+              </figure>
               <p class="hint" x-show="aiSuggestionLoading" x-cloak>Đang tải sơ đồ gợi ý từ Chat…</p>
               <p class="error-text" x-show="aiSuggestionError" x-text="aiSuggestionError"></p>
-              <div x-show="(!aiSuggestion && !aiSuggestionLoading) || topologyView === 'project'" x-cloak>
+              <div class="card project-ai-empty" x-show="!aiSuggestion && !aiSuggestionLoading" x-cloak>
+                <strong>Chưa có sơ đồ AI trong cuộc chat của project này.</strong>
+                <p class="hint">Mở Chat, chọn project hiện tại và yêu cầu AI đề xuất sơ đồ. Sơ đồ sẽ xuất hiện tại đây.</p>
+                <a class="primary-btn" href="/">Mở Chat</a>
+              </div>
               <div class="section-bar">
                 <h3>Sơ đồ mạng</h3>
                 <div class="row-actions">
@@ -490,9 +500,9 @@
                         <template x-if="props.managed">
                           <label>IP quản trị <input type="text" x-model="props.management_ip" :disabled="!canEdit" :placeholder="props.lifecycle === 'planned' ? 'điền khi triển khai' : ''" /></label>
                         </template>
+                        <label>IP dữ liệu / AI đề xuất <input type="text" x-model="props.data_ip" :disabled="!canEdit" placeholder="vd 10.10.0.1/24" /></label>
                         <template x-if="!props.managed">
                           <div class="subfields">
-                            <label>IP dữ liệu <input type="text" x-model="props.data_ip" :disabled="!canEdit" placeholder="vd 10.100.1.10" /></label>
                             <label>Gateway <input type="text" x-model="props.data_gateway" :disabled="!canEdit" placeholder="vd 10.100.1.1" /></label>
                           </div>
                         </template>
@@ -709,7 +719,6 @@
                 <p class="ok-text" x-show="previewNotice">
                   <span x-text="previewNotice"></span> <a href="/">Mở trang Chat</a>
                 </p>
-              </div>
               </div>
             </section>
 
