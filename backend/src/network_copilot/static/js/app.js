@@ -147,39 +147,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     networkDiagram(diagram) {
-      if (!diagram || !Array.isArray(diagram.nodes) || !Array.isArray(diagram.links)) return "";
-      const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
-        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-      const kinds = ["internet", "firewall", "router", "switch", "server", "host"];
-      const names = { internet: "Internet", firewall: "Firewall", router: "Router", switch: "Switch", server: "Server", host: "Thiết bị đầu cuối" };
-      const nodes = diagram.nodes.slice(0, 16).filter((n) => n && kinds.includes(n.kind));
-      const rows = kinds.map((kind) => nodes.filter((n) => n.kind === kind)).filter((row) => row.length);
-      const circular = rows.length === 1 && nodes.length > 2;
-      const radius = Math.max(160, nodes.length * 30);
-      const width = circular ? radius * 2 + 180 : Math.max(480, ...rows.map((row) => row.length * 180));
-      const height = circular ? radius * 2 + 100 : Math.max(180, rows.length * 120);
-      const positions = new Map();
-      if (circular) {
-        nodes.forEach((n, i) => {
-          const angle = -Math.PI / 2 + 2 * Math.PI * i / nodes.length;
-          positions.set(n.id, { x: width / 2 + radius * Math.cos(angle), y: height / 2 + radius * Math.sin(angle) });
-        });
-      } else {
-        rows.forEach((row, y) => row.forEach((n, x) => positions.set(n.id, {
-          x: width * (x + 0.5) / row.length, y: y * 120 + 60,
-        })));
-      }
-      const edges = diagram.links.slice(0, 32).map((link) => {
-        if (!link) return "";
-        const a = positions.get(link.source), b = positions.get(link.target);
-        if (!a || !b) return "";
-        return `<g><line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><text class="diagram-link-label" x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2 - 7}" text-anchor="middle">${escape(link.label)}</text></g>`;
-      }).join("");
-      const vertices = nodes.map((node) => {
-        const { x, y } = positions.get(node.id);
-        return `<g><title>${escape(node.label)}</title><rect x="${x - 76}" y="${y - 27}" width="152" height="54" rx="10"/><text x="${x}" y="${y - 4}" text-anchor="middle">${escape(String(node.label).slice(0, 20))}</text><text class="diagram-kind" x="${x}" y="${y + 16}" text-anchor="middle">${names[node.kind]}</text></g>`;
-      }).join("");
-      return `<svg class="ai-network-diagram" style="min-width:${width}px" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escape(diagram.title)}">${edges}${vertices}</svg>`;
+      return window.NCDiagram ? window.NCDiagram.render(diagram) : "";
     },
 
     topologyPreview(option) {

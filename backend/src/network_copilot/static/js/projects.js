@@ -130,6 +130,14 @@ document.addEventListener("alpine:init", () => {
       const stored = localStorage.getItem("nc_project_id");
       return stored ? Number(stored) : null;
     })(),
+    chatSessionId: (() => {
+      const params = new URLSearchParams(window.location.search);
+      const requested = Number(params.get("session_id"));
+      const stored = Number(localStorage.getItem("nc_session_id"));
+      return Number.isInteger(requested) && requested > 0
+        ? requested
+        : Number.isInteger(stored) && stored > 0 ? stored : null;
+    })(),
     projectForm: {
       name: "",
       description: "",
@@ -139,6 +147,10 @@ document.addEventListener("alpine:init", () => {
     settingsForm: null,
     projectError: "",
     projectNotice: "",
+    aiSuggestion: null,
+    aiSuggestionLoading: false,
+    aiSuggestionError: "",
+    topologyView: "ai",
     tab: new URLSearchParams(window.location.search).get("tab") === "topology" ? "topology" : "devices",
 
     // -- devices --
@@ -433,6 +445,9 @@ document.addEventListener("alpine:init", () => {
       this.deviceNotice = "";
       this.deviceUndoable = false;
       this.topologyError = "";
+      this.aiSuggestion = null;
+      this.aiSuggestionError = "";
+      this.aiSuggestionLoading = false;
       this.shareError = "";
       this.projectError = "";
       this.projectNotice = "";
@@ -453,6 +468,7 @@ document.addEventListener("alpine:init", () => {
 
     async loadProjectData() {
       const projectId = this.currentProjectId;
+      const aiSuggestionTask = this.loadAiSuggestion();
       await this.loadDevices();
       if (projectId !== this.currentProjectId) return;
       await this.loadTopology();
@@ -462,6 +478,8 @@ document.addEventListener("alpine:init", () => {
       await this.loadDesign();
       if (projectId !== this.currentProjectId) return;
       await this.loadMembers();
+      if (projectId !== this.currentProjectId) return;
+      await aiSuggestionTask;
     },
 
     async createProject() {
@@ -1017,6 +1035,32 @@ document.addEventListener("alpine:init", () => {
 
     topologyUrl(suffix = "") {
       return `/api/projects/${this.currentProjectId}/topology${suffix}`;
+    },
+
+    networkDiagram(diagram) {
+      return window.NCDiagram ? window.NCDiagram.render(diagram) : "";
+    },
+
+    async loadAiSuggestion() {
+      const projectId = this.currentProjectId;
+      if (!projectId) {
+        this.aiSuggestion = null;
+        return;
+      }
+      this.aiSuggestionLoading = true;
+      this.aiSuggestionError = "";
+      try {
+        const params = this.chatSessionId ? `?session_id=${this.chatSessionId}` : "";
+        const data = await this.authFetch(this.topologyUrl(`/ai-suggestion${params}`));
+        if (projectId === this.currentProjectId) this.aiSuggestion = data.suggestion || null;
+      } catch (err) {
+        if (projectId === this.currentProjectId) {
+          this.aiSuggestion = null;
+          this.aiSuggestionError = this.describeError(err);
+        }
+      } finally {
+        if (projectId === this.currentProjectId) this.aiSuggestionLoading = false;
+      }
     },
 
     async loadTopology() {

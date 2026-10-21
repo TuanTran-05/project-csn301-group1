@@ -1,8 +1,9 @@
 from collections.abc import Iterable
+import ipaddress
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AIOperation(BaseModel):
@@ -24,12 +25,48 @@ class DiagramNode(BaseModel):
     id: str = Field(min_length=1, max_length=40)
     label: str = Field(min_length=1, max_length=60)
     kind: Literal["internet", "router", "firewall", "switch", "server", "host"]
+    ip_addresses: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("ip_addresses")
+    @classmethod
+    def validate_ip_addresses(cls, addresses: list[str]) -> list[str]:
+        for address in addresses:
+            try:
+                ipaddress.ip_interface(address)
+            except ValueError as exc:
+                raise ValueError(f"{address!r} is not a valid IP address or interface") from exc
+        return addresses
 
 
 class DiagramLink(BaseModel):
     source: str
     target: str
     label: str = Field(default="", max_length=80)
+    network: str | None = Field(default=None, max_length=43)
+    ip_source: str | None = Field(default=None, max_length=45)
+    ip_target: str | None = Field(default=None, max_length=45)
+
+    @field_validator("network")
+    @classmethod
+    def validate_network(cls, network: str | None) -> str | None:
+        if network is None:
+            return None
+        try:
+            ipaddress.ip_network(network, strict=False)
+        except ValueError as exc:
+            raise ValueError("network must be a valid IP network") from exc
+        return network
+
+    @field_validator("ip_source", "ip_target")
+    @classmethod
+    def validate_endpoint_ip(cls, address: str | None) -> str | None:
+        if address is None:
+            return None
+        try:
+            ipaddress.ip_interface(address)
+        except ValueError as exc:
+            raise ValueError(f"{address!r} is not a valid IP address or interface") from exc
+        return address
 
 
 class NetworkDiagram(BaseModel):
@@ -110,6 +147,7 @@ def diagram_schema() -> dict:
                             "type": "string",
                             "enum": ["internet", "router", "firewall", "switch", "server", "host"],
                         },
+                        "ip_addresses": {"type": "array", "items": {"type": "string"}},
                     },
                 },
             },
@@ -122,6 +160,9 @@ def diagram_schema() -> dict:
                         "source": {"type": "string"},
                         "target": {"type": "string"},
                         "label": {"type": "string"},
+                        "network": {"type": "string"},
+                        "ip_source": {"type": "string"},
+                        "ip_target": {"type": "string"},
                     },
                 },
             },

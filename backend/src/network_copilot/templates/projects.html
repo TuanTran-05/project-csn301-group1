@@ -41,7 +41,7 @@
         </div>
         <a class="nav-link nav-projects" href="/projects" aria-current="page">Projects</a>
         <a class="nav-link nav-topology"
-           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-account" href="/users">Tài khoản</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/">Chat</a>
@@ -312,6 +312,25 @@
 
             <!-- ---------- Topology ---------- -->
             <section x-show="tab === 'topology'" x-cloak>
+              <nav class="tabs ai-topology-tabs" x-show="aiSuggestion" x-cloak aria-label="Chọn sơ đồ mạng">
+                <button type="button" :class="{ active: topologyView === 'ai' }" @click="topologyView = 'ai'">Sơ đồ từ Chat AI</button>
+                <button type="button" :class="{ active: topologyView === 'project' }" @click="topologyView = 'project'">Sơ đồ project</button>
+              </nav>
+              <template x-if="aiSuggestion">
+                <figure class="ai-diagram-card project-ai-diagram-card" x-show="topologyView === 'ai'">
+                  <figcaption>
+                    <strong x-text="aiSuggestion.diagram.title"></strong>
+                    <span class="hint">Đồng bộ từ gợi ý trong Chat · chỉ là sơ đồ đề xuất</span>
+                  </figcaption>
+                  <div class="ai-diagram-scroll" tabindex="0" aria-label="Sơ đồ AI gợi ý, cuộn ngang để xem đầy đủ"
+                       x-html="networkDiagram(aiSuggestion.diagram)"></div>
+                  <p class="hint" x-text="aiSuggestion.explanation"></p>
+                  <p class="hint">Sơ đồ này phản ánh đúng gợi ý trong chat; nó chưa thay đổi sơ đồ project hoặc thiết bị PNETLab.</p>
+                </figure>
+              </template>
+              <p class="hint" x-show="aiSuggestionLoading" x-cloak>Đang tải sơ đồ gợi ý từ Chat…</p>
+              <p class="error-text" x-show="aiSuggestionError" x-text="aiSuggestionError"></p>
+              <div x-show="(!aiSuggestion && !aiSuggestionLoading) || topologyView === 'project'" x-cloak>
               <div class="section-bar">
                 <h3>Sơ đồ mạng</h3>
                 <div class="row-actions">
@@ -691,6 +710,7 @@
                 <p class="ok-text" x-show="previewNotice">
                   <span x-text="previewNotice"></span> <a href="/">Mở trang Chat</a>
                 </p>
+              </div>
               </div>
             </section>
 
@@ -1084,6 +1104,7 @@
     </div>
   </div>
 
+  <script defer src="{{ url_for('static', filename='js/network_diagram.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/design_aids.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
