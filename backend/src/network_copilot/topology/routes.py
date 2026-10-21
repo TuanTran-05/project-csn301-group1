@@ -1,11 +1,13 @@
 from flask import Blueprint, jsonify, request
-
 from flask_jwt_extended import jwt_required
+from pydantic import ValidationError as PydanticValidationError
 
+from ..ai.schemas import NetworkDiagram
 from ..audit.service import record_event
 from ..auth.service import current_user
+from ..chat.model import ChatMessage, ChatSession
+from ..extensions import db, limiter
 from ..projects import service as project_service
-from ..extensions import limiter
 from . import blueprints, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
@@ -22,6 +24,42 @@ def _project(project_id: int, need: str):
     project = project_service.require_project(current_user(), project_id, need)
     g.project_id = project.id
     return project
+
+
+@bp.get("/ai-suggestion")
+@jwt_required()
+def latest_ai_suggestion(project_id: int):
+    """Read the latest diagram suggested in a project chat session."""
+    project = _project(project_id, "viewer")
+    session_id = request.args.get("session_id", type=int)
+    messages = (
+        db.session.query(ChatMessage)
+        .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+        .filter(ChatSession.project_id == project.id, ChatMessage.role == "assistant")
+    )
+    if session_id and db.session.query(ChatSession.id).filter_by(
+        id=session_id, project_id=project.id
+    ).scalar() is not None:
+        messages = messages.filter(ChatMessage.session_id == session_id)
+
+    for message in messages.order_by(ChatMessage.id.desc()).limit(500):
+        payload = message.payload if isinstance(message.payload, dict) else {}
+        raw_diagram = payload.get("diagram")
+        if not isinstance(raw_diagram, dict):
+            continue
+        try:
+            diagram = NetworkDiagram.model_validate(raw_diagram).model_dump()
+        except PydanticValidationError:
+            continue
+        return jsonify({
+            "suggestion": {
+                "message_id": message.id,
+                "session_id": message.session_id,
+                "explanation": message.content,
+                "diagram": diagram,
+            }
+        }), 200
+    return jsonify({"suggestion": None}), 200
 
 
 @bp.get("")

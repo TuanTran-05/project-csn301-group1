@@ -1521,7 +1521,12 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .ai-network-diagram text { fill: var(--text); font: 12px system-ui, sans-serif; }
 .ai-network-diagram .diagram-kind { fill: var(--text-muted); font-size: 10px; }
 .ai-network-diagram .diagram-link-label { paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; font-size: 11px; }
+.ai-network-diagram .diagram-address,
+.ai-network-diagram .diagram-link-address { fill: var(--accent); font-size: 10px; }
 .ai-diagram-card summary { cursor: pointer; }
+.project-ai-diagram-card { margin: 0 0 16px; }
+.project-ai-diagram-card > .hint { line-height: 1.5; }
+.ai-topology-tabs { margin-top: 0; }
 .ai-config-card { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
 .ai-config-card h4 { margin: 0 0 8px; }
 .ai-config-card summary { cursor: pointer; }

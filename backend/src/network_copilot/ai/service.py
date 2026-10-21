@@ -123,7 +123,9 @@ DIAGRAM_PROMPT = """
 When suggesting a network design, connections, or a networking example, always
 include one concrete illustrative diagram consistent with your explanation.
 Use diagram: {"title": "...", "nodes": [{"id": "r1", "label": "Router",
-"kind": "router"}], "links": [{"source": "r1", "target": "sw1", "label": "Trunk"}]}.
+"kind": "router", "ip_addresses": ["10.0.0.1/24"]}], "links": [{"source": "r1",
+"target": "sw1", "label": "Trunk", "network": "10.0.0.0/24",
+"ip_source": "10.0.0.1/24", "ip_target": "10.0.0.2/24"}]}.
 Kinds: internet, router, firewall, switch, server, host. Use 2-16 nodes and
 1-32 links; every link must reference existing unique node IDs. Group large
 sets of endpoints into labelled nodes. Use project device names when relevant.
@@ -133,9 +135,15 @@ in the supplied project topology that needs configuration, also include one
 entry in configurations with its exact project hostname, device_type, and an
 ordered list of configuration-mode commands; that hostname must exactly match
 the id or label of a diagram node. These are downloadable lab
-proposals, never execute them or include credentials, secrets,
-management IPs, reloads, or destructive reset commands. Prefer short, complete
-snippets that match the suggested diagram. Return an empty configurations list
+proposals, never execute them or include credentials, secrets, management IPs
+from device inventory, reloads, or destructive reset commands. Include
+user-provided device/interface IP addresses in the matching node's ip_addresses
+and routed-link network/IPs in the matching link fields. Propose new addresses
+only when an IP plan is part of the request, and label those addresses as
+proposed in the explanation. Keep all addresses identical across the diagram,
+explanation, and configuration commands; never claim a proposed address is
+already in use. Prefer short, complete snippets that match the suggested
+diagram. Return an empty configurations list
 when the request is conceptual or there are no matching Cisco devices. For
 greetings or answers that do not benefit from a network diagram, omit diagram.
 """

@@ -1,6 +1,8 @@
 import pytest
 
 from network_copilot.changes.model import ChangeBatch
+from network_copilot.chat.service import record_message
+from network_copilot.chat.session_service import create_session
 from network_copilot.extensions import db
 from network_copilot.topology.model import TopologyLink
 
@@ -23,6 +25,83 @@ def test_topology_lists_devices_and_links(client, admin_headers, base, lab):
     link = body["links"][0]
     assert (link["hostname_a"], link["hostname_b"]) == ("R1", "SW1")
     assert link["link_type"] == "physical"
+
+
+def test_ai_suggestion_matches_the_requested_chat_session(
+    client, viewer_headers, admin_user, project, base
+):
+    first = create_session(project.id, created_by_id=admin_user.id)
+    second = create_session(project.id, created_by_id=admin_user.id)
+    record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "R1 connects to SW1.",
+        {"diagram": {
+            "title": "Chat topology",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router", "ip_addresses": ["10.10.0.1/24"]},
+                {"id": "sw1", "label": "SW1", "kind": "switch", "ip_addresses": ["10.10.0.2/24"]},
+            ],
+            "links": [{"source": "r1", "target": "sw1", "network": "10.10.0.0/24"}],
+        }},
+        session_id=first.id,
+        project_id=project.id,
+    )
+    record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Another topology.",
+        {"diagram": {
+            "title": "Other session",
+            "nodes": [
+                {"id": "r2", "label": "R2", "kind": "router"},
+                {"id": "sw2", "label": "SW2", "kind": "switch"},
+            ],
+            "links": [{"source": "r2", "target": "sw2"}],
+        }},
+        session_id=second.id,
+        project_id=project.id,
+    )
+
+    response = client.get(
+        f"{base}/ai-suggestion?session_id={first.id}", headers=viewer_headers
+    )
+
+    assert response.status_code == 200
+    suggestion = response.get_json()["suggestion"]
+    assert suggestion["message_id"] is not None
+    assert suggestion["diagram"]["title"] == "Chat topology"
+    assert suggestion["diagram"]["nodes"][0]["ip_addresses"] == ["10.10.0.1/24"]
+    assert suggestion["diagram"]["links"][0]["network"] == "10.10.0.0/24"
+
+
+def test_ai_suggestion_ignores_invalid_saved_diagrams(client, admin_headers, admin_user, project, base):
+    session = create_session(project.id, created_by_id=admin_user.id)
+    record_message(
+        admin_user.id,
+        admin_user.username,
+        "assistant",
+        "Invalid address.",
+        {"diagram": {
+            "title": "Invalid",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router", "ip_addresses": ["not-an-ip"]},
+                {"id": "sw1", "label": "SW1", "kind": "switch"},
+            ],
+            "links": [{"source": "r1", "target": "sw1"}],
+        }},
+        session_id=session.id,
+        project_id=project.id,
+    )
+
+    response = client.get(
+        f"{base}/ai-suggestion?session_id={session.id}", headers=admin_headers
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["suggestion"] is None
 
 
 def test_layout_is_saved_per_device(client, admin_headers, base, lab):
