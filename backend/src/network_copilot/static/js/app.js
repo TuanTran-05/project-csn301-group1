@@ -73,6 +73,13 @@ document.addEventListener("alpine:init", () => {
     topologyChoiceError: "",
     chatConfigBusy: false,
     chatConfigError: "",
+    // "Thiết kế mạng" mode: the next messages ask the AI for a whole L2/L3
+    // design of the current project instead of a normal answer.
+    designMode: (() => {
+      try { return localStorage.getItem("nc_design_mode") === "1"; } catch { return false; }
+    })(),
+    designBusy: false,
+    designError: "",
     sessions: [],
     // A per-browser bookmark of which shared session this browser was last
     // looking at (see the design spec: sessions are shared team data, but
@@ -86,6 +93,13 @@ document.addEventListener("alpine:init", () => {
     // Starter prompts built from this project's real devices, so a new chat
     // is never a blank box.
     get suggestions() {
+      if (this.designMode) {
+        return [
+          "Chia mạng thành 3 VLAN: Kế toán, Kỹ thuật, Khách; gateway trên switch lõi",
+          "Dùng dải 192.168.0.0/16 và chạy OSPF giữa các router",
+          "Thêm VLAN 99 để quản trị thiết bị",
+        ];
+      }
       if (this.currentUser && this.currentUser.role === "OPERATOR") {
         return ["Tạo project mới", "Gợi ý sơ đồ và file cấu hình cho các thiết bị trong lab"];
       }
@@ -205,6 +219,71 @@ document.addEventListener("alpine:init", () => {
         batch.requested_by_id === this.currentUser?.id &&
         this.currentUser && ["OPERATOR", "VIEWER"].includes(this.currentUser.role)
       );
+    },
+
+    toggleDesignMode() {
+      this.designMode = !this.designMode;
+      try { localStorage.setItem("nc_design_mode", this.designMode ? "1" : "0"); } catch { /* optional */ }
+      this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
+    },
+
+    get canApplyDesign() {
+      return Boolean(
+        this.currentProject && ["owner", "editor"].includes(this.currentProject.access) &&
+        this.currentUser && this.currentUser.role !== "VIEWER"
+      );
+    },
+
+    // One row per VLAN: where its gateway lives and which ports are in it.
+    designVlanRows(design) {
+      const gateways = (vlan) => [
+        ...design.svis.filter((s) => s.vlan_id === vlan).map((s) => `${s.hostname} ${s.ip}/${s.prefix_length}`),
+        ...design.subinterfaces.filter((s) => s.vlan_id === vlan)
+          .map((s) => `${s.hostname} ${s.interface}.${s.vlan_id} ${s.ip}/${s.prefix_length}`),
+      ].join(", ");
+      const ports = (vlan) => design.access_ports.filter((p) => p.vlan_id === vlan)
+        .map((p) => `${p.hostname} ${p.interface.replace("GigabitEthernet", "Gi")}`).join(", ");
+      return design.vlans.map((v) => ({ vlan_id: v.vlan_id, name: v.name, gateways: gateways(v.vlan_id), ports: ports(v.vlan_id) }));
+    },
+
+    designRoutingLines(design) {
+      const lines = [];
+      if (design.ospf.length) lines.push(`OSPF area 0 trên ${design.ospf.map((o) => o.hostname).join(", ")}`);
+      for (const r of design.routes) lines.push(`Route tĩnh ${r.hostname}: ${r.network} qua ${r.next_hop}`);
+      for (const l of design.loopbacks) lines.push(`${l.hostname} Loopback${l.number}: ${l.ip}`);
+      return lines;
+    },
+
+    designChangeText(changes) {
+      const labels = { vlans: "VLAN", access_ports: "cổng access", svis: "gateway (SVI)", loopbacks: "loopback",
+        subinterfaces: "subinterface", routes: "route tĩnh", ospf: "OSPF" };
+      const parts = [];
+      for (const [key, label] of Object.entries(labels)) {
+        const c = (changes || {})[key];
+        if (!c) continue;
+        if (c.added) parts.push(`+${c.added} ${label}`);
+        if (c.removed) parts.push(`−${c.removed} ${label}`);
+      }
+      return parts.length ? `Thay đổi so với hiện tại: ${parts.join(", ")}.` : "Không thay đổi so với thiết kế hiện tại.";
+    },
+
+    async applyChatDesign(message) {
+      const messageId = this.savedChatMessageId(message);
+      if (!messageId || this.designBusy) {
+        this.designError = "Không tìm thấy tin nhắn thiết kế đã lưu.";
+        return;
+      }
+      if (!window.confirm("Áp dụng thiết kế này cho project? Thiết kế hiện tại sẽ được lưu thành một phiên bản tự động để có thể khôi phục.")) return;
+      this.designBusy = true;
+      this.designError = "";
+      try {
+        const result = await this.authFetch(`/api/chat/messages/${messageId}/apply-design`, { method: "POST", body: "{}" });
+        message.payload = { ...message.payload, ...result.payload };
+      } catch (error) {
+        this.designError = error.message || "Không áp dụng được thiết kế.";
+      } finally {
+        this.designBusy = false;
+      }
     },
 
     async downloadChatConfigurations(message, alreadyApproved = false) {
@@ -1301,6 +1380,7 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify({
             message: text,
             session_id: this.currentSessionId,
+            ...(this.designMode ? { mode: "design" } : {}),
           }),
         });
         if (generation !== this._messagesRefreshGeneration) return;

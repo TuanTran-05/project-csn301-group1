@@ -164,6 +164,46 @@
                 </section>
               </template>
 
+              <template x-if="message.role === 'assistant' && message.payload && message.payload.flow === 'design_proposal' && message.payload.design">
+                <section class="ai-config-card ai-design-card">
+                  <h4>Thiết kế L2/L3 đề xuất</h4>
+                  <p class="hint" x-text="designChangeText(message.payload.changes)"></p>
+                  <table class="design-summary" x-show="message.payload.design.vlans.length">
+                    <thead><tr><th>VLAN</th><th>Mạng / gateway</th><th>Cổng access</th></tr></thead>
+                    <tbody>
+                      <template x-for="row in designVlanRows(message.payload.design)" :key="row.vlan_id">
+                        <tr>
+                          <td x-text="row.vlan_id + ' · ' + row.name"></td>
+                          <td x-text="row.gateways || '—'"></td>
+                          <td x-text="row.ports || '—'"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                  <ul class="design-routing" x-show="designRoutingLines(message.payload.design).length">
+                    <template x-for="line in designRoutingLines(message.payload.design)" :key="line">
+                      <li x-text="line"></li>
+                    </template>
+                  </ul>
+                  <p class="hint" x-show="message.payload.addressing_pool" x-text="'Dải địa chỉ của project: ' + message.payload.addressing_pool"></p>
+                  <template x-if="!message.payload.applied">
+                    <div class="design-actions">
+                      <button type="button" class="primary-btn" x-show="canApplyDesign" :disabled="designBusy"
+                        @click="applyChatDesign(message)">
+                        <span x-text="designBusy ? 'Đang áp dụng…' : 'Áp dụng thiết kế' "></span>
+                      </button>
+                      <p class="hint" x-show="!canApplyDesign">Chỉ chủ project hoặc người có quyền sửa mới áp dụng được thiết kế.</p>
+                    </div>
+                  </template>
+                  <p class="ok-text" x-show="message.payload.applied">
+                    Đã áp dụng. Thiết kế cũ được lưu thành một phiên bản tự động.
+                    Mở <a href="/projects">Sơ đồ mạng</a> để xem trước cấu hình và gửi đi duyệt.
+                  </p>
+                  <p class="hint">Muốn chỉnh? Nhắn tiếp, ví dụ “đổi VLAN 20 sang 10.20.0.0/24”.</p>
+                  <p class="error-text" x-show="designError" x-text="designError"></p>
+                </section>
+              </template>
+
               <template x-if="message.payload && message.payload.flow === 'topology_options'">
                 <div class="topology-choice-list">
                   <template x-for="option in message.payload.options" :key="option.key">
@@ -477,6 +517,9 @@
           <span class="dots"><i></i><i></i><i></i></span> AI đang xử lý…
         </div>
         <form class="chat-input" @submit.prevent="sendMessage()">
+          <button type="button" class="mode-toggle" :class="{ active: designMode }" :aria-pressed="designMode"
+            @click="toggleDesignMode()" :disabled="noProject"
+            title="Bật để AI thiết kế VLAN, IP, gateway và định tuyến cho project">Thiết kế mạng</button>
           <label class="sr-only" for="chat-message">Tin nhắn cho AI Tool</label>
           <textarea
             id="chat-message"
@@ -486,7 +529,7 @@
             :disabled="sending || noProject"
             @keydown="onComposerKeydown($event)"
             @input="autoGrow($event.target)"
-            placeholder="Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước"
+            :placeholder="designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
           ></textarea>
           <button type="submit" :disabled="sending || noProject || !draftMessage.trim()">Gửi</button>
         </form>

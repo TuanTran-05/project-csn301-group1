@@ -940,6 +940,20 @@ a:focus-visible {
   cursor: pointer;
 }
 
+.chat-input .mode-toggle {
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.chat-input .mode-toggle.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
 .chat-input button:disabled,
 .chat-input input:disabled,
 .chat-input textarea:disabled {
@@ -1657,3 +1671,32 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .ai-config-card summary { cursor: pointer; }
 .ai-config-device { margin-top: 12px; }
 .ai-config-device pre { max-height: 240px; overflow: auto; padding: 10px; border-radius: 8px; background: var(--bg); white-space: pre-wrap; }
+
+.ai-design-card .design-summary { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.ai-design-card .design-summary th,
+.ai-design-card .design-summary td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.ai-design-card .design-routing { margin: 8px 0; padding-left: 18px; font-size: 13px; }
+.ai-design-card .design-actions { margin: 10px 0 4px; }
+@media (max-width: 600px) {
+  .chat-input { flex-wrap: wrap; }
+  .chat-input .mode-toggle { order: -1; }
+  .ai-design-card .design-summary { display: block; overflow-x: auto; }
+}
+
+.design-ai-cta p { margin: 0 0 10px; }
+.design-ai-cta a.primary-btn { display: inline-block; text-decoration: none; padding: 8px 14px; border: 1px solid var(--accent); border-radius: 6px; }
+.design-manual { margin-top: 12px; }
+.design-manual > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.ai-design-card .primary-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  cursor: pointer;
+}
+.ai-design-card .primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.ai-design-card a { color: var(--accent); }
+.design-ai-cta p,
+.design-summary-list { font-size: 14px; }
