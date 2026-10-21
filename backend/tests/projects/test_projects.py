@@ -268,6 +268,15 @@ def test_users_page_is_served(client):
     assert "js/users.js" in html
 
 
+def test_primary_pages_show_account_menu_instead_of_account_navigation(client):
+    for path in ("/", "/projects", "/dashboard", "/users"):
+        html = client.get(path).get_data(as_text=True)
+        assert "Thông tin tài khoản" in html
+        assert "Đổi mật khẩu" in html
+        assert "js/account_menu.js" in html
+        assert 'class="nav-link nav-account"' not in html
+
+
 def test_designer_offers_a_device_palette_and_quick_cabling(client):
     html = client.get("/projects").get_data(as_text=True)
     assert "palette-item" in html

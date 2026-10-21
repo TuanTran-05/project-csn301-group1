@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Network Copilot — Projects</title>
+  <title>AI Tool — Projects</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
 </head>
-<body x-data="projectsApp()">
+<body x-data="projectsApp()" @account-session-updated.window="token = $event.detail.access_token; currentUser = $event.detail.user">
 
   <section class="login-screen" x-show="!currentUser" x-cloak>
     <form class="login-form" @submit.prevent="login()">
-      <h1>Network Copilot</h1>
+      <h1>AI Tool</h1>
       <label>
         Tên đăng nhập
         <input type="text" x-model="loginForm.username" required autocomplete="username" />
@@ -27,7 +27,7 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">Network Copilot</span>
+      <span class="app-title">AI Tool</span>
       <nav class="top-bar-nav" aria-label="Điều hướng chính">
         <div class="top-bar-project-slot">
           <label class="project-switch" x-show="projects.length" x-cloak>
@@ -42,13 +42,9 @@
         <a class="nav-link nav-projects" href="/projects" aria-current="page">Projects</a>
         <a class="nav-link nav-topology"
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
-        <a class="nav-link nav-account" href="/users">Tài khoản</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/">Chat</a>
-        <span class="user-badge">
-          <span x-text="currentUser && currentUser.username"></span>
-          <span class="role-pill" x-text="currentUser && currentUser.role"></span>
-        </span>
+        {% include "_account_menu.html" %}
         <button class="logout-btn" @click="logout()">Đăng xuất</button>
       </nav>
     </header>
@@ -1108,6 +1104,7 @@
   <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/design_aids.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/account_menu.js') }}"></script>
   <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
 </body>
 </html>

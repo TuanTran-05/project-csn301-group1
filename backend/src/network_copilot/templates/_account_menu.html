@@ -1,0 +1,60 @@
+<div class="account-menu"
+     x-data="accountMenu()"
+     @mouseenter="open = true"
+     @mouseleave="open = false"
+     @focusin="open = true"
+     @focusout="if (!$el.contains($event.relatedTarget)) open = false"
+     @click.outside="open = false"
+     @keydown.escape.window="open = false">
+  <button type="button" class="user-menu-trigger user-badge"
+          aria-controls="user-menu-panel"
+          :aria-expanded="open"
+          @click="open = true">
+    <span x-text="currentUser && currentUser.username"></span>
+    <span class="role-pill" x-text="currentUser && currentUser.role"></span>
+    <span class="user-menu-caret" aria-hidden="true">▾</span>
+  </button>
+
+  <section id="user-menu-panel" class="user-menu-panel" aria-label="Thông tin và cài đặt tài khoản" x-show="open" x-transition x-cloak>
+    <div class="user-menu-heading">
+      <strong x-text="currentUser && (currentUser.display_name || currentUser.full_name || currentUser.username)"></strong>
+      <span>Thông tin tài khoản</span>
+    </div>
+    <dl class="user-menu-details">
+      <dt>Tên đăng nhập</dt>
+      <dd x-text="currentUser && currentUser.username"></dd>
+      <dt>Họ tên</dt>
+      <dd x-text="currentUser && (currentUser.full_name || 'Chưa cập nhật')"></dd>
+      <dt>Email</dt>
+      <dd x-text="currentUser && (currentUser.email || 'Chưa cập nhật')"></dd>
+      <dt>Vai trò</dt>
+      <dd x-text="currentUser && currentUser.role"></dd>
+      <dt>Trạng thái</dt>
+      <dd x-text="currentUser && (currentUser.is_active ? 'Đang hoạt động' : 'Đã vô hiệu hoá')"></dd>
+      <dt>Ngày tạo</dt>
+      <dd x-text="currentUser && currentUser.created_at ? new Date(currentUser.created_at).toLocaleDateString('vi-VN') : '—'"></dd>
+    </dl>
+
+    <a class="user-menu-admin-link" href="/users" x-show="currentUser && currentUser.role === 'ADMIN'" x-cloak>
+      Quản lý người dùng
+    </a>
+
+    <button type="button" class="user-menu-password-toggle" @click="passwordOpen = !passwordOpen; passwordError = ''; passwordNotice = ''">
+      <span x-text="passwordOpen ? 'Ẩn đổi mật khẩu' : 'Đổi mật khẩu'"></span>
+    </button>
+    <form class="user-menu-password-form" x-show="passwordOpen" x-cloak @submit.prevent="changePassword()">
+      <label>Mật khẩu hiện tại
+        <input type="password" x-model="passwordForm.current_password" required autocomplete="current-password" />
+      </label>
+      <label>Mật khẩu mới (ít nhất 10 ký tự)
+        <input type="password" x-model="passwordForm.new_password" required minlength="10" autocomplete="new-password" />
+      </label>
+      <label>Nhập lại mật khẩu mới
+        <input type="password" x-model="passwordForm.repeat" required minlength="10" autocomplete="new-password" />
+      </label>
+      <p class="error-text" x-show="passwordError" x-text="passwordError" aria-live="polite"></p>
+      <p class="ok-text" x-show="passwordNotice" x-text="passwordNotice" aria-live="polite"></p>
+      <button type="submit" class="primary-btn">Cập nhật mật khẩu</button>
+    </form>
+  </section>
+</div>

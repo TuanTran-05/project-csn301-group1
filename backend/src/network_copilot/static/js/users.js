@@ -21,9 +21,6 @@ document.addEventListener("alpine:init", () => {
     editing: null, // copy of the user being edited
     error: "",
     notice: "",
-    passwordForm: { current_password: "", new_password: "", repeat: "" },
-    passwordError: "",
-    passwordNotice: "",
 
     init() {
       if (!this.token) return;
@@ -203,29 +200,5 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
-    async changePassword() {
-      this.passwordError = "";
-      this.passwordNotice = "";
-      const form = this.passwordForm;
-      if (form.new_password !== form.repeat) {
-        this.passwordError = "Mật khẩu nhập lại không khớp.";
-        return;
-      }
-      try {
-        const data = await this.authFetch("/api/auth/change-password", {
-          method: "POST",
-          body: JSON.stringify({
-            current_password: form.current_password,
-            new_password: form.new_password,
-          }),
-        });
-        // Every older token was just revoked; keep working with the new one.
-        this.setSession(data.access_token, data.user);
-        this.passwordForm = { current_password: "", new_password: "", repeat: "" };
-        this.passwordNotice = "Đã đổi mật khẩu.";
-      } catch (err) {
-        this.passwordError = this.describeError(err);
-      }
-    },
   }));
 });
