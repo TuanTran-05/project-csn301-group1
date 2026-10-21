@@ -406,7 +406,7 @@
                   <p class="hint">Kéo thả vào sơ đồ hoặc bấm để thêm. Tên và IP được đặt tự động.</p>
                   <template x-for="tpl in templates" :key="tpl.key">
                     <button type="button" class="palette-item" draggable="true"
-                            @dragstart="onPaletteDragStart($event, tpl.key)"
+                            @dragstart="onPaletteDragStart($event, tpl.key)" @dragend="dragging = false"
                             @click="addTemplate(tpl.key)" :disabled="dropBusy">
                       <span class="palette-icon" x-html="iconSvg(tpl.key)"></span>
                       <span x-text="tpl.label"></span>
@@ -423,7 +423,7 @@
                   </details>
                 </aside>
 
-                <div class="canvas-stage" :class="{ panning: panning, 'space-pan': spaceDown }">
+                <div class="canvas-stage" :class="{ panning: panning, 'space-pan': spaceDown, dragging: dragging }">
                   <svg
                     x-ref="canvas"
                     class="topology-canvas"

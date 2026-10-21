@@ -1664,6 +1664,7 @@ document.addEventListener("alpine:init", () => {
     onPaletteDragStart(event, key) {
       event.dataTransfer.setData("text/plain", `template:${key}`);
       event.dataTransfer.effectAllowed = "copy";
+      this.dragging = true;
     },
 
     onCanvasDrop(event) {
@@ -1752,8 +1753,8 @@ document.addEventListener("alpine:init", () => {
         redo: async () => {
           const body = { template: key };
           if (point) {
-            body.x = Math.max(NODE_W / 2, Math.round(point.x));
-            body.y = Math.max(NODE_H / 2, Math.round(point.y));
+            body.x = Math.round(point.x);
+            body.y = Math.round(point.y);
           }
           if (this.placePlanned) body.planned = true;
           else if (this.defaultSsh.username && this.defaultSsh.password) body.credential = { ...this.defaultSsh };

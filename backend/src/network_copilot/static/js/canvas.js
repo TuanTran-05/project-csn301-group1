@@ -282,6 +282,7 @@
       view: { x: 0, y: 0, w: BASE_W, h: BASE_H },
       spaceDown: false,
       panning: false,
+      dragging: false,
       snap: (() => {
         try { return localStorage.getItem("nc_snap") === "1"; } catch { return false; }
       })(),
@@ -397,11 +398,15 @@
       },
 
       // Keep a point (a device just added) on screen without changing the zoom.
+      // The view only moves as far as needed, so the diagram does not jump.
       _reveal(p) {
         const v = this.view;
-        const inside = p.x - NODE_W / 2 >= v.x && p.x + NODE_W / 2 <= v.x + v.w &&
-          p.y - NODE_H / 2 >= v.y && p.y + NODE_H / 2 <= v.y + v.h;
-        if (!inside) this.setView(p.x, p.y, v.w);
+        const margin = 20;
+        const shift = (low, high, start, size) =>
+          low < start ? low - start : high > start + size ? high - start - size : 0;
+        const dx = shift(p.x - NODE_W / 2 - margin, p.x + NODE_W / 2 + margin, v.x, v.w);
+        const dy = shift(p.y - NODE_H / 2 - margin, p.y + NODE_H / 2 + margin, v.y, v.h);
+        if (dx || dy) this.view = { ...v, x: v.x + dx, y: v.y + dy };
       },
 
       _startPan(event) {
@@ -583,7 +588,7 @@
         const stepX = NODE_W + 30, stepY = NODE_H + 40;
         const at = (i, j) => {
           const s = this._snapped(p.x + i * stepX, p.y + j * stepY);
-          return { x: Math.max(NODE_W / 2, Math.round(s.x)), y: Math.max(NODE_H / 2, Math.round(s.y)) };
+          return { x: Math.round(s.x), y: Math.round(s.y) };
         };
         for (let ring = 0; ring < 12; ring++) {
           for (let j = -ring; j <= ring; j++) {
@@ -753,26 +758,54 @@
           this._linkPreviewAt(drag.id, event);
           return;
         }
+        if (!drag.moved) this.dragging = true;
         drag.moved = true;
-        const point = this._svgPoint(event);
+        this._dragTo(drag, this._svgPoint(event));
+        this._edgeScroll(drag, event);
+      },
+
+      // Devices follow the pointer anywhere on the (unbounded) canvas.
+      _dragTo(drag, point) {
+        drag.lastPoint = point;
         const dx = point.x - drag.startPoint.x;
         const dy = point.y - drag.startPoint.y;
         const current = {};
         for (const [id, origin] of Object.entries(drag.origins)) {
           const snapped = this._snapped(origin.x + dx, origin.y + dy);
-          current[id] = {
-            x: Math.max(NODE_W / 2, Math.min(4000, snapped.x)),
-            y: Math.max(NODE_H / 2, Math.min(4000, snapped.y)),
-          };
+          current[id] = { x: Math.round(snapped.x), y: Math.round(snapped.y) };
         }
         drag.current = current;
         this._patchDrag(current);
       },
 
+      // Holding a dragged device near the edge of the canvas scrolls the view,
+      // so a device is never pulled out of sight.
+      _edgeScroll(drag, event) {
+        const rect = this.$refs.canvas.getBoundingClientRect();
+        const margin = 36;
+        const side = (pos, low, high) => (pos < low + margin ? -1 : pos > high - margin ? 1 : 0);
+        drag.edge = { x: side(event.clientX, rect.left, rect.right), y: side(event.clientY, rect.top, rect.bottom) };
+        if (drag.edgeFrame || (!drag.edge.x && !drag.edge.y)) return;
+        const step = () => {
+          if (this._drag !== drag || (!drag.edge.x && !drag.edge.y)) {
+            drag.edgeFrame = 0;
+            return;
+          }
+          const speed = this.view.w / 90;
+          const sx = drag.edge.x * speed, sy = drag.edge.y * speed;
+          this.view = { ...this.view, x: this.view.x + sx, y: this.view.y + sy };
+          this._dragTo(drag, { x: drag.lastPoint.x + sx, y: drag.lastPoint.y + sy });
+          drag.edgeFrame = requestAnimationFrame(step);
+        };
+        drag.edgeFrame = requestAnimationFrame(step);
+      },
+
       async _onDragEnd(event) {
         const drag = this._drag;
         this._drag = null;
+        this.dragging = false;
         if (!drag) return;
+        if (drag.edgeFrame) cancelAnimationFrame(drag.edgeFrame);
         const device = this.deviceById(drag.id);
         if (!device) return;
         if (drag.linking) {
@@ -858,7 +891,7 @@
           if (!d) continue;
           const p = this.nodePos(d);
           before[id] = { ...p };
-          after[id] = { x: Math.max(NODE_W / 2, p.x + dx), y: Math.max(NODE_H / 2, p.y + dy) };
+          after[id] = { x: p.x + dx, y: p.y + dy };
           d.pos_x = after[id].x;
           d.pos_y = after[id].y;
         }
