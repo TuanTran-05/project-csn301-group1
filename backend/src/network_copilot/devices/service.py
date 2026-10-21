@@ -291,6 +291,7 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
     from ..changes.model import ChangeRequest
     from ..commands.model import CommandExecution
     from ..credentials.model import DeviceCredential
+    from ..groups.model import group_devices
     from ..monitoring.model import DeviceSnapshot
     from ..topology.model import (
         DesignAccessPort,
@@ -326,6 +327,8 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
     )
     for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf):
         db.session.query(model).filter(where(model)).delete(synchronize_session=False)
+    # A leftover membership would put a later device that reuses the id in the group.
+    db.session.execute(group_devices.delete().where(group_devices.c.device_id.in_(device_ids)))
     db.session.query(TopologyLink).filter(
         db.or_(
             TopologyLink.device_a_id.in_(device_ids),

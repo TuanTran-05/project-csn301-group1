@@ -382,7 +382,34 @@ def export_design(project) -> dict:
     }
 
 
-def import_design(project, design: dict, by_hostname: dict) -> None:
+def _stage(project, kind: str, payload: dict):
+    """Like create_item, but flushed instead of committed, for all-or-nothing writes."""
+    _model, make = _kind(kind)
+    item = make(project, payload)
+    db.session.add(item)
+    db.session.flush()
+    return item
+
+
+def replace_design(project, design: dict) -> None:
+    """Swap the whole design for ``design`` (export_design's shape), uncommitted.
+
+    The caller commits on success and rolls back on any error, so a design
+    that fails validation half-way leaves the project untouched.
+    """
+    by_hostname = {
+        device.hostname.upper(): device
+        for device in db.session.query(Device).filter_by(project_id=project.id)
+    }
+    # Items that reference a VLAN go before the VLANs themselves.
+    for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf,
+                  DesignVlan):
+        db.session.query(model).filter_by(project_id=project.id).delete(synchronize_session=False)
+    db.session.flush()
+    import_design(project, design, by_hostname, create=_stage)
+
+
+def import_design(project, design: dict, by_hostname: dict, create=create_item) -> None:
     """Recreate exported design items; hostnames resolve through ``by_hostname``."""
     def device_id(item):
         device = by_hostname.get(str(item.get("hostname", "")).upper())
@@ -391,25 +418,25 @@ def import_design(project, design: dict, by_hostname: dict) -> None:
         return device.id
 
     for item in design.get("vlans", []):
-        create_item(project, "vlans", {"vlan_id": item.get("vlan_id"), "name": item.get("name")})
+        create(project, "vlans", {"vlan_id": item.get("vlan_id"), "name": item.get("name")})
     for item in design.get("access_ports", []):
-        create_item(project, "access-ports", {"device_id": device_id(item),
+        create(project, "access-ports", {"device_id": device_id(item),
                     "interface": item.get("interface"), "vlan_id": item.get("vlan_id")})
     for item in design.get("svis", []):
-        create_item(project, "svis", {"device_id": device_id(item), "vlan_id": item.get("vlan_id"),
+        create(project, "svis", {"device_id": device_id(item), "vlan_id": item.get("vlan_id"),
                     "ip": item.get("ip"), "prefix_length": item.get("prefix_length")})
     for item in design.get("loopbacks", []):
-        create_item(project, "loopbacks", {"device_id": device_id(item), "number": item.get("number", 0),
+        create(project, "loopbacks", {"device_id": device_id(item), "number": item.get("number", 0),
                     "ip": item.get("ip")})
     for item in design.get("subinterfaces", []):
-        create_item(project, "subinterfaces", {"device_id": device_id(item), "interface": item.get("interface"),
+        create(project, "subinterfaces", {"device_id": device_id(item), "interface": item.get("interface"),
                     "vlan_id": item.get("vlan_id"), "ip": item.get("ip"),
                     "prefix_length": item.get("prefix_length", 24)})
     for item in design.get("routes", []):
-        create_item(project, "routes", {"device_id": device_id(item), "network": item.get("network"),
+        create(project, "routes", {"device_id": device_id(item), "network": item.get("network"),
                     "next_hop": item.get("next_hop")})
     for item in design.get("ospf", []):
-        create_item(project, "ospf", {"device_id": device_id(item),
+        create(project, "ospf", {"device_id": device_id(item),
                     "process_id": item.get("process_id", 1), "router_id": item.get("router_id")})
 
 

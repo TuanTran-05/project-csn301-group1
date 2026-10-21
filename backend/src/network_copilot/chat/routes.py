@@ -256,6 +256,45 @@ def apply_chat_configurations(message_id: int):
     ), 201
 
 
+@bp.post("/messages/<int:message_id>/apply-design")
+@jwt_required()
+@limiter.limit("10 per minute")
+def apply_chat_design(message_id: int):
+    """Make an AI design proposal from the chat the project's L2/L3 design.
+
+    The current diagram is saved as an automatic version first, so the
+    previous design can be restored from the versions panel. Device
+    configuration still goes through Preview -> Approve -> Apply.
+    """
+    from ..ai import design_assistant
+    from ..projects.scope import write_project
+    from ..topology import versions
+    from ..topology.design import list_design
+
+    project = write_project()
+    message = _chat_advice(message_id, project.id)
+    payload = (message.payload or {}) if message is not None else {}
+    if payload.get("flow") != "design_proposal" or not isinstance(payload.get("design"), dict):
+        raise NotFoundError("The design proposal was not found in this project.")
+    if payload.get("applied"):
+        raise ConflictError("This design proposal was already applied.")
+
+    user = current_user()
+    version = versions._store(project, user, f"Trước thiết kế AI #{message.id}", None, auto=True)
+    design_assistant.apply(project, payload["design"], payload.get("addressing_pool"))
+    message.payload = {**payload, "applied": True, "version_id": version.id}
+    db.session.commit()
+    record_event(
+        action="chat.design_applied",
+        result="success",
+        user_id=user.id if user else None,
+        project_id=project.id,
+        details={"message_id": message.id, "version_id": version.id},
+    )
+    return jsonify({"design": list_design(project), "version_id": version.id,
+                    "payload": message.payload}), 200
+
+
 @bp.post("/batches/<int:batch_id>/apply")
 @jwt_required()
 @limiter.limit("10 per minute")
