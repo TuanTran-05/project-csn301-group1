@@ -331,7 +331,7 @@
                 <h3>Sơ đồ mạng</h3>
                 <div class="row-actions">
                   <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit"
-                          title="Bấm thiết bị nguồn rồi thiết bị đích; cổng trống được chọn tự động">
+                          title="Kéo từ thiết bị nguồn sang thiết bị đích (hoặc bấm lần lượt hai thiết bị); cổng trống được chọn tự động">
                     <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>
                   </button>
                   <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
@@ -375,7 +375,7 @@
               <p class="ok-text" x-show="topologyNotice" x-text="topologyNotice" @click="topologyNotice = ''"></p>
 
               <p class="hint" x-show="linkMode" x-cloak>
-                <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Chọn thiết bị nguồn.'"></span>
+                <span x-text="linkSourceId ? 'Chọn thiết bị đích để nối.' : 'Kéo từ thiết bị nguồn thả vào thiết bị đích, hoặc bấm thiết bị nguồn rồi thiết bị đích.'"></span>
               </p>
 
               <div class="align-bar" x-show="canAlign" x-cloak>
@@ -421,6 +421,7 @@
                     :view-box.camel="viewBoxAttr"
                     preserveAspectRatio="xMidYMid meet"
                     @pointerdown="onCanvasPointerDown($event)"
+                    @pointermove="onCanvasPointerMove($event)"
                     @wheel.prevent="onWheel($event)"
                     @dblclick="onCanvasDblClick($event)"
                     @contextmenu="onContextMenu($event)"
@@ -434,14 +435,16 @@
                     </defs>
                     <rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridpat)" class="grid-bg" />
                     <text x="480" y="280" class="canvas-empty" text-anchor="middle" x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
-                    <g x-html="decorationsSvg"></g>
-                    <g x-html="topologySvg"></g>
+                    <g x-effect="paintSvg($el, decorationsSvg)"></g>
+                    <g x-effect="paintSvg($el, topologySvg)"></g>
+                    <line x-ref="linkPreview" class="link-preview" style="display:none" />
                     <rect x-ref="bandRect" class="band" style="display:none" />
                   </svg>
                   <svg class="minimap" x-show="devices.length > 1" x-cloak
                        :view-box.camel="minimapBox.x + ' ' + minimapBox.y + ' ' + minimapBox.w + ' ' + minimapBox.h"
                        @pointerdown.prevent="onMinimapPointer($event)" aria-label="Bản đồ thu nhỏ">
-                    <g x-html="minimapSvg"></g>
+                    <g x-effect="paintSvg($el, minimapSvg)"></g>
+                    <rect class="mm-view" :x="view.x" :y="view.y" :width="view.w" :height="view.h" />
                   </svg>
                   <div class="context-menu" x-show="menu" x-cloak :style="menu ? 'left:' + menu.x + 'px; top:' + menu.y + 'px' : ''" @click.stop>
                     <template x-if="menu && menu.kind === 'node'">

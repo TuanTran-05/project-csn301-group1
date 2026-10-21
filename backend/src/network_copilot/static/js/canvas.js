@@ -248,6 +248,28 @@
   // getter runs would otherwise re-trigger the render.
   const cache = { slots: {}, linksByDevice: {} };
 
+  // Pointer and wheel events can arrive several times per frame; the view and
+  // the dragged nodes only need to follow once per frame. `flush` runs a
+  // pending call at once (the drag end needs the final position).
+  function perFrame(fn) {
+    let frame = 0, args = null;
+    const run = () => {
+      frame = 0;
+      const pending = args;
+      args = null;
+      if (pending) fn(...pending);
+    };
+    const call = (...next) => {
+      args = next;
+      if (!frame) frame = requestAnimationFrame(run);
+    };
+    call.flush = () => {
+      if (frame) cancelAnimationFrame(frame);
+      run();
+    };
+    return call;
+  }
+
   function esc(value) {
     return String(value === null || value === undefined ? "" : value)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -280,6 +302,18 @@
           if (e.code === "Space") this.spaceDown = false;
         });
         window.addEventListener("click", () => { this.menu = null; });
+        this._previewMove = perFrame((e) => this._linkPreviewAt(this.linkSourceId, e));
+        this.$watch("linkSourceId", (id) => { if (!id) this._hideLinkPreview(); });
+        this.$watch("linkMode", (on) => { if (!on) this._hideLinkPreview(); });
+      },
+
+      // x-html re-parses its markup on every reactive change. The canvas
+      // layers are only repainted when their markup really changed, so a
+      // reload that brings the same diagram costs nothing.
+      paintSvg(el, markup) {
+        if (el._ncMarkup === markup) return;
+        el._ncMarkup = markup;
+        el.innerHTML = markup;
       },
 
       // ---- geometry ----
@@ -325,7 +359,10 @@
         const margin = 70;
         const aspect = this._aspect();
         const width = Math.max(box.w + margin * 2, (box.h + margin * 2) * aspect);
-        this.setView(box.x + box.w / 2, box.y + box.h / 2, nodesOnly === false ? BASE_W : Math.max(width, 480));
+        // Never zoom in past 100%: one or two devices would otherwise fill the canvas.
+        const el = this.$refs.canvas;
+        const natural = (el && el.clientWidth) || BASE_W;
+        this.setView(box.x + box.w / 2, box.y + box.h / 2, nodesOnly === false ? BASE_W : Math.max(width, natural));
       },
 
       resetView() {
@@ -346,9 +383,25 @@
         };
       },
 
+      // Wheel ticks of one frame are folded into a single zoom step.
       onWheel(event) {
-        const factor = Math.pow(1.0015, event.deltaY);
-        this.zoomBy(factor, this._svgPoint(event));
+        const pending = this._wheelZoom;
+        const factor = (pending ? pending.factor : 1) * Math.pow(1.0015, event.deltaY);
+        this._wheelZoom = { factor, anchor: this._svgPoint(event) };
+        if (pending) return;
+        requestAnimationFrame(() => {
+          const step = this._wheelZoom;
+          this._wheelZoom = null;
+          if (step) this.zoomBy(step.factor, step.anchor);
+        });
+      },
+
+      // Keep a point (a device just added) on screen without changing the zoom.
+      _reveal(p) {
+        const v = this.view;
+        const inside = p.x - NODE_W / 2 >= v.x && p.x + NODE_W / 2 <= v.x + v.w &&
+          p.y - NODE_H / 2 >= v.y && p.y + NODE_H / 2 <= v.y + v.h;
+        if (!inside) this.setView(p.x, p.y, v.w);
       },
 
       _startPan(event) {
@@ -357,14 +410,15 @@
         const startX = event.clientX, startY = event.clientY;
         const origin = { ...this.view };
         this.panning = true;
-        const move = (e) => {
+        const move = perFrame((e) => {
           this.view = {
             ...origin,
             x: origin.x - (e.clientX - startX) / scale,
             y: origin.y - (e.clientY - startY) / scale,
           };
-        };
+        });
         const up = () => {
+          move.flush();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
           this.panning = false;
@@ -383,36 +437,38 @@
         return { x: x - 40, y: y - 40, w: right - x + 80, h: bottom - y + 80 };
       },
 
+      // Nodes and cables only: the view rectangle is bound separately in the
+      // page, so zooming and panning do not rebuild the whole minimap.
       get minimapSvg() {
+        const positions = {};
+        for (const device of this.devices) positions[device.id] = this.nodePos(device);
         const parts = [];
         for (const link of this.links) {
-          const a = this.devices.find((d) => d.id === link.device_a_id);
-          const b = this.devices.find((d) => d.id === link.device_b_id);
-          if (!a || !b) continue;
-          const p = this.nodePos(a), q = this.nodePos(b);
+          const p = positions[link.device_a_id], q = positions[link.device_b_id];
+          if (!p || !q) continue;
           parts.push(`<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="mm-link" />`);
         }
         for (const device of this.devices) {
-          const p = this.nodePos(device);
+          const p = positions[device.id];
           const on = this.multi.includes(device.id) || device.id === this.selectedNodeId;
           parts.push(`<rect x="${p.x - 28}" y="${p.y - 14}" width="56" height="28" rx="6" class="mm-node${on ? " on" : ""}" />`);
         }
-        const v = this.view;
-        parts.push(`<rect x="${v.x}" y="${v.y}" width="${v.w}" height="${v.h}" class="mm-view" />`);
         return parts.join("");
       },
 
       onMinimapPointer(event) {
         const el = event.currentTarget;
-        const move = (e) => {
+        const move = perFrame((e) => {
           const point = el.createSVGPoint();
           point.x = e.clientX;
           point.y = e.clientY;
           const p = point.matrixTransform(el.getScreenCTM().inverse());
           this.setView(p.x, p.y, this.view.w);
-        };
+        });
         move(event);
+        move.flush();
         const up = () => {
+          move.flush();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
         };
@@ -519,9 +575,70 @@
         return { x: Math.round(x / GRID) * GRID, y: Math.round(y / GRID) * GRID };
       },
 
+      // The nearest place around `p` where a new device does not cover another
+      // one, so drops and clicks on the palette never stack devices.
+      _freeSpot(p) {
+        const taken = this.devices.map((d) => this.nodePos(d));
+        const free = (x, y) => taken.every((q) => Math.abs(q.x - x) >= NODE_W + 10 || Math.abs(q.y - y) >= NODE_H + 10);
+        const stepX = NODE_W + 30, stepY = NODE_H + 40;
+        const at = (i, j) => {
+          const s = this._snapped(p.x + i * stepX, p.y + j * stepY);
+          return { x: Math.max(NODE_W / 2, Math.round(s.x)), y: Math.max(NODE_H / 2, Math.round(s.y)) };
+        };
+        for (let ring = 0; ring < 12; ring++) {
+          for (let j = -ring; j <= ring; j++) {
+            for (let i = -ring; i <= ring; i++) {
+              if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+              const c = at(i, j);
+              if (free(c.x, c.y)) return c;
+            }
+          }
+        }
+        return at(0, 0);
+      },
+
       toggleSnap() {
         this.snap = !this.snap;
         try { localStorage.setItem("nc_snap", this.snap ? "1" : "0"); } catch { /* private mode */ }
+      },
+
+      // ---- cabling preview ----
+      // A dashed cable follows the pointer from the source device while
+      // cabling; the device under the pointer is highlighted as the target.
+      _linkPreviewAt(sourceId, event) {
+        const line = this.$refs.linkPreview;
+        const source = sourceId && this.deviceById(sourceId);
+        if (!line || !source || !this.linkMode) return;
+        const from = this.nodePos(source);
+        const to = this._svgPoint(event);
+        line.setAttribute("x1", from.x);
+        line.setAttribute("y1", from.y);
+        line.setAttribute("x2", to.x);
+        line.setAttribute("y2", to.y);
+        line.style.display = "";
+        const target = this._nodeElementAt(event);
+        const svg = this.$refs.canvas;
+        for (const el of svg.querySelectorAll(".topo-node.link-target")) {
+          if (el !== target) el.classList.remove("link-target");
+        }
+        if (target && Number(target.dataset.nodeId) !== Number(sourceId)) target.classList.add("link-target");
+      },
+
+      _hideLinkPreview() {
+        const line = this.$refs.linkPreview;
+        if (line) line.style.display = "none";
+        const svg = this.$refs.canvas;
+        if (svg) for (const el of svg.querySelectorAll(".topo-node.link-target")) el.classList.remove("link-target");
+      },
+
+      _nodeElementAt(event) {
+        const hit = document.elementFromPoint(event.clientX, event.clientY);
+        return hit && hit.closest ? hit.closest(".topology-canvas [data-node-id]") : null;
+      },
+
+      onCanvasPointerMove(event) {
+        if (this._drag || !this.linkMode || !this.linkSourceId) return;
+        this._previewMove(event);
       },
 
       // ---- pointer handling ----
@@ -556,11 +673,12 @@
             const target = this.deviceById(other);
             if (target) origins[other] = { ...this.nodePos(target) };
           }
-          this._drag = { id, origins, current: { ...origins }, startPoint: start, startX: event.clientX, startY: event.clientY, moved: false };
-          const move = (e) => this._onDragMove(e);
+          this._drag = { id, origins, current: { ...origins }, startPoint: start, startX: event.clientX, startY: event.clientY, moved: false, linking: false };
+          const move = perFrame((e) => this._onDragMove(e));
           const up = (e) => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
+            move.flush();
             this._onDragEnd(e);
           };
           window.addEventListener("pointermove", move);
@@ -595,7 +713,7 @@
           rect.setAttribute("height", Math.abs(y2 - y1));
           rect.style.display = "block";
         };
-        const move = (e) => {
+        const move = perFrame((e) => {
           const p = this._svgPoint(e);
           draw(start.x, start.y, p.x, p.y);
           const left = Math.min(start.x, p.x), right = Math.max(start.x, p.x);
@@ -612,10 +730,11 @@
             this.multi = next;
             this.selectedNodeId = next.length === 1 ? next[0] : null;
           }
-        };
+        });
         const up = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
+          move.flush();
           rect.style.display = "none";
         };
         window.addEventListener("pointermove", move);
@@ -626,8 +745,14 @@
       _onDragMove(event) {
         const drag = this._drag;
         if (!drag) return;
-        if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
-        if (!this.canEdit || this.linkMode) return;
+        if (!drag.moved && !drag.linking && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+        if (!this.canEdit) return;
+        if (this.linkMode) {
+          // Cabling by drag: pull a cable from this device onto another one.
+          drag.linking = true;
+          this._linkPreviewAt(drag.id, event);
+          return;
+        }
         drag.moved = true;
         const point = this._svgPoint(event);
         const dx = point.x - drag.startPoint.x;
@@ -644,12 +769,20 @@
         this._patchDrag(current);
       },
 
-      async _onDragEnd() {
+      async _onDragEnd(event) {
         const drag = this._drag;
         this._drag = null;
         if (!drag) return;
         const device = this.deviceById(drag.id);
         if (!device) return;
+        if (drag.linking) {
+          const targetEl = event && this._nodeElementAt(event);
+          const target = targetEl && this.deviceById(targetEl.dataset.nodeId);
+          this._hideLinkPreview();
+          this.linkSourceId = null;
+          if (target && target.id !== device.id) await this.quickLink(device.id, target.id);
+          return;
+        }
         if (!drag.moved) {
           this.clickNode(device);
           return;

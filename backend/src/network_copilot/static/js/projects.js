@@ -561,7 +561,11 @@ document.addEventListener("alpine:init", () => {
     async loadDevices() {
       const projectId = this.currentProjectId;
       const data = await this.authFetch("/api/devices");
-      if (projectId === this.currentProjectId) this.devices = data.items;
+      // Same order as the diagram: devices never placed take their grid slot
+      // from it, so another order would make them jump around.
+      if (projectId === this.currentProjectId) {
+        this.devices = data.items.sort((a, b) => window.NCLayout.naturalCompare(a.hostname, b.hostname));
+      }
     },
 
     openDeviceForm(device) {
@@ -1708,11 +1712,11 @@ document.addEventListener("alpine:init", () => {
       if (!this.canEdit || this.dropBusy) return;
       this.dropBusy = true;
       this.topologyError = "";
-      const body = { template: key };
-      if (point) {
-        body.x = Math.max(NODE_W / 2, Math.round(point.x));
-        body.y = Math.max(NODE_H / 2, Math.round(point.y));
-      }
+      // A click on the palette puts the device in the middle of what is on
+      // screen; either way it goes to the nearest spot no other device covers.
+      const v = this.view;
+      point = this._freeSpot(point || { x: v.x + v.w / 2, y: v.y + v.h / 2 });
+      const body = { template: key, x: point.x, y: point.y };
       if (this.placePlanned) {
         body.planned = true;
       } else if (this.defaultSsh.username && this.defaultSsh.password) {
@@ -1724,10 +1728,12 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify(body),
         });
         await this.loadTopology();
-        await this.loadProjects();
+        // Only the device count in the project list changes; no need to wait.
+        this.loadProjects().catch(() => {});
         this.selectedLinkId = null;
         this.selectedNodeId = device.id;
         this.multi = [device.id];
+        this._reveal(point);
         this._rememberDeviceAdded(device, key, point);
       } catch (err) {
         this.topologyError = this.describeError(err);
