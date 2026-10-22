@@ -755,6 +755,97 @@ def test_chat_endpoint_returns_the_monitor_result(
     assert response.get_json()["intent"] == "monitor"
 
 
+@pytest.mark.parametrize("message", [
+    "tôi muốn tạo tiệm net 30pcs",
+    "tôi muốn tạo sơ đồ tiệm net bao gồm 30 pcs",
+])
+def test_network_design_request_returns_a_diagram_for_admin(
+    client, admin_headers, app, message
+):
+    diagram = {
+        "title": "Mạng tiệm net 30 PCs",
+        "nodes": [
+            {"id": "r1", "label": "R1", "kind": "router",
+             "ip_addresses": ["192.168.30.1/24"]},
+            {"id": "sw1", "label": "SW1", "kind": "switch",
+             "ip_addresses": ["192.168.30.2/24"]},
+            {"id": "pcs", "label": "PCs (30)", "kind": "host",
+             "ip_addresses": ["192.168.30.10/24"]},
+        ],
+        "links": [
+            {"source": "r1", "target": "sw1", "label": "Trunk",
+             "network": "192.168.30.0/24", "ip_source": "192.168.30.1/24",
+             "ip_target": "192.168.30.2/24"},
+            {"source": "sw1", "target": "pcs", "label": "LAN PCs",
+             "network": "192.168.30.0/24", "ip_source": "192.168.30.2/24",
+             "ip_target": "192.168.30.10/24"},
+        ],
+    }
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses={
+        "explanation": "Đề xuất gom 30 máy thành một nhóm trên sơ đồ.",
+        "diagram": diagram,
+    })
+
+    response = client.post(
+        "/api/ai/chat", headers=admin_headers, json={"message": message}
+    )
+
+    assert response.status_code == 200, response.get_json()
+    body = response.get_json()
+    assert body["intent"] == "advice"
+    assert body["diagram"]["title"] == "Mạng tiệm net 30 PCs"
+    assert any(node["label"] == "PCs (30)" for node in body["diagram"]["nodes"])
+    assert all(node["ip_addresses"] for node in body["diagram"]["nodes"])
+    provider = app.config["AI_PROVIDER_INSTANCE"]
+    assert "patient network design tutor" in provider.prompts[0]["system_prompt"]
+
+
+def test_operator_network_diagram_request_does_not_start_project_setup(
+    client, app, db
+):
+    from network_copilot.auth.model import User
+    from network_copilot.projects.model import Project
+
+    user = User(username="net-operator", role="OPERATOR")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.flush()
+    project = Project(
+        name="Operator Lab", owner_id=user.id,
+        management_network="172.20.0.0/24", environment="pnetlab",
+    )
+    db.session.add(project)
+    db.session.commit()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "net-operator", "password": "StrongPass123!"},
+    )
+    headers = {
+        "Authorization": f"Bearer {login.get_json()['access_token']}",
+        "X-Project-Id": str(project.id),
+    }
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses={
+        "explanation": "Đề xuất sơ đồ mạng tiệm net.",
+        "diagram": {
+            "title": "Tiệm net",
+            "nodes": [
+                {"id": "r1", "label": "R1", "kind": "router"},
+                {"id": "sw1", "label": "SW1", "kind": "switch"},
+            ],
+            "links": [{"source": "r1", "target": "sw1", "label": "Trunk"}],
+        },
+    })
+
+    response = client.post(
+        "/api/ai/chat", headers=headers,
+        json={"message": "tôi muốn tạo sơ đồ tiệm net bao gồm 30 pcs"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["diagram"]["title"] == "Tiệm net"
+    assert "flow" not in response.get_json()
+
+
 def test_chat_endpoint_creates_a_preview_for_configure(
     client, admin_headers, app, access_switch
 ):
@@ -914,6 +1005,13 @@ def test_prompt_forbids_inventing_live_device_state_in_chat(app, admin_user):
     service.interpret("alo", admin_user.id)
     prompt = provider.prompts[0]["system_prompt"]
     assert "invent the live state" in prompt
+
+
+def test_action_prompt_does_not_mix_in_advice_configuration_schema():
+    from network_copilot.ai.service import ADVICE_PROMPT, SYSTEM_PROMPT
+
+    assert "configurations (an array" not in SYSTEM_PROMPT
+    assert "configurations (an array" in ADVICE_PROMPT
 
 
 def test_recent_history_returns_user_and_assistant_turns_oldest_first(app):

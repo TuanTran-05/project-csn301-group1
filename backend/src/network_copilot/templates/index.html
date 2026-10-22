@@ -89,7 +89,7 @@
           <select
             class="session-select"
             x-model.number="currentSessionId"
-            @change="switchSession(currentSessionId)"
+            @change="switchSession(Number($event.target.value), true)"
           >
             <template x-for="session in sessions" :key="session.id">
               <option :value="session.id" x-text="session.title"></option>
@@ -99,7 +99,7 @@
             New chat
           </button>
         </div>
-        <div class="chat-empty" x-show="!messages.length && !sending" x-cloak>
+        <div class="chat-empty" x-show="!messages.length && !sending && !messagesLoading" x-cloak>
           <h3>Bạn muốn làm gì với mạng này?</h3>
           <p x-show="currentUser && ['OPERATOR', 'VIEWER'].includes(currentUser.role)">AI có thể đề xuất sơ đồ và cấu hình riêng theo từng thiết bị. Bạn xem lại rồi xác nhận tải các file để tự nhập vào PNETLab.</p>
           <p x-show="currentUser && !['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ đề xuất; thay đổi cấu hình vẫn qua quy trình duyệt của hệ thống.</p>
@@ -109,7 +109,13 @@
             </template>
           </div>
         </div>
-        <div class="chat-log" x-ref="chatLog" @scroll.passive="onChatScroll()" x-show="messages.length || sending">
+        <div class="chat-log" x-ref="chatLog" @scroll.passive="onChatScroll()" x-show="messages.length || sending || messagesLoading">
+          <div class="chat-history-pager" x-show="hasOlderMessages" x-cloak>
+            <button type="button" class="chat-history-load-more" @click="loadOlderMessages()" :disabled="loadingOlderMessages || messagesLoading">
+              <span x-text="loadingOlderMessages ? 'Đang tải…' : 'Tải tin nhắn cũ hơn'"></span>
+            </button>
+          </div>
+          <div class="chat-history-loading" x-show="messagesLoading" role="status" aria-live="polite">Đang tải lịch sử chat…</div>
           <template x-for="message in messages" :key="message.id">
             <div class="bubble" :class="'bubble-' + message.role">
               <div class="bubble-meta">

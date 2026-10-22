@@ -21,9 +21,15 @@ bp = Blueprint("chat", __name__, url_prefix="/api/chat")
 def list_messages():
     limit = request.args.get("limit", default=200, type=int)
     session_id = request.args.get("session_id", type=int)
+    before_id = request.args.get("before_id", type=int)
+    after_id = request.args.get("after_id", type=int)
     project = current_project()
     messages = service.list_messages(
-        session_id=session_id, limit=limit, project_id=project.id
+        session_id=session_id,
+        limit=limit,
+        project_id=project.id,
+        before_id=before_id,
+        after_id=after_id,
     )
     return jsonify({"items": [message.to_dict() for message in messages]}), 200
 

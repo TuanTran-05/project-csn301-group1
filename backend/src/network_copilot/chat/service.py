@@ -53,16 +53,34 @@ def record_message(
 
 
 def list_messages(
-    session_id: int | None = None, limit: int = 200, *, project_id: int
+    session_id: int | None = None,
+    limit: int = 200,
+    *,
+    project_id: int,
+    before_id: int | None = None,
+    after_id: int | None = None,
 ) -> list[ChatMessage]:
     session = session_service.resolve_or_create_session(session_id, project_id)
-    bounded_ids = (
-        db.session.query(ChatMessage.id.label("id"))
-        .filter(ChatMessage.session_id == session.id)
-        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .limit(min(max(limit, 1), 500))
-        .subquery()
+    message_ids = db.session.query(ChatMessage.id.label("id")).filter(
+        ChatMessage.session_id == session.id
     )
+    if after_id is not None:
+        message_ids = message_ids.filter(ChatMessage.id > after_id)
+        bounded_ids = message_ids.order_by(
+            ChatMessage.created_at.asc(), ChatMessage.id.asc()
+        ).limit(min(max(limit, 1), 500)).subquery()
+    elif before_id is not None:
+        # Message IDs increase as the transcript is written, making this a
+        # stable cursor for fetching earlier pages without loading the whole
+        # conversation first.
+        message_ids = message_ids.filter(ChatMessage.id < before_id)
+        bounded_ids = message_ids.order_by(
+            ChatMessage.created_at.desc(), ChatMessage.id.desc()
+        ).limit(min(max(limit, 1), 500)).subquery()
+    else:
+        bounded_ids = message_ids.order_by(
+            ChatMessage.created_at.desc(), ChatMessage.id.desc()
+        ).limit(min(max(limit, 1), 500)).subquery()
     return (
         db.session.query(ChatMessage)
         .join(bounded_ids, ChatMessage.id == bounded_ids.c.id)

@@ -6,7 +6,12 @@ from ..auth.model import User
 from ..auth.service import current_user
 from ..chat.service import record_message as record_chat_message
 from ..chat.session_service import create_session
-from ..chat.onboarding import requests_project, requested_device_count, topology_options
+from ..chat.onboarding import (
+    requests_network_design,
+    requests_project,
+    requested_device_count,
+    topology_options,
+)
 from ..errors import ValidationError
 from ..extensions import db, limiter
 from ..projects.scope import current_project
@@ -103,7 +108,11 @@ def chat():
     user_id = user.id if user else None
     username = user.username if user else None
 
-    if user.role == "OPERATOR" and requests_project(data.message):
+    if (
+        user.role == "OPERATOR"
+        and requests_project(data.message)
+        and not requests_network_design(data.message)
+    ):
         created = project_service.create_project(user, {
             "name": _new_project_name(user),
             "description": "Project được khởi tạo từ khung chat.",
@@ -154,7 +163,7 @@ def chat():
             service.provider, data.message, project,
             service._recent_history(data.session_id, data.message, project.id),
         )
-    elif user.role in {"OPERATOR", "VIEWER"}:
+    elif user.role in {"OPERATOR", "VIEWER"} or requests_network_design(data.message):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
         result = AIService().handle(

@@ -528,6 +528,28 @@ a:focus-visible {
   gap: 12px;
 }
 
+.chat-history-pager,
+.chat-history-loading {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chat-history-load-more {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.chat-history-load-more:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .bubble {
   max-width: 70%;
   padding: 10px 12px;

@@ -48,9 +48,20 @@ def _tables():
     return per_device + [group_devices]
 
 
-def _fernet() -> Fernet:
+def _fernet() -> Fernet | None:
     key = current_app.config.get("CREDENTIAL_ENCRYPTION_KEY")
-    return Fernet(key.encode() if isinstance(key, str) else key)
+    if not key:
+        current_app.logger.warning(
+            "Device deletion undo is unavailable because CREDENTIAL_ENCRYPTION_KEY is not configured."
+        )
+        return None
+    try:
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except (TypeError, ValueError):
+        current_app.logger.warning(
+            "Device deletion undo is unavailable because CREDENTIAL_ENCRYPTION_KEY is invalid."
+        )
+        return None
 
 
 def _dump(row) -> dict:
@@ -71,8 +82,11 @@ def _select(table, column, device_id):
     return [_dump(row) for row in db.session.execute(table.select().where(column == device_id))]
 
 
-def snapshot(device: Device) -> str:
-    """A sealed token holding everything needed to recreate ``device``."""
+def snapshot(device: Device) -> str | None:
+    """A sealed restore token, or None when the server has no usable key."""
+    fernet = _fernet()
+    if fernet is None:
+        return None
     from ..topology.model import TopologyLink
 
     links = TopologyLink.__table__
@@ -87,14 +101,17 @@ def snapshot(device: Device) -> str:
             )
         ],
     }
-    return _fernet().encrypt(json.dumps(document).encode()).decode()
+    return fernet.encrypt(json.dumps(document).encode()).decode()
 
 
 def _open(token) -> dict:
     if not isinstance(token, str) or not token:
         raise ValidationError("restore_token is required.")
+    fernet = _fernet()
+    if fernet is None:
+        raise ValidationError("Undo is unavailable because the server has no valid encryption key.")
     try:
-        return json.loads(_fernet().decrypt(token.encode(), ttl=RESTORE_TTL_SECONDS))
+        return json.loads(fernet.decrypt(token.encode(), ttl=RESTORE_TTL_SECONDS))
     except InvalidToken as exc:
         raise ValidationError("This deletion can no longer be undone.") from exc
 

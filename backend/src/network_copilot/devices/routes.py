@@ -87,7 +87,8 @@ def delete_device(device_id: int):
     device = service.get_device(device_id, project.id)
     hostname = device.hostname
     # ?undo=1 asks for a token that POST /restore turns back into the device.
-    token = trash.snapshot(device) if request.args.get("undo") == "1" else None
+    undo_requested = request.args.get("undo") == "1"
+    token = trash.snapshot(device) if undo_requested else None
     service.delete_device(device_id, project.id)
     record_event(
         action="device.delete",
@@ -95,9 +96,9 @@ def delete_device(device_id: int):
         user_id=_current_user_id(),
         details={"device_id": device_id, "hostname": hostname},
     )
-    if token is None:
+    if not undo_requested:
         return "", 204
-    return jsonify({"restore_token": token}), 200
+    return jsonify({"restore_token": token, "undoable": token is not None}), 200
 
 
 @bp.post("/restore")

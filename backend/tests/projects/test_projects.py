@@ -102,6 +102,24 @@ def test_viewer_share_cannot_change_inventory(client, two_projects, alice_header
     assert response.status_code == 403
 
 
+def test_operator_can_delete_device_from_own_project(client, two_projects, alice_headers):
+    a, _, device, *_ = two_projects
+    device_id = device.id
+    listing = client.get("/api/devices", headers=scope(alice_headers, a))
+    assert [item["id"] for item in listing.get_json()["items"]] == [device_id]
+
+    response = client.delete(
+        f"/api/devices/{device_id}?undo=1",
+        headers=scope(alice_headers, a),
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["restore_token"]
+    assert client.get(
+        f"/api/devices/{device_id}", headers=scope(alice_headers, a)
+    ).status_code == 404
+
+
 def test_editor_share_can_add_devices_but_not_share_or_delete(
     client, two_projects, alice_headers, bob_headers
 ):

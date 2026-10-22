@@ -665,8 +665,10 @@ document.addEventListener("alpine:init", () => {
       this.deviceUndoable = false;
       try {
         const result = await this.authFetch(`/api/devices/${device.id}?undo=1`, { method: "DELETE" });
-        this._rememberDevicesDeleted([{ id: device.id, token: result.restore_token }], `Xoá ${device.hostname}`);
-        this.deviceUndoable = true;
+        if (result.restore_token) {
+          this._rememberDevicesDeleted([{ id: device.id, token: result.restore_token }], `Xoá ${device.hostname}`);
+          this.deviceUndoable = true;
+        }
         this.multi = this.multi.filter((id) => id !== device.id);
         if (this.selectedNodeId === device.id) {
           this.selectedNodeId = null;
@@ -678,9 +680,10 @@ document.addEventListener("alpine:init", () => {
         await this.loadDevices();
         await this.loadTopology();
         await this.loadProjects();
-        this.deviceNotice = `Đã xoá ${device.hostname}.`;
+        this.deviceNotice = result.restore_token
+          ? `Đã xoá ${device.hostname}.`
+          : `Đã xoá ${device.hostname}; máy chủ chưa có khóa hợp lệ để hoàn tác.`;
         if (this.tab === "topology") this.topologyNotice = this.deviceNotice;
-        this.deviceUndoable = true;
       } catch (err) {
         this.deviceError = this.describeError(err);
         if (this.tab === "topology") this.topologyError = this.deviceError;
@@ -1546,10 +1549,12 @@ document.addEventListener("alpine:init", () => {
       this.topologyNotice = "";
       this.deviceUndoable = false;
       const deleted = [];
+      let deletedWithoutUndo = 0;
       try {
         for (const device of devices) {
           const result = await this.authFetch(`/api/devices/${device.id}?undo=1`, { method: "DELETE" });
-          deleted.push({ id: device.id, token: result.restore_token });
+          if (result.restore_token) deleted.push({ id: device.id, token: result.restore_token });
+          else deletedWithoutUndo += 1;
         }
       } catch (err) {
         this.topologyError = this.describeError(err);
@@ -1557,7 +1562,12 @@ document.addEventListener("alpine:init", () => {
       if (deleted.length) {
         this._rememberDevicesDeleted(deleted, `Xoá ${deleted.length} thiết bị`);
         this.deviceUndoable = true;
-        this.topologyNotice = `Đã xoá ${deleted.length}/${devices.length} thiết bị.`;
+      }
+      const deletedCount = deleted.length + deletedWithoutUndo;
+      if (deletedCount) {
+        this.topologyNotice = deletedWithoutUndo
+          ? `Đã xoá ${deletedCount}/${devices.length} thiết bị; ${deletedWithoutUndo} thiết bị không thể hoàn tác do khóa máy chủ không hợp lệ.`
+          : `Đã xoá ${deletedCount}/${devices.length} thiết bị.`;
       }
       this.multi = [];
       this.selectedNodeId = null;

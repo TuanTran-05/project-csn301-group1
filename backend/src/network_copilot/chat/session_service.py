@@ -55,9 +55,15 @@ def _title_for_session(session_id: int) -> str:
         .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
         .first()
     )
-    if first is None or not first[0]:
+    return _title_from_content(first[0] if first is not None else None)
+
+
+def _title_from_content(content: str | None) -> str:
+    if not content:
         return "New chat"
-    content = first[0].strip()
+    content = content.strip()
+    if not content:
+        return "New chat"
     if len(content) <= _TITLE_MAX_LENGTH:
         return content
     return content[:_TITLE_MAX_LENGTH].rstrip() + "…"
@@ -71,18 +77,38 @@ def session_to_dict(session: ChatSession) -> dict:
     }
 
 
-def _last_activity(session: ChatSession):
-    last = (
-        db.session.query(db.func.max(ChatMessage.created_at))
-        .filter(ChatMessage.session_id == session.id)
-        .scalar()
-    )
-    return last or session.created_at
-
-
 def list_sessions(project_id: int) -> list[dict]:
-    sessions = (
-        db.session.query(ChatSession).filter(ChatSession.project_id == project_id).all()
+    activity = (
+        db.session.query(
+            ChatMessage.session_id.label("session_id"),
+            db.func.max(ChatMessage.created_at).label("last_activity"),
+        )
+        .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+        .filter(ChatSession.project_id == project_id)
+        .group_by(ChatMessage.session_id)
+        .subquery()
     )
-    sessions.sort(key=_last_activity, reverse=True)
-    return [session_to_dict(session) for session in sessions]
+    first_content = (
+        db.session.query(ChatMessage.content)
+        .filter(ChatMessage.session_id == ChatSession.id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .limit(1)
+        .correlate(ChatSession)
+        .scalar_subquery()
+    )
+    last_activity = db.func.coalesce(activity.c.last_activity, ChatSession.created_at)
+    rows = (
+        db.session.query(ChatSession, first_content.label("first_content"))
+        .outerjoin(activity, activity.c.session_id == ChatSession.id)
+        .filter(ChatSession.project_id == project_id)
+        .order_by(last_activity.desc(), ChatSession.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": session.id,
+            "title": _title_from_content(content),
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+        }
+        for session, content in rows
+    ]

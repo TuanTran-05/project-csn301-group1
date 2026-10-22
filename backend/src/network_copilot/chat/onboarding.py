@@ -27,6 +27,28 @@ def requests_project(message: str) -> bool:
     ))
 
 
+def requests_network_design(message: str) -> bool:
+    """Recognize requests for a suggested network diagram, not device actions."""
+    text = _fold(message)
+    if any(phrase in text for phrase in (
+        "so do", "network diagram", "network topology", "topology",
+        "mo hinh mang",
+    )):
+        return True
+
+    action = r"(?:tao|ve|thiet\s+ke|xay\s+dung|lap\s+dat|create|draw|design|build|set\s+up)"
+    venue = r"(?:tiem\s+net|phong\s+net|phong\s+may|internet\s+cafe|cyber\s+cafe|computer\s+lab)"
+    if re.search(rf"\b{action}\b(?:\s+\w+){{0,3}}\s+\b{venue}\b", text):
+        return True
+
+    # Keep a generic "network" target close to the design verb so requests
+    # such as "create a VLAN on the guest network" remain device actions.
+    return bool(re.search(
+        rf"\b{action}\b\s+(?:(?:mot|a|an|new)\s+)?(?:mang|network)\b",
+        text,
+    ))
+
+
 def requested_device_count(message: str) -> int | None:
     match = re.search(r"(?<!\d)(\d{1,2})(?!\d)", message)
     if not match:

@@ -137,6 +137,8 @@ def diagram_schema() -> dict:
             "title": {"type": "string"},
             "nodes": {
                 "type": "array",
+                "minItems": 2,
+                "maxItems": 16,
                 "items": {
                     "type": "object",
                     "required": ["id", "label", "kind"],
@@ -147,12 +149,18 @@ def diagram_schema() -> dict:
                             "type": "string",
                             "enum": ["internet", "router", "firewall", "switch", "server", "host"],
                         },
-                        "ip_addresses": {"type": "array", "items": {"type": "string"}},
+                        "ip_addresses": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {"type": "string"},
+                        },
                     },
                 },
             },
             "links": {
                 "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
                 "items": {
                     "type": "object",
                     "required": ["source", "target"],

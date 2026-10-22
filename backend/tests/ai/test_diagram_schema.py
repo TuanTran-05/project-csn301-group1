@@ -40,9 +40,15 @@ def test_diagram_rejects_invalid_device_addresses(address):
 
 def test_provider_schema_accepts_optional_topology_addresses():
     schema = diagram_schema()
+    node_array = schema["properties"]["nodes"]
+    link_array = schema["properties"]["links"]
     node_properties = schema["properties"]["nodes"]["items"]["properties"]
     link_properties = schema["properties"]["links"]["items"]["properties"]
 
+    assert node_array["minItems"] == 2
+    assert node_array["maxItems"] == 16
+    assert link_array["minItems"] == 1
+    assert link_array["maxItems"] == 32
     assert node_properties["ip_addresses"]["type"] == "array"
     assert link_properties["network"]["type"] == "string"
     assert link_properties["ip_source"]["type"] == "string"
