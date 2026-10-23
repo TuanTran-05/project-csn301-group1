@@ -138,15 +138,18 @@
             </summary>
             <ul class="dashboard-list audit-event-list">
               <template x-for="event in group.events" :key="event.id">
-                <li class="audit-event">
-                  <div class="audit-event-heading">
+                <li class="audit-event" x-data="{ expanded: false }">
+                  <button type="button" class="audit-event-toggle" :aria-expanded="expanded"
+                          :aria-controls="'audit-event-details-' + event.id" @click="expanded = !expanded">
                     <time class="audit-time" x-text="formatActivityTime(event.created_at)"></time>
-                    <span x-text="event.username || (event.user_id ? 'Người dùng #' + event.user_id : 'Hệ thống')"></span>
+                    <span x-text="event.username || (event.user_id ? 'user #' + event.user_id : 'system')"></span>
                     <strong x-text="activityActionLabel(event.action)"></strong>
                     <span class="result-status" :class="'result-' + (event.result === 'failure' ? 'failed' : event.result)" x-text="activityResultLabel(event.result)"></span>
+                  </button>
+                  <div class="audit-event-content" :id="'audit-event-details-' + event.id" x-show="expanded" x-cloak>
+                    <p class="audit-event-message" x-show="event.message" x-text="event.message"></p>
+                    <pre class="audit-event-details" x-show="event.details" x-text="formatActivityDetails(event.details)"></pre>
                   </div>
-                  <p class="audit-event-message" x-show="event.message" x-text="event.message"></p>
-                  <pre class="audit-event-details" x-show="event.details" x-text="formatActivityDetails(event.details)"></pre>
                 </li>
               </template>
             </ul>

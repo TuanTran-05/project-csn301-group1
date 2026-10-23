@@ -254,80 +254,15 @@ document.addEventListener("alpine:init", () => {
     },
 
     activityActionLabel(action) {
-      const labels = {
-        "project.create": "Tạo dự án",
-        "project.update": "Cập nhật dự án",
-        "project.delete": "Xóa dự án",
-        "project.share": "Chia sẻ dự án",
-        "project.leave": "Rời dự án",
-        "project.share_update": "Cập nhật quyền thành viên",
-        "project.unshare": "Thu hồi quyền truy cập",
-        "project.export": "Xuất dự án",
-        "project.import": "Nhập dự án",
-        "project.clone": "Sao chép dự án",
-        "device.csv_import": "Nhập thiết bị từ CSV",
-        "ai.action": "Thao tác bằng AI",
-        "ai.command_blocked": "AI bị chặn lệnh",
-        "auth.login": "Đăng nhập",
-        "auth.password_change": "Đổi mật khẩu",
-        "user.create": "Tạo tài khoản",
-        "user.update": "Cập nhật tài khoản",
-        "user.password_reset": "Đặt lại mật khẩu",
-        "batch.apply": "Áp dụng nhóm thay đổi",
-        "batch.approve": "Duyệt nhóm thay đổi",
-        "batch.cancel": "Hủy nhóm thay đổi",
-        "change.apply": "Áp dụng cấu hình",
-        "change.approve": "Duyệt thay đổi",
-        "change.cancel": "Hủy thay đổi",
-        "change.preview": "Xem trước thay đổi",
-        "change.verification_overridden": "Bỏ qua xác minh thay đổi",
-        "chat.config_apply_approved": "Áp dụng cấu hình từ chat",
-        "chat.config_export": "Xuất cấu hình từ chat",
-        "chat.design_applied": "Áp dụng thiết kế mạng từ chat",
-        "command.blocked": "Lệnh bị chặn",
-        "command.readonly": "Đọc trạng thái thiết bị",
-        "device.create": "Thêm thiết bị",
-        "device.update": "Cập nhật thiết bị",
-        "device.delete": "Xóa thiết bị",
-        "device.provision": "Cấp địa chỉ quản lý cho thiết bị",
-        "device.restore": "Khôi phục thiết bị",
-        "device.test_connection": "Kiểm tra kết nối thiết bị",
-        "change.deploy.started": "Bắt đầu triển khai thay đổi",
-        "group.auto_approve": "Tự động duyệt nhóm thay đổi",
-        "topology.blueprint": "Tạo sơ đồ từ mẫu",
-        "topology.chat_diagram_copy": "Sao chép sơ đồ từ chat",
-        "topology.chat_diagram_import": "Nhập sơ đồ từ chat",
-        "topology.config_preview": "Xem trước cấu hình mạng",
-        "topology.design_add": "Thêm thành phần vào sơ đồ",
-        "topology.design_delete": "Xóa thành phần khỏi sơ đồ",
-        "topology.discover": "Khám phá kết nối mạng",
-        "topology.discover_apply": "Áp dụng kết nối đã khám phá",
-        "topology.duplicate": "Nhân bản thiết bị",
-        "topology.link_create": "Tạo kết nối",
-        "topology.link_update": "Cập nhật kết nối",
-        "topology.link_delete": "Xóa kết nối",
-        "topology.pnetlab_import": "Nhập lab từ PNETLab",
-        "topology.version_create": "Lưu phiên bản sơ đồ",
-        "topology.version_restore": "Khôi phục phiên bản sơ đồ",
-        // Keep labels for events written by earlier UI builds.
-        "system.project.update": "Cập nhật dự án",
-        "system.ai.action": "Thao tác bằng AI",
-        "system.topology.link_create": "Tạo kết nối",
-        "system.topology.link_update": "Cập nhật kết nối",
-        "system.topology.link_delete": "Xóa kết nối",
-        "system.device.create": "Thêm thiết bị",
-        "system.device.update": "Cập nhật thiết bị",
-        "system.device.delete": "Xóa thiết bị",
-      };
-      if (labels[action]) return labels[action];
-      if (!action) return "Hoạt động";
-      return action
-        .replace(/[._]+/g, " ")
-        .replace(/\b\w/g, (character) => character.toLocaleUpperCase("vi-VN"));
+      if (!action) return "activity";
+      // Keep the event key readable as it was originally shown. Older system
+      // events already include their actor in the action key, so avoid showing
+      // "system" twice in the row.
+      return String(action).replace(/^system\./, "");
     },
 
     activityResultLabel(result) {
-      return ({ success: "Thành công", failure: "Thất bại", blocked: "Đã chặn" })[result] || result;
+      return ({ success: "SUCCESS", failure: "FAILED", blocked: "BLOCKED" })[result] || String(result || "").toUpperCase();
     },
 
     formatActivityDetails(details) {
