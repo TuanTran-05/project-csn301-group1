@@ -347,7 +347,7 @@
                   <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
                   <button type="button" @click="undo()" x-show="canEdit" :disabled="!canUndo" title="Hoàn tác (Ctrl+Z)">↶ Hoàn tác</button>
                   <button type="button" @click="redo()" x-show="canEdit" :disabled="!canRedo" title="Làm lại (Ctrl+Y)">↷ Làm lại</button>
-                  <span class="zoom-box" title="Con lăn chuột: phóng to/thu nhỏ · Space+kéo hoặc nút giữa: kéo nền">
+                  <span class="zoom-box" title="Con lăn: phóng to/thu nhỏ · Kéo vùng trống để rê sơ đồ · Shift+kéo để chọn nhiều">
                     <button type="button" @click="zoomBy(1.25)" aria-label="Thu nhỏ">−</button>
                     <button type="button" @click="resetView()" class="zoom-value" x-text="zoomPercent + '%'"></button>
                     <button type="button" @click="zoomBy(1 / 1.25)" aria-label="Phóng to">+</button>
@@ -398,7 +398,7 @@
                 <button type="button" @click="align('spread-y')" x-show="multi.length > 2">Dàn đều dọc</button>
                 <button type="button" class="danger-btn" @click="deleteSelectedDevices()">Xoá đã chọn</button>
               </div>
-              <p class="hint" x-show="devices.length > 1 && !linkMode">Kéo trên vùng trống để chọn nhiều thiết bị, Shift+bấm để thêm/bớt, Ctrl+Z hoàn tác.</p>
+              <p class="hint" x-show="devices.length > 1 && !linkMode">Kéo vùng trống để rê sơ đồ; Shift+kéo để chọn nhiều thiết bị, Shift+bấm để thêm/bớt.</p>
 
               <div class="topology-wrap" :class="{ 'no-palette': !canEdit }">
                 <aside class="palette" x-show="canEdit" x-cloak>
@@ -995,9 +995,9 @@
       <table class="data-table">
         <tbody>
           <tr><td><kbd>Con lăn</kbd></td><td>Phóng to / thu nhỏ quanh con trỏ</td></tr>
-          <tr><td><kbd>Space</kbd> + kéo · nút giữa</td><td>Kéo nền sơ đồ</td></tr>
+          <tr><td>Kéo vùng trống · <kbd>Space</kbd>+kéo · nút giữa</td><td>Rê sơ đồ</td></tr>
           <tr><td><kbd>F</kbd> · <kbd>0</kbd> · <kbd>+</kbd> <kbd>−</kbd></td><td>Vừa khung · 100% · phóng to/thu nhỏ</td></tr>
-          <tr><td>Kéo trên nền · <kbd>Shift</kbd>+bấm · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Chọn nhiều thiết bị</td></tr>
+          <tr><td><kbd>Shift</kbd>+kéo nền · <kbd>Shift</kbd>+bấm · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Chọn nhiều thiết bị</td></tr>
           <tr><td>Nhấp đúp · chuột phải</td><td>Sửa thuộc tính · menu thao tác</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>V</kbd> / <kbd>D</kbd></td><td>Sao chép · dán · nhân bản</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></td><td>Hoàn tác · làm lại</td></tr>

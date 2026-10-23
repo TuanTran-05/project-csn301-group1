@@ -1447,11 +1447,13 @@ a:focus-visible {
   border-radius: 8px;
   touch-action: none;
   user-select: none;
+  cursor: grab;
 }
 .grid-line { stroke: var(--border); stroke-width: 1; }
 .canvas-stage { position: relative; min-width: 0; }
 .canvas-stage.space-pan .topology-canvas { cursor: grab; }
 .canvas-stage.panning .topology-canvas { cursor: grabbing; }
+.canvas-stage.panning .topology-canvas * { cursor: grabbing; }
 
 .topo-node { cursor: grab; }
 .topo-node:active { cursor: grabbing; }
