@@ -2724,3 +2724,697 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 @media (prefers-reduced-motion: reduce) {
   .app-shell .top-bar-nav .nav-link { transition: none; }
 }
+
+/* -- EIU project and network topology workspace -- */
+.app-shell .projects-layout {
+  flex: 1 1 auto;
+  height: calc(100vh - 92px);
+  height: calc(100dvh - 92px);
+  min-height: 0;
+  grid-template-columns: minmax(286px, 336px) minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.app-shell .projects-sidebar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px 16px 0 21px;
+  overflow-x: hidden;
+  border: 0;
+  background: linear-gradient(165deg, #123f64 0%, #0d3557 55%, #0a2d4b 100%);
+  color: #f6f8fb;
+  box-shadow: 5px 8px 24px rgba(16, 47, 74, 0.12);
+}
+
+.projects-app-title {
+  position: relative;
+  z-index: 2;
+  margin: 0 0 24px 3px;
+  color: #fff;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.projects-sidebar-heading {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 3px 14px;
+}
+
+.app-shell .projects-sidebar h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+}
+
+.app-shell .projects-sidebar .add-project-btn {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  font-size: 21px;
+  font-weight: 300;
+  line-height: 1;
+}
+.app-shell .projects-sidebar .add-project-btn:hover:not(:disabled) {
+  border-color: #d0a56b;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.app-shell .projects-sidebar .project-list {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.app-shell .projects-sidebar .project-list > li { border: 0; padding: 0; }
+.app-shell .projects-sidebar .project-item {
+  width: 100%;
+  gap: 6px;
+  padding: 11px 12px 10px;
+  border: 1px solid rgba(218, 232, 243, 0.14);
+  border-radius: 9px;
+  background: rgba(6, 32, 56, 0.19);
+  color: #f5f8fb;
+  font-size: 13px;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.app-shell .projects-sidebar .project-item:hover {
+  border-color: rgba(218, 232, 243, 0.38);
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+.app-shell .projects-sidebar .project-item.active {
+  position: relative;
+  border-color: rgba(215, 229, 240, 0.2);
+  background: rgba(255, 255, 255, 0.105);
+  color: #fff;
+}
+.app-shell .projects-sidebar .project-item.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  border-radius: 9px 0 0 9px;
+  background: #d0a56b;
+}
+.app-shell .projects-sidebar .project-name { padding-left: 3px; font-size: 13px; }
+.app-shell .projects-sidebar .project-meta {
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding-left: 3px;
+  color: #c1d2e0;
+  font-size: 10px;
+}
+.app-shell .projects-sidebar .project-meta .pill {
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(220, 235, 246, 0.12);
+  color: #d7e4ed;
+  font-size: 9px;
+  line-height: 1.35;
+}
+.app-shell .projects-sidebar .hint { position: relative; z-index: 2; color: #c3d2df; }
+.app-shell .projects-sidebar .hint a { color: #e2bc85; }
+
+.project-create-drawer {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 13px;
+  border: 1px solid rgba(231, 240, 247, 0.2);
+  border-radius: 10px;
+  background: rgba(6, 31, 53, 0.88);
+  box-shadow: 0 12px 28px rgba(4, 21, 37, 0.28);
+}
+.app-shell .projects-sidebar .side-form { margin: 0; }
+.app-shell .projects-sidebar .side-form h3 { margin: 0 0 4px; color: #fff; font-size: 14px; }
+.app-shell .projects-sidebar .side-form label { color: #d1deea; }
+.app-shell .projects-sidebar input[type="text"],
+.app-shell .projects-sidebar input[type="password"],
+.app-shell .projects-sidebar input[type="number"],
+.app-shell .projects-sidebar input[type="file"],
+.app-shell .projects-sidebar select {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid rgba(223, 236, 246, 0.22);
+  border-radius: 7px;
+  background: #102f4c;
+  color: #fff;
+}
+.app-shell .projects-sidebar input::placeholder { color: #a8bdcf; }
+.app-shell .projects-sidebar .side-form .primary-btn {
+  width: 100%;
+  border-color: #d0a56b;
+  background: #d0a56b;
+  color: #143b5c;
+}
+.app-shell .projects-sidebar .side-form .primary-btn:hover:not(:disabled) { color: #143b5c; }
+
+.projects-sidebar-story {
+  position: relative;
+  z-index: 1;
+  min-height: 255px;
+  margin: auto -16px 0 -21px;
+  padding: 0 16px 28px 21px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+.projects-sidebar-story .sidebar-brand-rule,
+.projects-sidebar-story .sidebar-motto,
+.projects-sidebar-story .sidebar-motto-en { flex: 0 0 auto; }
+.projects-sidebar-story .sidebar-campus { inset: 0 -8px 0; }
+
+.app-shell .project-main {
+  min-height: 0;
+  padding: 20px 20px 28px;
+  overflow-x: hidden;
+  background: #f4f7fa;
+}
+.app-shell .project-main > template + * { min-width: 0; }
+.app-shell .project-main > template { min-width: 0; }
+.app-shell .project-main .empty-state {
+  padding: 36px;
+  border: 1px dashed #cfdae5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.project-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 10px 11px;
+  color: #71849a;
+  font-size: 12px;
+}
+.project-breadcrumb a { color: #71849a !important; text-decoration: none; }
+.project-breadcrumb a:hover { color: var(--accent) !important; text-decoration: underline; }
+.project-breadcrumb > span:last-child { color: #294a69; font-weight: 500; }
+
+.app-shell .project-header {
+  align-items: center;
+  gap: 20px;
+  margin: 0 10px 22px;
+}
+.project-title-block { min-width: 0; }
+.project-title-line { display: flex; align-items: center; gap: 10px; }
+.app-shell .project-title-line h2 {
+  margin: 0;
+  color: #143d62;
+  font-size: clamp(23px, 2vw, 28px);
+  letter-spacing: -0.025em;
+}
+.project-edit-shortcut {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  padding: 0;
+  border: 1px solid #dbe5ee;
+  border-radius: 50%;
+  background: #fff;
+  color: #16466e;
+  font-size: 18px;
+}
+.project-edit-shortcut:hover { border-color: #b8cadd; background: #f8fbfd; color: #16466e; }
+.app-shell .project-header .hint { margin: 7px 0 0; color: #71849a; font-size: 12px; }
+.app-shell .project-header .hint code { color: #415e7d; font-size: 11px; }
+.app-shell .project-header .hint strong { color: #49627d; }
+.app-shell .project-actions { flex: 0 0 auto; gap: 8px; }
+.app-shell .project-actions button,
+.app-shell .project-actions .project-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 15px;
+  border: 1px solid #e0e8f0;
+  border-radius: 9px;
+  background: #fff;
+  color: #173e63;
+  box-shadow: 0 2px 8px rgba(21, 52, 79, 0.045);
+  font-size: 13px;
+}
+.app-shell .project-actions button:hover:not(:disabled) { border-color: #bdcddd; background: #f8fbfd; color: #173e63; }
+.app-shell .project-actions .project-more-btn { width: 42px; padding: 0; font-size: 19px; }
+
+.app-shell .tabs {
+  gap: 0;
+  margin: 0 0 18px;
+  border-bottom: 1px solid #dbe4ed;
+}
+.app-shell .projects-layout .tabs button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 49px;
+  padding: 0 17px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #46627e;
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-shell .projects-layout .tabs button:hover:not(:disabled) { background: #fff; color: #173e63; }
+.app-shell .projects-layout .tabs button.active {
+  border-color: transparent;
+  background: transparent;
+  color: #b47c37;
+}
+.app-shell .projects-layout .tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: #c99656;
+}
+
+.app-shell .project-main .project-ai-empty {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border-color: #e3eaf1;
+  background: #fff;
+  box-shadow: none;
+}
+.app-shell .project-main .project-ai-empty p { margin: 5px 0 10px; }
+.app-shell .project-main .project-ai-empty .primary-btn { display: inline-flex; text-decoration: none; }
+.app-shell .project-ai-diagram-card {
+  padding: 12px 14px;
+  border-color: #dce7f0;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(20, 48, 72, 0.045);
+}
+.app-shell .project-ai-diagram-card .ai-diagram-scroll { max-height: 220px; overflow: auto; }
+
+.app-shell .topology-section-bar {
+  align-items: center;
+  min-height: 66px;
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid #e0e8f0;
+  border-radius: 13px 13px 0 0;
+  background: #fff;
+}
+.app-shell .topology-section-bar h3 {
+  margin: 0;
+  color: #173e63;
+  font-size: 15px;
+}
+.topology-title-copy { flex: 0 0 auto; }
+.topology-title-copy p { margin: 4px 0 0; color: #7b8da0; font-size: 11px; }
+.app-shell .topology-section-bar .topology-toolbar {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.app-shell .topology-toolbar > .canvas-tool-btn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b6784;
+  font-size: 20px;
+}
+.app-shell .topology-toolbar > .canvas-tool-btn:disabled { color: #a7b6c5; }
+.app-shell .topology-toolbar > .canvas-tool-btn:hover:not(:disabled) { border-color: #b7c9da; background: #f8fbfd; color: #17466e; }
+.canvas-tool-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.app-shell .topology-toolbar .zoom-box {
+  align-items: center;
+  gap: 0;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: #fff;
+}
+.app-shell .topology-toolbar .zoom-box button {
+  height: 36px;
+  min-width: 37px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  color: #355674;
+  font-size: 15px;
+}
+.app-shell .topology-toolbar .zoom-box button:hover:not(:disabled) { background: #f5f8fb; color: #143f66; }
+.app-shell .topology-toolbar .zoom-box .zoom-value {
+  min-width: 60px;
+  border-right: 1px solid #e5ecf2;
+  border-left: 1px solid #e5ecf2;
+  color: #73859a;
+  font-size: 12px;
+}
+.app-shell .topology-toolbar .zoom-box .canvas-tool-fit { font-size: 18px; }
+.app-shell .topology-toolbar .topology-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid #103e65;
+  border-radius: 8px;
+  background: #103e65;
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.app-shell .topology-export-menu { position: relative; flex: 0 0 auto; }
+.app-shell .topology-export-menu > summary { list-style: none; cursor: pointer; }
+.app-shell .topology-export-menu > summary::-webkit-details-marker { display: none; }
+.app-shell .topology-export-menu[open] > summary { background: #0c3558; }
+.app-shell .topology-export-menu > summary:hover { background: #0c3558; color: #fff; }
+.topology-export-options {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 150px;
+  padding: 7px;
+  border: 1px solid #dce5ee;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(20, 48, 72, 0.15);
+}
+.app-shell .topology-export-options button {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #294966;
+  font-size: 12px;
+  text-align: left;
+}
+.app-shell .topology-export-options button:hover:not(:disabled) { background: #f2f6fa; color: #173e63; }
+.app-shell .topology-more-actions { position: relative; flex: 0 0 auto; }
+.app-shell .topology-more-actions > summary {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #355674;
+  font-size: 20px;
+  line-height: 1;
+  list-style: none;
+  cursor: pointer;
+}
+.app-shell .topology-more-actions > summary::-webkit-details-marker { display: none; }
+.app-shell .topology-more-actions[open] > summary,
+.app-shell .topology-more-actions > summary:hover { border-color: #b7c9da; background: #f8fbfd; }
+.topology-more-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 245px;
+  max-height: min(70vh, 540px);
+  overflow: auto;
+  padding: 7px;
+  border: 1px solid #dce5ee;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(20, 48, 72, 0.17);
+}
+.app-shell .topology-more-menu > button,
+.app-shell .topology-more-menu .menu-wrap > button {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #2d4e6b;
+  font-size: 12px;
+  text-align: left;
+}
+.app-shell .topology-more-menu > button:hover:not(:disabled),
+.app-shell .topology-more-menu .menu-wrap > button:hover:not(:disabled) { background: #f2f6fa; color: #143e63; }
+.app-shell .topology-more-menu .check { margin: 0; padding: 8px 9px; color: #46627e; font-size: 12px; }
+.app-shell .topology-more-menu .menu-list {
+  top: 4px;
+  right: calc(100% + 7px);
+  z-index: 32;
+  margin: 0;
+  border-color: #dce5ee;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(20, 48, 72, 0.14);
+}
+.app-shell .topology-more-menu .menu-list button { color: #2d4e6b; }
+.app-shell .topology-more-menu .menu-list button:hover:not(:disabled) { background: #f2f6fa; color: #143e63; }
+
+.app-shell .topology-wrap {
+  grid-template-columns: minmax(0, 1fr) minmax(235px, 270px);
+  grid-template-areas: "stage palette" "extras extras";
+  align-items: stretch;
+  gap: 0 14px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid #e0e8f0;
+  border-top: 0;
+  border-radius: 0 0 13px 13px;
+  background: #fff;
+}
+.app-shell .topology-wrap.no-palette {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "stage" "extras";
+}
+.app-shell .topology-wrap > .canvas-stage { grid-area: stage; }
+.app-shell .topology-wrap > .palette { grid-area: palette; }
+.app-shell .topology-wrap > .topology-panel {
+  grid-area: extras;
+  grid-column: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  align-items: start;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e8edf2;
+}
+.app-shell .topology-wrap > .topology-panel .legend { grid-column: 1 / -1; }
+.app-shell .topology-wrap > .topology-panel > .card { min-width: 0; margin: 0; }
+
+.app-shell .topology-wrap .palette {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: 6px;
+  min-width: 0;
+  max-height: min(64vh, 650px);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid #e7edf3;
+  border-radius: 12px;
+  background: #fff;
+}
+.app-shell .topology-wrap .palette h4 {
+  margin: 0 0 2px;
+  color: #173e63;
+  font-size: 15px;
+}
+.app-shell .topology-wrap .palette > .hint { margin: 0 0 7px; line-height: 1.55; }
+.palette-search {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  min-height: 40px;
+  margin: 0 0 5px;
+  padding: 0 10px;
+  border: 1px solid #e0e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #54718d !important;
+}
+.palette-search-icon { position: relative; flex: 0 0 14px; width: 14px; height: 14px; border: 1.7px solid #71879c; border-radius: 50%; }
+.palette-search-icon::after { content: ""; position: absolute; right: -5px; bottom: -3px; width: 6px; height: 1.7px; border-radius: 2px; background: #71879c; transform: rotate(48deg); transform-origin: left center; }
+.app-shell .projects-layout .palette-search input[type="search"] {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #203d59;
+  font: inherit;
+  font-size: 12px;
+}
+.palette-search input::placeholder { color: #8999aa; }
+.app-shell .projects-layout .palette-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 10px;
+  border: 1px solid #e0e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #294966;
+  font-size: 12px;
+  text-align: left;
+  cursor: grab;
+}
+.app-shell .projects-layout .palette-item:hover:not(:disabled) {
+  border-color: #b8d6ee;
+  background: #f6fbff;
+  color: #173e63;
+}
+.app-shell .palette-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #e8f4fc;
+  color: #0786c9;
+}
+.app-shell .palette-icon svg { width: 25px; height: 25px; }
+.app-shell .palette-icon svg * { stroke: currentColor; }
+.app-shell .topology-wrap .palette .check { margin-top: 7px; color: #587089; }
+.app-shell .topology-wrap .palette-ssh { margin-top: 5px; color: #587089; }
+.app-shell .topology-wrap .palette-ssh summary { color: #315574; }
+.app-shell .topology-wrap .palette-ssh .hint { line-height: 1.5; }
+
+.app-shell .topology-canvas {
+  width: 100%;
+  height: min(58vh, 600px);
+  min-height: 440px;
+  border: 1px solid #e4ebf2;
+  border-radius: 11px;
+  background-color: #fff;
+  background-image: radial-gradient(#eaf0f6 0.8px, transparent 0.8px);
+  background-size: 18px 18px;
+  cursor: grab;
+}
+.app-shell .grid-dot { fill: #e6edf4; }
+.app-shell .topo-node rect {
+  fill: #fff;
+  stroke: #83baff;
+  filter: drop-shadow(0 3px 6px rgba(39, 104, 160, 0.08));
+}
+.app-shell .topo-node.selected rect,
+.app-shell .topo-node:hover rect { stroke: #1388d0; }
+.app-shell .topo-node .icon { stroke: #1388d0; }
+.app-shell .topo-node .host { fill: #163d61; }
+.app-shell .topo-node .sub { fill: #6c8298; }
+.app-shell .topo-link text { stroke: #fff; }
+.app-shell .topo-link .iface,
+.app-shell .topo-link .mid { fill: #244966; }
+
+@media (max-width: 1300px) {
+  .app-shell .projects-layout { grid-template-columns: minmax(255px, 290px) minmax(0, 1fr); }
+  .app-shell .topology-section-bar { align-items: flex-start; }
+  .app-shell .topology-section-bar .topology-toolbar { flex-wrap: wrap; }
+  .app-shell .topology-wrap { grid-template-columns: minmax(0, 1fr) 245px; }
+}
+
+@media (max-width: 900px) {
+  .app-shell .projects-layout {
+    height: auto;
+    min-height: calc(100dvh - 150px);
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+  .app-shell .projects-sidebar {
+    max-height: 370px;
+    min-height: 0;
+    padding: 18px 16px;
+    border-radius: 0;
+  }
+  .app-shell .projects-sidebar-story { display: none; }
+  .app-shell .project-main { min-height: 0; padding: 16px; overflow: visible; }
+  .app-shell .project-header { align-items: flex-start; }
+  .app-shell .topology-section-bar { flex-wrap: wrap; }
+  .app-shell .topology-section-bar .topology-toolbar { justify-content: flex-start; }
+  .app-shell .topology-wrap {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "palette" "stage" "extras";
+    gap: 12px;
+  }
+  .app-shell .topology-wrap .palette {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    max-height: none;
+    overflow: visible;
+  }
+  .app-shell .topology-wrap .palette h4,
+  .app-shell .topology-wrap .palette > .hint,
+  .app-shell .topology-wrap .palette-search { flex: 1 1 100%; }
+  .app-shell .topology-wrap .palette-item { width: auto; min-width: 140px; flex: 1 1 140px; }
+  .app-shell .topology-canvas { height: 58vh; min-height: 420px; }
+}
+
+@media (max-width: 620px) {
+  .app-shell .projects-sidebar { max-height: 320px; }
+  .app-shell .project-main { padding: 12px; }
+  .app-shell .project-header { flex-direction: column; margin: 0 4px 16px; }
+  .app-shell .project-breadcrumb { margin-right: 4px; margin-left: 4px; }
+  .app-shell .project-actions { width: 100%; }
+  .app-shell .project-actions button:not(.project-more-btn) { flex: 1 1 auto; }
+  .app-shell .tabs { overflow-x: auto; }
+  .app-shell .projects-layout .tabs button { flex: 0 0 auto; padding: 0 12px; white-space: nowrap; }
+  .app-shell .topology-section-bar { align-items: center; padding: 10px; }
+  .app-shell .topology-title-copy { width: 100%; }
+  .app-shell .topology-section-bar .topology-toolbar { justify-content: flex-start; }
+  .app-shell .topology-toolbar > .canvas-tool-btn { width: 34px; height: 34px; }
+  .app-shell .topology-toolbar .zoom-box { height: 34px; }
+  .app-shell .topology-toolbar .zoom-box button { height: 32px; min-width: 31px; padding: 0 7px; }
+  .app-shell .topology-toolbar .zoom-box .zoom-value { min-width: 47px; }
+  .app-shell .topology-toolbar .topology-export-btn { min-height: 36px; padding: 0 10px; }
+  .app-shell .topology-more-actions > summary { width: 34px; height: 34px; }
+  .app-shell .topology-wrap { padding: 9px; }
+  .app-shell .topology-canvas { height: 54vh; min-height: 360px; }
+}

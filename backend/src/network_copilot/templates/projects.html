@@ -25,9 +25,9 @@
             </select>
           </label>
         </div>
-        <a class="nav-link nav-projects" aria-current="page"
+        <a class="nav-link nav-projects" :aria-current="tab !== 'topology' ? 'page' : null"
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects'">Projects</a>
-        <a class="nav-link nav-topology"
+        <a class="nav-link nav-topology" :aria-current="tab === 'topology' ? 'page' : null"
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/">Chat</a>
@@ -38,8 +38,14 @@
     <div class="projects-layout">
 
       <!-- ===== Project list / create / users ===== -->
-      <aside class="projects-sidebar">
-        <h2>Projects</h2>
+      <aside class="projects-sidebar" x-data="{ createProjectOpen: false }">
+        <h1 class="projects-app-title">AI Tool</h1>
+        <div class="projects-sidebar-heading">
+          <h2>Projects</h2>
+          <button type="button" class="add-project-btn" x-show="canCreateProject"
+                  :aria-expanded="createProjectOpen" aria-label="Tạo project mới"
+                  title="Tạo project mới" @click="createProjectOpen = !createProjectOpen">+</button>
+        </div>
         <p class="hint" x-show="!projects.length">Chưa có project nào.</p>
         <ul class="project-list">
           <template x-for="item in projects" :key="item.id">
@@ -64,35 +70,47 @@
           </template>
         </ul>
 
-        <label class="side-form file-pick" x-show="canCreateProject">
-          <span class="hint">Nhập project từ file JSON đã xuất</span>
-          <input type="file" accept="application/json,.json" @change="importProjectFile($event)" />
-        </label>
+        <div class="project-create-drawer" x-show="createProjectOpen" x-cloak>
+          <label class="side-form file-pick" x-show="canCreateProject">
+            <span class="hint">Nhập project từ file JSON đã xuất</span>
+            <input type="file" accept="application/json,.json" @change="importProjectFile($event)" />
+          </label>
 
-        <form class="side-form" @submit.prevent="createProject()" x-show="canCreateProject">
-          <h3>Tạo project mới</h3>
-          <label>Tên
-            <input type="text" x-model="projectForm.name" required maxlength="80" />
-          </label>
-          <label>Mô tả
-            <input type="text" x-model="projectForm.description" maxlength="255" />
-          </label>
-          <label>Dải IP quản trị (CIDR)
-            <input type="text" x-model="projectForm.management_network" required placeholder="vd. 172.16.3.0/24" />
-          </label>
-          <label>Môi trường
-            <select x-model="projectForm.environment">
-              <option value="pnetlab">PNETLab</option>
-              <option value="physical">Thiết bị thật</option>
-              <option value="mixed">Cả hai</option>
-            </select>
-          </label>
-          <button type="submit" class="primary-btn">Tạo project</button>
-        </form>
+          <form class="side-form" @submit.prevent="createProject()" x-show="canCreateProject">
+            <h3>Tạo project mới</h3>
+            <label>Tên
+              <input type="text" x-model="projectForm.name" required maxlength="80" />
+            </label>
+            <label>Mô tả
+              <input type="text" x-model="projectForm.description" maxlength="255" />
+            </label>
+            <label>Dải IP quản trị (CIDR)
+              <input type="text" x-model="projectForm.management_network" required placeholder="vd. 172.16.3.0/24" />
+            </label>
+            <label>Môi trường
+              <select x-model="projectForm.environment">
+                <option value="pnetlab">PNETLab</option>
+                <option value="physical">Thiết bị thật</option>
+                <option value="mixed">Cả hai</option>
+              </select>
+            </label>
+            <button type="submit" class="primary-btn">Tạo project</button>
+          </form>
+        </div>
 
         <p class="hint" x-show="isAdmin" x-cloak>
           Quản lý tài khoản ở trang <a href="/users">Người dùng</a>.
         </p>
+        <div class="projects-sidebar-story" aria-label="Thông điệp Eastern International University">
+          <span class="sidebar-brand-rule" aria-hidden="true"></span>
+          <p class="sidebar-motto">Kiến tạo tri thức<br />vì một tương lai bền vững</p>
+          <p class="sidebar-motto-en">CREATING KNOWLEDGE<br />FOR A SUSTAINABLE FUTURE</p>
+          <div class="sidebar-campus" aria-hidden="true">
+            <span class="campus-building campus-building--left"></span>
+            <span class="campus-building campus-building--middle"></span>
+            <span class="campus-building campus-building--right"></span>
+          </div>
+        </div>
       </aside>
 
       <!-- ===== Selected project ===== -->
@@ -106,18 +124,26 @@
 
         <template x-if="project">
           <div>
+            <div class="project-breadcrumb" aria-label="Breadcrumb">
+              <a href="/projects">Projects</a><span aria-hidden="true">›</span><span x-text="project.name"></span>
+            </div>
             <div class="project-header">
-              <div>
-                <h2 x-text="project.name"></h2>
+              <div class="project-title-block">
+                <div class="project-title-line">
+                  <h2 x-text="project.name"></h2>
+                  <button type="button" class="project-edit-shortcut" @click="tab = 'settings'" aria-label="Chỉnh sửa thông tin project" title="Chỉnh sửa thông tin project">✎</button>
+                </div>
                 <p class="hint">
                   <span x-text="project.description || 'Không có mô tả'"></span> ·
                   dải quản trị <code x-text="project.management_network"></code> ·
-                  quyền của bạn: <strong x-text="project.access"></strong>
+                  quyền của bạn: <strong x-text="project.access"></strong> ·
+                  <span x-text="devices.length + ' thiết bị'"></span>
                 </p>
               </div>
               <div class="project-actions">
                 <button type="button" @click="exportProject()" title="Tải project thành file JSON (không kèm mật khẩu)">Xuất JSON</button>
                 <button type="button" @click="cloneProject()" x-show="canCreateProject" title="Tạo bản sao làm mẫu">Nhân bản</button>
+                <button type="button" class="project-more-btn" @click="tab = 'settings'" aria-label="Mở cài đặt project" title="Cài đặt project">⋮</button>
               </div>
             </div>
 
@@ -318,53 +344,75 @@
               </figure>
               <p class="hint" x-show="aiSuggestionLoading" x-cloak>Đang tải sơ đồ gợi ý từ Chat…</p>
               <p class="error-text" x-show="aiSuggestionError" x-text="aiSuggestionError"></p>
-              <div class="card project-ai-empty" x-show="!aiSuggestion && !aiSuggestionLoading" x-cloak>
+              <div class="card project-ai-empty" x-show="!aiSuggestion && !aiSuggestionLoading && !devices.length" x-cloak>
                 <strong>Chưa có sơ đồ AI trong cuộc chat của project này.</strong>
                 <p class="hint">Mở Chat, chọn project hiện tại và yêu cầu AI đề xuất sơ đồ. Sơ đồ sẽ xuất hiện tại đây.</p>
                 <a class="primary-btn" href="/">Mở Chat</a>
               </div>
-              <div class="section-bar">
-                <h3>Sơ đồ mạng</h3>
-                <div class="row-actions">
-                  <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit"
-                          title="Kéo từ thiết bị nguồn sang thiết bị đích (hoặc bấm lần lượt hai thiết bị); cổng trống được chọn tự động">
-                    <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>
+              <div class="section-bar topology-section-bar">
+                <div class="topology-title-copy">
+                  <h3>Sơ đồ mạng</h3>
+                  <p>Sơ đồ thiết bị và kết nối của project</p>
+                </div>
+                <div class="row-actions topology-toolbar">
+                  <button type="button" class="canvas-tool-btn" @click="undo()" x-show="canEdit" :disabled="!canUndo" title="Hoàn tác (Ctrl+Z)" aria-label="Hoàn tác">
+                    <svg class="canvas-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2" /></svg>
                   </button>
-                  <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
-                  <button type="button" @click="undo()" x-show="canEdit" :disabled="!canUndo" title="Hoàn tác (Ctrl+Z)">↶ Hoàn tác</button>
-                  <button type="button" @click="redo()" x-show="canEdit" :disabled="!canRedo" title="Làm lại (Ctrl+Y)">↷ Làm lại</button>
+                  <button type="button" class="canvas-tool-btn" @click="redo()" x-show="canEdit" :disabled="!canRedo" title="Làm lại (Ctrl+Y)" aria-label="Làm lại">
+                    <svg class="canvas-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5m5 5H10a6 6 0 0 0 0 12h2" /></svg>
+                  </button>
+                  <button type="button" class="canvas-tool-btn" @click="deleteSelectedDevices()" x-show="canEdit" :disabled="!multi.length" title="Xoá thiết bị đang chọn" aria-label="Xoá thiết bị đang chọn">
+                    <svg class="canvas-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>
+                  </button>
                   <span class="zoom-box" title="Con lăn: phóng to/thu nhỏ · Kéo vùng trống để rê sơ đồ · Shift+kéo để chọn nhiều">
-                    <button type="button" @click="zoomBy(1.25)" aria-label="Thu nhỏ">−</button>
+                    <button type="button" @click="zoomBy(1.25)" aria-label="Phóng to">+</button>
                     <button type="button" @click="resetView()" class="zoom-value" x-text="zoomPercent + '%'"></button>
-                    <button type="button" @click="zoomBy(1 / 1.25)" aria-label="Phóng to">+</button>
-                    <button type="button" @click="fitView()" title="Vừa khung (F)">Vừa khung</button>
+                    <button type="button" @click="zoomBy(1 / 1.25)" aria-label="Thu nhỏ">−</button>
+                    <button type="button" class="canvas-tool-fit" @click="fitView()" title="Vừa khung (F)" aria-label="Vừa khung">
+                      <svg class="canvas-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" /></svg>
+                    </button>
                   </span>
-                  <span class="menu-wrap" x-show="canEdit">
-                    <button type="button" @click.stop="layoutMenuOpen = !layoutMenuOpen" title="Sắp xếp sơ đồ (vùng chọn nếu có)">Bố cục ▾</button>
-                    <span class="menu-list" x-show="layoutMenuOpen" x-cloak @click.outside="layoutMenuOpen = false">
-                      <button type="button" @click="applyLayout('hierarchy')">Phân tầng (core ở trên)</button>
-                      <button type="button" @click="applyLayout('force')">Lực đẩy (theo kết nối)</button>
-                      <button type="button" @click="applyLayout('circle')">Vòng tròn</button>
-                      <button type="button" @click="applyLayout('star')">Hình sao</button>
-                      <button type="button" @click="applyLayout('grid')">Lưới (theo tên)</button>
-                    </span>
-                  </span>
-                  <button type="button" @click="openBlueprints()" x-show="canEdit" title="Tạo nhanh mô hình mẫu">Mẫu ▾</button>
-                  <button type="button" @click="addNote('note')" x-show="canEdit" title="Thêm ghi chú lên sơ đồ">+ Ghi chú</button>
-                  <button type="button" @click="addNote('group')" x-show="canEdit" title="Thêm khung nhóm (toà nhà, vùng, site)">+ Nhóm</button>
-                  <button type="button" @click="openVersions()" title="Lưu / so sánh / khôi phục các phiên bản sơ đồ">Phiên bản</button>
-                  <button type="button" @click="runLint()" title="Kiểm tra thiết kế và địa chỉ">Kiểm tra</button>
-                  <label class="check snap-toggle" x-show="canEdit" title="Bắt dính lưới (G)">
-                    <input type="checkbox" :checked="snap" @change="toggleSnap()" /> Lưới
-                  </label>
-                  <button type="button" @click="helpOpen = true" title="Phím tắt (?)" aria-label="Phím tắt">?</button>
-                  <button type="button" @click="exportDiagramSvg()" title="Tải sơ đồ thành ảnh vector">Tải SVG</button>
-                  <button type="button" @click="exportDiagramPng()" title="Tải sơ đồ thành ảnh PNG">Tải PNG</button>
-                  <button type="button" @click="runDiscovery()" x-show="canEdit" :disabled="discovery && discovery.loading"
-                          title="Hỏi thiết bị về hàng xóm CDP/LLDP và so với sơ đồ">
-                    <span x-text="discovery && discovery.loading ? 'Đang hỏi thiết bị…' : 'Khám phá (CDP/LLDP)'"></span>
-                  </button>
-                  <button type="button" @click="loadPlan()" x-show="canEdit">Xem cấu hình sinh ra</button>
+                  <details class="topology-export-menu">
+                    <summary class="topology-export-btn" title="Tải sơ đồ">Tải SVG <span aria-hidden="true">⌄</span></summary>
+                    <div class="topology-export-options">
+                      <button type="button" @click="exportDiagramSvg()">Tải SVG</button>
+                      <button type="button" @click="exportDiagramPng()">Tải PNG</button>
+                    </div>
+                  </details>
+                  <details class="topology-more-actions">
+                    <summary aria-label="Thêm thao tác sơ đồ" title="Thêm thao tác">⋮</summary>
+                    <div class="topology-more-menu">
+                      <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit"
+                              title="Kéo từ thiết bị nguồn sang thiết bị đích (hoặc bấm lần lượt hai thiết bị); cổng trống được chọn tự động">
+                        <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>
+                      </button>
+                      <button type="button" @click="openManualLinkForm()" x-show="canEdit">Nối thủ công</button>
+                      <span class="menu-wrap" x-show="canEdit">
+                        <button type="button" @click.stop="layoutMenuOpen = !layoutMenuOpen" title="Sắp xếp sơ đồ (vùng chọn nếu có)">Bố cục ▾</button>
+                        <span class="menu-list" x-show="layoutMenuOpen" x-cloak @click.outside="layoutMenuOpen = false">
+                          <button type="button" @click="applyLayout('hierarchy')">Phân tầng (core ở trên)</button>
+                          <button type="button" @click="applyLayout('force')">Lực đẩy (theo kết nối)</button>
+                          <button type="button" @click="applyLayout('circle')">Vòng tròn</button>
+                          <button type="button" @click="applyLayout('star')">Hình sao</button>
+                          <button type="button" @click="applyLayout('grid')">Lưới (theo tên)</button>
+                        </span>
+                      </span>
+                      <button type="button" @click="openBlueprints()" x-show="canEdit" title="Tạo nhanh mô hình mẫu">Mô hình mẫu</button>
+                      <button type="button" @click="addNote('note')" x-show="canEdit">Thêm ghi chú</button>
+                      <button type="button" @click="addNote('group')" x-show="canEdit">Thêm nhóm</button>
+                      <button type="button" @click="openVersions()">Phiên bản</button>
+                      <button type="button" @click="runLint()">Kiểm tra thiết kế</button>
+                      <label class="check snap-toggle" x-show="canEdit" title="Bắt dính lưới (G)">
+                        <input type="checkbox" :checked="snap" @change="toggleSnap()" /> Bắt dính lưới
+                      </label>
+                      <button type="button" @click="helpOpen = true">Phím tắt</button>
+                      <button type="button" @click="runDiscovery()" x-show="canEdit" :disabled="discovery && discovery.loading"
+                              title="Hỏi thiết bị về hàng xóm CDP/LLDP và so với sơ đồ">
+                        <span x-text="discovery && discovery.loading ? 'Đang hỏi thiết bị…' : 'Khám phá CDP/LLDP'"></span>
+                      </button>
+                      <button type="button" @click="loadPlan()" x-show="canEdit">Xem cấu hình sinh ra</button>
+                    </div>
+                  </details>
                 </div>
               </div>
               <p class="error-text" x-show="topologyError" x-text="topologyError"></p>
@@ -390,10 +438,15 @@
               <p class="hint" x-show="devices.length > 1 && !linkMode">Kéo vùng trống để rê sơ đồ; Shift+kéo để chọn nhiều thiết bị, Shift+bấm để thêm/bớt.</p>
 
               <div class="topology-wrap" :class="{ 'no-palette': !canEdit }">
-                <aside class="palette" x-show="canEdit" x-cloak>
+                <aside class="palette" x-show="canEdit" x-cloak x-data="{ paletteFilter: '' }">
                   <h4>Thiết bị</h4>
                   <p class="hint">Kéo thả vào sơ đồ hoặc bấm để thêm. Tên và IP được đặt tự động.</p>
-                  <template x-for="tpl in templates" :key="tpl.key">
+                  <label class="palette-search">
+                    <span class="sr-only">Tìm thiết bị</span>
+                    <span class="palette-search-icon" aria-hidden="true"></span>
+                    <input type="search" x-model="paletteFilter" placeholder="Tìm thiết bị…" />
+                  </label>
+                  <template x-for="tpl in templates.filter(tpl => !paletteFilter || tpl.label.toLowerCase().includes(paletteFilter.toLowerCase()))" :key="tpl.key">
                     <button type="button" class="palette-item" draggable="true"
                             @dragstart="onPaletteDragStart($event, tpl.key)" @dragend="dragging = false"
                             @click="addTemplate(tpl.key)" :disabled="dropBusy">
@@ -428,8 +481,8 @@
                     @drop="onCanvasDrop($event)"
                   >
                     <defs>
-                      <pattern id="gridpat" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" class="grid-line" />
+                      <pattern id="gridpat" width="24" height="24" patternUnits="userSpaceOnUse">
+                        <circle cx="2" cy="2" r="1" class="grid-dot" />
                       </pattern>
                     </defs>
                     <rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridpat)" class="grid-bg" x-show="snap" />
