@@ -498,3 +498,50 @@ def test_chat_endpoint_surfaces_provider_failure_as_502(
     )
     assert response.status_code == 502
     assert response.get_json()["error"] == "ai_provider_error"
+
+
+def _gemini_api_error(code, status, message="upstream detail AIzaSECRET"):
+    from google.genai import errors
+
+    return errors.APIError(
+        code, {"error": {"code": code, "status": status, "message": message}}
+    )
+
+
+def test_gemini_failure_names_the_http_status_and_a_hint():
+    fake = FakeGenaiClient(raise_with=_gemini_api_error(429, "RESOURCE_EXHAUSTED"))
+    with pytest.raises(AIProviderError) as info:
+        gemini_with(fake).complete("sys", "hi", {})
+    message = str(info.value.message if hasattr(info.value, "message") else info.value)
+    assert "HTTP 429 RESOURCE_EXHAUSTED" in message
+    assert "quota" in message
+    assert "AIzaSECRET" not in message
+
+
+def test_gemini_does_not_retry_failures_unrelated_to_thinking():
+    fake = FakeGenaiClient(raise_with=_gemini_api_error(404, "NOT_FOUND"))
+    with pytest.raises(AIProviderError):
+        gemini_with(fake).complete("sys", "hi", {})
+    assert len(fake.models.calls) == 1
+
+
+def test_gemini_failure_names_the_error_reason():
+    from google.genai import errors
+
+    exc = errors.APIError(
+        400,
+        {
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "API key not valid AIzaSECRET",
+                "details": [{"reason": "API_KEY_INVALID"}],
+            }
+        },
+    )
+    fake = FakeGenaiClient(raise_with=exc)
+    with pytest.raises(AIProviderError) as info:
+        gemini_with(fake).complete("sys", "hi", {})
+    message = str(info.value.message if hasattr(info.value, "message") else info.value)
+    assert "HTTP 400 INVALID_ARGUMENT API_KEY_INVALID" in message
+    assert "AIzaSECRET" not in message
