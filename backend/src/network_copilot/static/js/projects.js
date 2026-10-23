@@ -832,7 +832,7 @@ document.addEventListener("alpine:init", () => {
       }
       const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
       style.textContent =
-        "text{font-family:Arial,sans-serif}" +
+        "text{font-family:system-ui,sans-serif}" +
         ".topo-node rect{fill:#131f30;stroke:#223349;stroke-width:1.5}" +
         ".topo-node.env-physical rect{stroke:#f0c674}" +
         ".topo-node .host{fill:#dbe4ee;font-size:14px;font-weight:600}" +

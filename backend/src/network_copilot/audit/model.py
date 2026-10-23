@@ -40,12 +40,21 @@ class AuditLog(db.Model):
     )
 
     def to_dict(self) -> dict:
+        username = self.username
+        if not username and self.user_id is not None:
+            try:
+                from ..auth.model import User
+
+                actor = db.session.get(User, self.user_id)
+                username = actor.username if actor is not None else None
+            except Exception:  # Existing logs must remain readable if lookup fails.
+                username = None
         return {
             "id": self.id,
             "action": self.action,
             "result": self.result,
             "user_id": self.user_id,
-            "username": self.username,
+            "username": username,
             "device_id": self.device_id,
             "project_id": self.project_id,
             "message": self.message,
