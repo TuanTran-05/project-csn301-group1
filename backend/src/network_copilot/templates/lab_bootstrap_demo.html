@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lab Bootstrap ZIP Safe Demo</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; }
+    body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; }
+    .notice, .panel { border: 1px solid #a9b7ca; border-radius: .5rem; padding: 1rem; margin: 1rem 0; }
+    .notice { background: #fff4d6; border-color: #c99b31; }
+    .panel { background: #f7f9fc; }
+    button { padding: .5rem .9rem; cursor: pointer; }
+    button:disabled { cursor: wait; }
+    dt { font-weight: 650; margin-top: .65rem; }
+    dd { margin-left: 0; overflow-wrap: anywhere; }
+    .error { color: #9c1c1c; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main id="lab-bootstrap-demo"
+        data-auth-mode="{{ 'cookie' if cookie_auth else 'header' }}"
+        data-csrf-cookie-name="{{ csrf_cookie_name }}">
+    <h1>Phân tích ZIP topology — Safe Demo</h1>
+    <p class="notice">
+      Chỉ kiểm tra ngoại tuyến nội dung ZIP trong bộ nhớ. Không gọi PNETLab hoặc Agent,
+      không kết nối thiết bị, không tạo IP plan, startup-config hay topology để import.
+    </p>
+    {% if cookie_auth %}
+    <p>Quyền truy cập Safe Demo được cấp cục bộ trong cookie HttpOnly, hết hạn sau 5 phút và mất hiệu lực khi runner khởi động lại. Đây không phải xác thực danh tính người dùng.</p>
+    {% else %}
+    <p>API giới hạn ZIP tối đa 10 MiB. Đăng nhập bằng ứng dụng hiện tại, rồi dán access token vào ô dưới đây. Safe Demo không lưu token.</p>
+    <label for="access-token">JWT access token</label>
+    <input id="access-token" type="password" autocomplete="off" spellcheck="false" />
+    {% endif %}
+    <form id="archive-form">
+      <label for="archive-file">Chọn file ZIP đã export từ PNETLab</label>
+      <input id="archive-file" type="file" accept=".zip,application/zip" required />
+      <button id="analyze-button" type="submit">Phân tích ZIP</button>
+    </form>
+    <p id="request-status" role="status" aria-live="polite"></p>
+
+    <section id="analysis-results" class="panel" hidden aria-live="polite">
+      <h2>Kết quả inspection</h2>
+      <dl>
+        <dt>Trạng thái archive</dt><dd id="analysis-status"></dd>
+        <dt>Preview compatible</dt><dd id="preview-compatible"></dd>
+        <dt>Planner</dt><dd id="planner-status"></dd>
+        <dt>Gateway</dt><dd id="gateway-status"></dd>
+        <dt>SHA-256 của archive</dt><dd id="archive-sha256"><code></code></dd>
+        <dt>Trạng thái an toàn</dt><dd id="device-actions"></dd>
+      </dl>
+      <h3>Nodes và interfaces</h3><ul id="nodes"></ul>
+      <h3>Segments được inspection</h3><ul id="segments"></ul>
+      <h3>Warnings</h3><ul id="warnings"></ul>
+      <h3>Issues</h3><ul id="issues"></ul>
+      <h3>Lý do planner bị khóa / chưa chạy</h3><ul id="planner-blockers"></ul>
+      <h3>Báo cáo review-only</h3>
+      <p>Báo cáo chỉ chứa checksum và số lượng bản ghi inspection. Báo cáo không phải IP plan, topology để import hoặc cấu hình thiết bị.</p>
+      <button id="export-inspection-button" type="button" hidden disabled>Tải báo cáo inspection</button>
+      <p id="export-status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="{{ url_for('lab_bootstrap_demo.static_js') }}" defer></script>
+</body>
+</html>
