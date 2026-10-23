@@ -11,95 +11,225 @@
 
   {% include "_login_screen.html" %}
 
-  <div class="app-shell" x-show="currentUser" x-cloak>
+  <div class="app-shell users-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       {% include "_app_brand.html" %}
       <nav class="top-bar-nav" aria-label="Điều hướng chính">
-        <div class="top-bar-project-slot" aria-hidden="true"></div>
-        <a class="nav-link nav-projects" href="/projects">Projects</a>
-        <a class="nav-link nav-topology" href="/projects?tab=topology">Sơ đồ mạng</a>
-        <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
-        <a class="nav-link nav-chat" href="/">Chat</a>
+        <div class="top-bar-project-slot users-app-context" aria-label="Ứng dụng hiện tại">
+          <span class="users-app-context-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>
+            AI Tool
+          </span>
+        </div>
+        <a class="nav-link nav-projects" href="/projects"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h7l2 2h8v10h-17z"/><path d="M3.5 7.5v-2a1 1 0 0 1 1-1h5l2 2h5"/></svg><span>Projects</span></a>
+        <a class="nav-link nav-topology" href="/projects?tab=topology"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-3h12v3"/></svg><span>Sơ đồ mạng</span></a>
+        <a class="nav-link nav-dashboard" href="/dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V11h4v8zM10 19V5h4v14zM16 19V8h4v11z"/></svg><span>Dashboard</span></a>
+        <a class="nav-link nav-chat" href="/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v12H11l-5 3v-3H4z"/><path d="M8 10h8M8 13.5h5"/></svg><span>Chat</span></a>
         {% include "_account_menu.html" %}
       </nav>
     </header>
 
-    <main class="users-page">
-      <p class="error-text" x-show="error" x-text="error"></p>
-      <p class="ok-text" x-show="notice" x-text="notice"></p>
-
-      <!-- ===== User administration ===== -->
-      <section x-show="isAdmin" x-cloak>
-        <div class="section-bar"><h3>Người dùng (<span x-text="users.length"></span>)</h3></div>
-
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Tài khoản</th><th>Họ tên</th><th>Email</th><th>Vai trò</th>
-              <th>Trạng thái</th><th>Đăng nhập gần nhất</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="user in users" :key="user.id">
-              <tr :class="{ muted: !user.is_active }">
-                <td><strong x-text="user.username"></strong></td>
-                <td x-text="user.full_name || '—'"></td>
-                <td x-text="user.email || '—'"></td>
-                <td><span class="pill" x-text="user.role"></span></td>
-                <td x-text="user.is_active ? 'hoạt động' : 'vô hiệu hoá'"></td>
-                <td x-text="user.last_login_at ? new Date(user.last_login_at + 'Z').toLocaleString('vi-VN') : 'chưa bao giờ'"></td>
-                <td class="row-actions">
-                  <button type="button" @click="startEdit(user)">Sửa</button>
-                  <button type="button" @click="resetPassword(user)">Đặt lại mật khẩu</button>
-                  <button type="button" :class="user.is_active ? 'danger-btn' : ''"
-                          @click="toggleActive(user)"
-                          x-text="user.is_active ? 'Vô hiệu hoá' : 'Kích hoạt'"
-                          :disabled="currentUser && user.id === currentUser.id"></button>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-
-        <template x-if="editing">
-        <form class="card form-grid" @submit.prevent="saveEdit()">
-          <h4>Sửa <span x-text="editing && editing.username"></span></h4>
-          <label>Họ tên <input type="text" x-model="editing.full_name" maxlength="120" /></label>
-          <label>Email <input type="text" x-model="editing.email" maxlength="254" /></label>
-          <label>Vai trò
-            <select x-model="editing.role">
-              <option value="ADMIN">ADMIN</option>
-              <option value="OPERATOR">OPERATOR</option>
-              <option value="VIEWER">VIEWER</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" x-model="editing.is_active" /> Đang hoạt động</label>
-          <div class="form-actions">
-            <button type="submit" class="primary-btn">Lưu</button>
-            <button type="button" @click="editing = null">Huỷ</button>
+    <div class="users-layout">
+      <aside class="dashboard-sidebar users-sidebar">
+        <nav class="dashboard-side-nav" aria-label="Điều hướng ứng dụng">
+          <a class="dashboard-side-link" href="/">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 14 4l2.4-.2 1.1 2.1 2.2 1-.2 2.4 1.2 2-1.2 2 .2 2.4-2.2 1-1.1 2.1L14 20l-2 1.2L10 20l-2.4.2-1.1-2.1-2.2-1 .2-2.4-1.2-2 1.2-2-.2-2.4 2.2-1 1.1-2.1L10 4z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>AI Tool</span>
+          </a>
+          <a class="dashboard-side-link" href="/projects">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h7l2 2h8v10h-17z"/><path d="M3.5 7.5v-2a1 1 0 0 1 1-1h5l2 2h5"/></svg>
+            <span>Projects</span>
+          </a>
+          <a class="dashboard-side-link" href="/projects?tab=topology">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.5 7 6.5 16M13.5 7l4 9M7.5 18h9"/></svg>
+            <span>Sơ đồ mạng</span>
+          </a>
+          <a class="dashboard-side-link" href="/dashboard">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V11h4v8zM10 19V5h4v14zM16 19V8h4v11z"/></svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="dashboard-side-link" href="/">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v12H11l-5 3v-3H4z"/><path d="M8 10h8M8 13.5h5"/></svg>
+            <span>Chat</span>
+          </a>
+          <a class="dashboard-side-link active" href="/users" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19v-1.3A4.7 4.7 0 0 1 8.2 13h1.6a4.7 4.7 0 0 1 4.7 4.7V19z"/><path d="M16 5.2a3.2 3.2 0 0 1 0 6.1M16 14a4.7 4.7 0 0 1 4.5 4.7V19h-3"/></svg>
+            <span>Người dùng</span>
+          </a>
+        </nav>
+        <div class="projects-sidebar-story dashboard-sidebar-story" aria-label="Thông điệp Eastern International University">
+          <span class="sidebar-brand-rule" aria-hidden="true"></span>
+          <p class="sidebar-motto">Kiến tạo tri thức<br />vì một tương lai bền vững</p>
+          <p class="sidebar-motto-en">CREATING KNOWLEDGE<br />FOR A SUSTAINABLE FUTURE</p>
+          <div class="sidebar-campus" aria-hidden="true">
+            <span class="campus-building campus-building--left"></span>
+            <span class="campus-building campus-building--middle"></span>
+            <span class="campus-building campus-building--right"></span>
           </div>
-          <p class="hint">Đổi vai trò hoặc vô hiệu hoá sẽ đăng xuất người đó khỏi mọi phiên đang mở.</p>
-        </form>
-        </template>
+        </div>
+      </aside>
 
-        <form class="card form-grid" @submit.prevent="createUser()">
-          <h4>Tạo tài khoản</h4>
-          <label>Tên đăng nhập <input type="text" x-model="createForm.username" required autocomplete="off" /></label>
-          <label>Họ tên <input type="text" x-model="createForm.full_name" maxlength="120" /></label>
-          <label>Email <input type="text" x-model="createForm.email" maxlength="254" /></label>
-          <label>Mật khẩu (≥ 10 ký tự) <input type="password" x-model="createForm.password" required autocomplete="new-password" /></label>
-          <label>Vai trò
-            <select x-model="createForm.role">
-              <option value="OPERATOR">OPERATOR — tạo project, xem, chạy lệnh đọc</option>
-              <option value="VIEWER">VIEWER — chỉ xem</option>
-              <option value="ADMIN">ADMIN — duyệt và áp dụng thay đổi, quản lý người dùng</option>
-            </select>
-          </label>
-          <div class="form-actions"><button type="submit" class="primary-btn">Tạo tài khoản</button></div>
-        </form>
-      </section>
+      <main class="users-main">
+        <p class="error-text users-notice users-notice-error" x-show="error" x-text="error" role="alert" x-cloak></p>
+        <p class="ok-text users-notice users-notice-success" x-show="notice" x-text="notice" role="status" x-cloak></p>
 
-    </main>
+        <section class="users-panel users-management-panel" x-show="isAdmin" x-cloak>
+          <div class="users-panel-heading">
+            <span class="users-heading-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19v-1.3A4.7 4.7 0 0 1 8.2 13h1.6a4.7 4.7 0 0 1 4.7 4.7V19z"/><path d="M16 5.2a3.2 3.2 0 0 1 0 6.1M16 14a4.7 4.7 0 0 1 4.5 4.7V19h-3"/></svg>
+            </span>
+            <div>
+              <h1>Quản lý người dùng <span class="users-count" x-text="users.length"></span></h1>
+              <p>Quản lý tài khoản người dùng trong hệ thống AI Tool</p>
+            </div>
+          </div>
+
+          <div class="users-table-wrap">
+            <table class="data-table users-table">
+              <thead>
+                <tr>
+                  <th scope="col">Tài khoản</th>
+                  <th scope="col">Họ tên</th>
+                  <th scope="col">Email</th>
+                  <th scope="col">Vai trò</th>
+                  <th scope="col">Trạng thái</th>
+                  <th scope="col">Đăng nhập gần nhất</th>
+                  <th scope="col">Hành động</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="user in users" :key="user.id">
+                  <tr :class="{ muted: !user.is_active }">
+                    <td><strong class="users-username" x-text="user.username"></strong></td>
+                    <td x-text="user.full_name || '—'"></td>
+                    <td class="users-email" x-text="user.email || '—'"></td>
+                    <td><span class="users-role" :class="'role-' + user.role.toLowerCase()" x-text="user.role"></span></td>
+                    <td>
+                      <span class="users-status" :class="user.is_active ? 'is-active' : 'is-disabled'">
+                        <span class="users-status-dot" aria-hidden="true"></span>
+                        <span x-text="user.is_active ? 'Hoạt động' : 'Vô hiệu hoá'"></span>
+                      </span>
+                    </td>
+                    <td class="users-last-login" x-text="user.last_login_at ? new Date(user.last_login_at + 'Z').toLocaleString('vi-VN') : 'Chưa đăng nhập'"></td>
+                    <td>
+                      <div class="users-row-actions">
+                        <button class="users-action-btn" type="button" @click="startEdit(user)">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6 4 4M4 20l4.2-.8L19 8.4a2.1 2.1 0 0 0-3-3L5.2 16.2z"/></svg><span>Sửa</span>
+                        </button>
+                        <button class="users-action-btn" type="button" @click="resetPassword(user)">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8 2 2-2 2 1.5 1.5-2 2L17 10l-3.2 3.2"/></svg><span>Đặt lại mật khẩu</span>
+                        </button>
+                        <button class="users-action-btn users-disable-btn" type="button" :class="{ 'users-enable-btn': !user.is_active }"
+                                @click="toggleActive(user)"
+                                :title="currentUser && user.id === currentUser.id ? 'Không thể vô hiệu hoá tài khoản đang sử dụng' : ''"
+                                :disabled="currentUser && user.id === currentUser.id">
+                          <svg viewBox="0 0 24 24" aria-hidden="true" x-show="user.is_active"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg>
+                          <svg viewBox="0 0 24 24" aria-hidden="true" x-show="!user.is_active" x-cloak><path d="M12 5v14M5 12h14"/></svg>
+                          <span x-text="user.is_active ? 'Vô hiệu hoá' : 'Kích hoạt'"></span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+                <tr x-show="!users.length" x-cloak>
+                  <td class="users-table-empty" colspan="7">Chưa có tài khoản người dùng nào.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <template x-if="editing">
+            <form class="users-edit-form" @submit.prevent="saveEdit()">
+              <div class="users-edit-heading">
+                <h2>Sửa tài khoản <span x-text="editing && editing.username"></span></h2>
+                <button class="users-close-btn" type="button" aria-label="Đóng biểu mẫu" @click="editing = null">×</button>
+              </div>
+              <div class="users-edit-fields">
+                <label>Họ tên<input type="text" x-model="editing.full_name" maxlength="120" /></label>
+                <label>Email<input type="text" x-model="editing.email" maxlength="254" /></label>
+                <label>Vai trò
+                  <select x-model="editing.role">
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="OPERATOR">OPERATOR</option>
+                    <option value="VIEWER">VIEWER</option>
+                  </select>
+                </label>
+                <label class="users-active-check"><input type="checkbox" x-model="editing.is_active" /> Đang hoạt động</label>
+              </div>
+              <div class="users-form-actions">
+                <button type="submit" class="users-primary-btn">Lưu thay đổi</button>
+                <button type="button" class="users-cancel-btn" @click="editing = null">Huỷ</button>
+              </div>
+              <p class="users-form-hint">Đổi vai trò hoặc vô hiệu hoá sẽ đăng xuất người đó khỏi mọi phiên đang mở.</p>
+            </form>
+          </template>
+        </section>
+
+        <section class="users-panel users-create-panel" x-show="isAdmin" x-cloak>
+          <div class="users-panel-heading">
+            <span class="users-heading-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19v-1.3A4.7 4.7 0 0 1 8.2 13h1.6a4.7 4.7 0 0 1 4.7 4.7V19z"/><path d="M18 8v7M14.5 11.5h7"/></svg>
+            </span>
+            <div>
+              <h2>Tạo tài khoản</h2>
+              <p>Thêm người dùng mới vào hệ thống</p>
+            </div>
+          </div>
+
+          <form class="users-create-form" @submit.prevent="createUser()">
+            <div class="users-create-fields">
+              <label class="users-field">
+                <span>Tên đăng nhập <b>*</b></span>
+                <span class="users-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20v-1.2a6.5 6.5 0 0 1 13 0V20z"/></svg>
+                  <input type="text" x-model="createForm.username" required autocomplete="off" placeholder="Nhập tên đăng nhập" />
+                </span>
+              </label>
+              <label class="users-field">
+                <span>Họ tên</span>
+                <span class="users-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20v-1.2a6.5 6.5 0 0 1 13 0V20z"/></svg>
+                  <input type="text" x-model="createForm.full_name" maxlength="120" placeholder="Nhập họ tên" />
+                </span>
+              </label>
+              <label class="users-field">
+                <span>Email</span>
+                <span class="users-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>
+                  <input type="text" x-model="createForm.email" maxlength="254" placeholder="Nhập email" />
+                </span>
+              </label>
+              <label class="users-field" x-data="{ showPassword: false }">
+                <span>Mật khẩu (≥ 10 ký tự) <b>*</b></span>
+                <span class="users-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3M12 14v3"/></svg>
+                  <input :type="showPassword ? 'text' : 'password'" x-model="createForm.password" required minlength="10" autocomplete="new-password" placeholder="Nhập mật khẩu" />
+                  <button class="users-password-toggle" type="button" :aria-pressed="showPassword" :aria-label="showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'" @click="showPassword = !showPassword">
+                    <svg x-show="!showPassword" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/><path d="m4 4 16 16"/></svg>
+                    <svg x-show="showPassword" x-cloak viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                  </button>
+                </span>
+              </label>
+            </div>
+            <div class="users-create-footer">
+              <label class="users-role-field">Vai trò <b>*</b>
+                <select x-model="createForm.role" required>
+                  <option value="OPERATOR">OPERATOR — tạo project, xem, chat</option>
+                  <option value="VIEWER">VIEWER — chỉ xem</option>
+                  <option value="ADMIN">ADMIN — duyệt và áp dụng thay đổi, quản lý người dùng</option>
+                </select>
+              </label>
+              <button type="submit" class="users-primary-btn users-create-btn">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1.2a5.5 5.5 0 0 1 11 0V20zM18 8v7M14.5 11.5h7"/></svg>
+                Tạo tài khoản
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <p class="users-access-note" x-show="currentUser && !isAdmin" x-cloak>Bạn cần quyền quản trị viên để xem danh sách và quản lý tài khoản.</p>
+      </main>
+    </div>
   </div>
 
   <script defer src="{{ url_for('static', filename='js/users.js') }}"></script>
