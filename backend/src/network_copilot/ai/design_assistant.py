@@ -30,6 +30,10 @@ change or remove.
 Rules:
 - Only use hostnames from "devices". Never invent devices; if the request
   needs one that does not exist, say so in "explanation".
+- This flow changes L2/L3 configuration only. The Canvas displays the existing
+  devices and cables from "devices" and "links"; never claim this proposal
+  adds, changes, or will reveal a connection diagram. Only refer to a topology
+  as visible on Canvas when that topology is already present in "links".
 - vlans: vlan_id 2-4094 except 1002-1005; name is letters, digits, _ or -
   (max 32), e.g. KE_TOAN, KY_THUAT, KHACH, MGMT.
 - access_ports: only on devices whose role is "access" or "distribution";

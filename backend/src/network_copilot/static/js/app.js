@@ -871,8 +871,15 @@ document.addEventListener("alpine:init", () => {
       const generation = this._deviceRefreshGeneration;
       const data = await this.authFetch("/api/devices");
       if (generation === this._deviceRefreshGeneration) {
+        const allDevices = Array.isArray(data.items) ? data.items : [];
+        // Keep the project card in sync with the full inventory. The chat's
+        // device list below intentionally contains only managed, provisioned
+        // devices, so its length is not the project's total device count.
+        if (this.currentProject) {
+          this.currentProject.device_count = allDevices.length;
+        }
         // The chat only talks about devices the backend can reach.
-        this.devices = data.items.filter((device) => device.deployable !== false);
+        this.devices = allDevices.filter((device) => device.deployable !== false);
       }
     },
 

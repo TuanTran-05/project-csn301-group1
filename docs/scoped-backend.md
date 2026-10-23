@@ -42,7 +42,7 @@ Tài khoản Operator và Viewer đều thấy project lab mặc định (projec
 
 Operator có thể nhập “Tạo project mới” trong chat. Hệ thống tạo project và hỏi số thiết bị mạng (2–25), sau đó hiển thị các sơ đồ hình sao, vòng, campus hoặc hub and spoke phù hợp với số lượng. Chọn một phương án sẽ tạo các thiết bị ở dạng kế hoạch và mở canvas topology để Operator thêm, sửa hoặc xóa. Thiết bị phải được cấp IP và thông tin truy cập trước khi có thể cấu hình thật.
 
-Project là phạm vi chia sẻ của nhóm: Operator thêm tài khoản Viewer từ tab “Nhóm / chia sẻ”. Viewer xem topology, dùng chat tư vấn và đọc các phiên chat trong project; chỉ người có quyền sửa project mới thay đổi sơ đồ.
+Project là phạm vi chia sẻ của nhóm: Operator có thể thêm tài khoản Viewer hoặc Operator từ tab “Nhóm / chia sẻ”. Viewer chỉ xem topology, dùng chat tư vấn và đọc các phiên chat trong project; Operator được thêm có quyền editor để cùng chỉnh sửa thiết bị và sơ đồ. Chỉ chủ project hoặc ADMIN mới quản lý thành viên và cài đặt project.
 
 ## Cấp quyền ban đầu
 

@@ -59,8 +59,16 @@
           <span class="device-project-icon" aria-hidden="true"></span>
           <span class="device-project-copy">
             <strong x-text="currentProject ? currentProject.name : 'Project mặc định'"></strong>
-            <small x-show="!devices.length">Chưa có thiết bị. Thêm thiết bị ›</small>
-            <small x-show="devices.length" x-text="devices.length + ' thiết bị'"></small>
+            <small
+              x-show="Number(currentProject && currentProject.device_count) > 0"
+              x-text="currentProject.device_count + ' thiết bị trong project'"></small>
+            <small
+              x-show="Number(currentProject && currentProject.device_count) === 0"
+            >Chưa có thiết bị. Thêm thiết bị ›</small>
+            <small
+              class="device-project-readiness"
+              x-show="Number(currentProject && currentProject.device_count) > 0 && devices.length < currentProject.device_count"
+              x-text="devices.length + ' thiết bị đã có IP quản trị'"></small>
           </span>
         </a>
         <ul>
@@ -210,7 +218,7 @@
                   </template>
                   <p class="ok-text" x-show="message.payload.applied">
                     Đã áp dụng. Thiết kế cũ được lưu thành một phiên bản tự động.
-                    Mở <a href="/projects">Sơ đồ mạng</a> để xem trước cấu hình và gửi đi duyệt.
+                    Mở <a :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (currentSessionId ? '&amp;session_id=' + currentSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a> để xem topology hiện có và xem trước cấu hình L2/L3; thao tác này không thêm hoặc thay đổi thiết bị, dây nối.
                   </p>
                   <p class="hint">Muốn chỉnh? Nhắn tiếp, ví dụ “đổi VLAN 20 sang 10.20.0.0/24”.</p>
                   <p class="error-text" x-show="designError" x-text="designError"></p>
