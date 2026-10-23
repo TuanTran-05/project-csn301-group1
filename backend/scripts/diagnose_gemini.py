@@ -2,26 +2,29 @@
 
 Sends "hi" with the app's generation config built up one option at a time
 and prints the API's verdict for each step. Reads AI_API_KEY and AI_MODEL
-from the environment (source .env first). The key is never printed.
+from backend/.env or the environment. The key is never printed.
 
-    source .env && python scripts/diagnose_gemini.py
+    python scripts/diagnose_gemini.py
 """
 
 import os
 import sys
+from pathlib import Path
 
 from google import genai
 
+from dotenv import load_dotenv
 from network_copilot.ai.design_assistant import RESPONSE_SCHEMA as DESIGN_SCHEMA
 from network_copilot.ai.provider import DEFAULT_MAX_TOKENS, NO_THINKING
 from network_copilot.ai.schemas import build_ai_action_schema
 
 
 def main() -> int:
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     api_key = os.environ.get("AI_API_KEY")
     model = os.environ.get("AI_MODEL", "gemini-2.5-flash")
     if not api_key:
-        print("AI_API_KEY is not set. Run: source .env")
+        print("AI_API_KEY is not set in backend/.env.")
         return 1
 
     base = {"system_instruction": "Reply briefly."}
