@@ -120,6 +120,11 @@ def record_event(
         context = _request_context()
         if project_id is None:
             project_id = _implicit_project_id(device_id)
+        if not username and user_id is not None:
+            from ..auth.model import User
+
+            actor = db.session.get(User, user_id)
+            username = actor.username if actor is not None else None
         safe_details = redact_sensitive(details) if details is not None else None
         if safe_details is not None and not isinstance(safe_details, (dict, list)):
             safe_details = {"value": str(safe_details)[:500]}

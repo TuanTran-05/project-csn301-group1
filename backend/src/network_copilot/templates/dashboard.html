@@ -141,7 +141,7 @@
                 <li class="audit-event">
                   <div class="audit-event-heading">
                     <time class="audit-time" x-text="formatActivityTime(event.created_at)"></time>
-                    <span x-text="event.username || 'system'"></span>
+                    <span x-text="event.username || (event.user_id ? 'Người dùng #' + event.user_id : 'Hệ thống')"></span>
                     <strong x-text="activityActionLabel(event.action)"></strong>
                     <span class="result-status" :class="'result-' + (event.result === 'failure' ? 'failed' : event.result)" x-text="activityResultLabel(event.result)"></span>
                   </div>

@@ -82,6 +82,20 @@ def test_record_event_persists_a_log(app, admin_user, device):
     assert event.id is not None
     assert db.session.query(AuditLog).count() == 1
     assert event.action == "device.create"
+    assert event.username == admin_user.username
+
+
+def test_legacy_audit_log_resolves_actor_name(app, admin_user):
+    event = AuditLog(
+        action="project.update",
+        result="success",
+        user_id=admin_user.id,
+    )
+    db.session.add(event)
+    db.session.commit()
+
+    assert event.username is None
+    assert event.to_dict()["username"] == admin_user.username
 
 
 def test_record_event_redacts_details(app, admin_user, device):

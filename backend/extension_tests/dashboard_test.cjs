@@ -41,6 +41,11 @@ function createDashboard(handler, initial = {}) {
   await state.app.selectProject(2);
   assert.equal(state.app.summary.project, "2");
   assert.equal(state.app.projectName, "Second Lab");
+  assert.equal(state.app.activityActionLabel("project.update"), "Cập nhật dự án");
+  assert.equal(state.app.activityActionLabel("ai.action"), "Thao tác bằng AI");
+  assert.equal(state.app.activityActionLabel("topology.link_create"), "Tạo kết nối");
+  assert.equal(state.app.activityActionLabel("device.create"), "Thêm thiết bị");
+  assert.equal(state.app.activityActionLabel("custom.thing_create"), "Custom Thing Create");
 
   const empty = createDashboard(() => ({ items: [] }), { nc_token: "session" });
   await empty.app.init();
