@@ -10,21 +10,7 @@
 </head>
 <body x-data="app()" @account-session-updated.window="token = $event.detail.access_token; currentUser = $event.detail.user">
 
-  <section class="login-screen" x-show="!currentUser" x-cloak>
-    <form class="login-form" @submit.prevent="login()">
-      <h1>AI Tool</h1>
-      <label>
-        Tên đăng nhập
-        <input type="text" x-model="loginForm.username" required autocomplete="username" />
-      </label>
-      <label>
-        Mật khẩu
-        <input type="password" x-model="loginForm.password" required autocomplete="current-password" />
-      </label>
-      <p class="error-text" x-show="loginError" x-text="loginError"></p>
-      <button type="submit">Đăng nhập</button>
-    </form>
-  </section>
+  {% include "_login_screen.html" %}
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
