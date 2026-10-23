@@ -1,9 +1,10 @@
-"""Account-scoped chat transcripts with the AI copilot.
+"""Per-user chat transcripts with the AI copilot.
 
 Every exchange through POST /api/ai/chat is recorded here, whether it
-succeeded, was blocked by the policy engine, or failed upstream, so anyone
+succeeded, was blocked by the policy engine, or failed upstream, so the user
 reopening the page sees exactly what happened, not just the calls that
-returned 200 within their own account. Admin retains global audit visibility.
+returned 200. Sessions belong to the user who started them; Admin retains
+audit visibility over every session (see chat/session_service.py).
 Every message belongs to exactly one chat session (see
 chat/session_service.py); a caller that does not know/care which session
 gets a sensible default rather than being forced to resolve one itself.
@@ -59,8 +60,9 @@ def list_messages(
     project_id: int,
     before_id: int | None = None,
     after_id: int | None = None,
+    user=None,
 ) -> list[ChatMessage]:
-    session = session_service.resolve_or_create_session(session_id, project_id)
+    session = session_service.resolve_or_create_session(session_id, project_id, user)
     message_ids = db.session.query(ChatMessage.id.label("id")).filter(
         ChatMessage.session_id == session.id
     )

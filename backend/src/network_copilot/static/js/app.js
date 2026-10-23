@@ -86,10 +86,9 @@ document.addEventListener("alpine:init", () => {
     designBusy: false,
     designError: "",
     sessions: [],
-    // A per-browser bookmark of which shared session this browser was last
-    // looking at (see the design spec: sessions are shared team data, but
-    // which one *you* are currently viewing is a per-browser preference,
-    // same role nc_token/nc_user already play for auth state).
+    // A per-browser bookmark of which of your own sessions this browser was
+    // last looking at. Sessions are private to the user who started them;
+    // the server ignores an id that belongs to someone else.
     currentSessionId: (() => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
@@ -222,7 +221,16 @@ document.addEventListener("alpine:init", () => {
       return Boolean(
         batch && batch.ai_management_approved &&
         batch.requested_by_id === this.currentUser?.id &&
-        this.currentUser && ["OPERATOR", "VIEWER"].includes(this.currentUser.role)
+        this.currentUser && this.currentUser.role === "OPERATOR"
+      );
+    },
+
+    // Only an Operator with edit rights may push an AI suggestion to devices.
+    get canApplyChatConfigurations() {
+      return Boolean(
+        this.currentProject && this.currentProject.ai_management_enabled &&
+        ["owner", "editor"].includes(this.currentProject.access) &&
+        this.currentUser && this.currentUser.role === "OPERATOR"
       );
     },
 

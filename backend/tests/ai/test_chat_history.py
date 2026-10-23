@@ -64,13 +64,13 @@ def test_chat_endpoint_records_a_user_and_assistant_message(
 
 
 def test_chat_endpoint_records_messages_against_the_given_session(
-    client, admin_headers, app, dist_switch, ssh_factory
+    client, admin_user, admin_headers, app, dist_switch, ssh_factory
 ):
     from network_copilot.chat.session_service import create_session
 
     ssh_factory.set_client(dist_switch.hostname, default_output="ok")
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=MONITOR_ACTION)
-    session = create_session(_pid())
+    session = create_session(_pid(), created_by_id=admin_user.id)
 
     client.post(
         "/api/ai/chat",
@@ -182,7 +182,7 @@ def test_chat_endpoint_records_an_unexpected_failure_once(
 
 
 def test_chat_endpoint_forwards_the_session_history_to_the_model(
-    client, admin_headers, app
+    client, admin_user, admin_headers, app
 ):
     """Covers the wiring the service-level tests cannot: that the route
     passes session_id through, and that the message being handled is not
@@ -190,7 +190,7 @@ def test_chat_endpoint_forwards_the_session_history_to_the_model(
     from network_copilot.chat.service import record_message
     from network_copilot.chat.session_service import create_session
 
-    session = create_session(_pid())
+    session = create_session(_pid(), created_by_id=admin_user.id)
     record_message(1, "g1", "user", "cau hoi cu", session_id=session.id, project_id=_pid())
 
     provider = FakeAIProvider(

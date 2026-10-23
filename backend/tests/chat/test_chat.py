@@ -115,9 +115,11 @@ def test_messages_endpoint_is_readable_by_viewer(client, viewer_headers):
     assert response.get_json()["items"] == []
 
 
-def test_messages_endpoint_returns_recorded_messages(client, admin_headers, app):
-    record_message(1, "g1", "user", "hello", project_id=_pid())
-    record_message(1, "g1", "assistant", "hi there", project_id=_pid())
+def test_messages_endpoint_returns_recorded_messages(client, admin_user, admin_headers, app):
+    # Without a session_id the endpoint opens the caller's own latest session.
+    session = create_session(_pid(), created_by_id=admin_user.id)
+    record_message(1, "g1", "user", "hello", session_id=session.id, project_id=_pid())
+    record_message(1, "g1", "assistant", "hi there", session_id=session.id, project_id=_pid())
     response = client.get("/api/chat/messages", headers=admin_headers)
     items = response.get_json()["items"]
     assert len(items) == 2

@@ -166,7 +166,7 @@
                     @click="downloadChatConfigurations(message)">
                     <span x-text="chatConfigBusy ? 'Đang chuẩn bị…' : 'Đồng ý, tải file để nhập vào PNETLab' "></span>
                   </button>
-                  <template x-if="currentProject && currentProject.ai_management_enabled">
+                  <template x-if="canApplyChatConfigurations">
                     <button type="button" class="primary-btn" x-show="!chatBatchFor(message)" :disabled="chatConfigBusy"
                       @click="applyChatConfigurations(message)">
                       <span x-text="chatConfigBusy ? 'Đang gửi cấu hình…' : 'Duyệt và áp dụng trên PNETLab' "></span>
