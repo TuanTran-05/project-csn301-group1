@@ -43,6 +43,19 @@ def _api_error_code(exc: Exception) -> int | None:
     return code if isinstance(code, int) else None
 
 
+def _api_error_reason(exc: Exception) -> str | None:
+    """The ErrorInfo reason enum (e.g. API_KEY_INVALID); never free text."""
+    details = getattr(exc, "details", None)
+    if not isinstance(details, dict):
+        return None
+    error = details.get("error")
+    for item in (error or {}).get("details") or [] if isinstance(error, dict) else []:
+        reason = item.get("reason") if isinstance(item, dict) else None
+        if isinstance(reason, str) and reason.replace("_", "").isalnum():
+            return reason
+    return None
+
+
 def _describe_gemini_failure(exc: Exception) -> str:
     """Summarise a failure without echoing upstream text, which may hold the key."""
     code = _api_error_code(exc)
@@ -50,6 +63,9 @@ def _describe_gemini_failure(exc: Exception) -> str:
         return type(exc).__name__
     status = getattr(exc, "status", None)
     detail = f"HTTP {code} {status}" if isinstance(status, str) and status else f"HTTP {code}"
+    reason = _api_error_reason(exc)
+    if reason:
+        detail = f"{detail} {reason}"
     hint = GEMINI_FAILURE_HINTS.get(code)
     return f"{detail}: {hint}" if hint else detail
 

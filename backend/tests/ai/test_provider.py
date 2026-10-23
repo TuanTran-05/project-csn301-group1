@@ -523,3 +523,25 @@ def test_gemini_does_not_retry_failures_unrelated_to_thinking():
     with pytest.raises(AIProviderError):
         gemini_with(fake).complete("sys", "hi", {})
     assert len(fake.models.calls) == 1
+
+
+def test_gemini_failure_names_the_error_reason():
+    from google.genai import errors
+
+    exc = errors.APIError(
+        400,
+        {
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "API key not valid AIzaSECRET",
+                "details": [{"reason": "API_KEY_INVALID"}],
+            }
+        },
+    )
+    fake = FakeGenaiClient(raise_with=exc)
+    with pytest.raises(AIProviderError) as info:
+        gemini_with(fake).complete("sys", "hi", {})
+    message = str(info.value.message if hasattr(info.value, "message") else info.value)
+    assert "HTTP 400 INVALID_ARGUMENT API_KEY_INVALID" in message
+    assert "AIzaSECRET" not in message
