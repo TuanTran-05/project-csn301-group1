@@ -7,6 +7,7 @@ from backend/.env or the environment. The key is never printed.
     python scripts/diagnose_gemini.py
 """
 
+import copy
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,36 @@ from dotenv import load_dotenv
 from network_copilot.ai.design_assistant import RESPONSE_SCHEMA as DESIGN_SCHEMA
 from network_copilot.ai.provider import DEFAULT_MAX_TOKENS, NO_THINKING
 from network_copilot.ai.schemas import build_ai_action_schema
+
+
+def chat_schema_variants() -> list[tuple[str, dict]]:
+    """The chat schema with one suspect keyword removed per variant."""
+    full = build_ai_action_schema(["R1", "SW1"])
+
+    def without(change):
+        schema = copy.deepcopy(full)
+        change(schema)
+        return schema
+
+    def operation(schema):
+        return schema["properties"]["operations"]["items"]
+
+    def flat_targets(schema):
+        operation(schema)["properties"]["device_hostnames"] = {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["*", "R1", "SW1"]},
+        }
+
+    def drop_diagram(schema):
+        del schema["properties"]["diagram"]
+
+    return [
+        ("chat schema -anyOf", without(flat_targets)),
+        ("chat schema -additionalProperties", without(lambda s: operation(s).pop("additionalProperties"))),
+        ("chat schema -minItems:0", without(lambda s: s["properties"]["operations"].pop("minItems"))),
+        ("chat schema -diagram", without(drop_diagram)),
+    ]
 
 
 def main() -> int:
@@ -37,6 +68,10 @@ def main() -> int:
         ("+thinking_budget=0", {**json_mode, "thinking_config": dict(NO_THINKING)}),
         ("+chat schema", {**json_mode, "response_json_schema": build_ai_action_schema(["R1", "SW1"])}),
         ("+design schema", {**json_mode, "response_json_schema": DESIGN_SCHEMA}),
+    ]
+    steps += [
+        (name, {**json_mode, "response_json_schema": schema})
+        for name, schema in chat_schema_variants()
     ]
 
     client = genai.Client(api_key=api_key)
