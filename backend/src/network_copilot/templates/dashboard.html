@@ -129,16 +129,33 @@
 
       <section class="dashboard-panel">
         <h2>Nhật ký hoạt động</h2>
-        <ul class="dashboard-list">
-          <template x-for="event in summary.audit.recent" :key="event.id">
-            <li>
-              <span class="audit-time" x-text="new Date(event.created_at).toLocaleTimeString('vi-VN')"></span>
-              <span x-text="event.username || 'system'"></span>
-              <span x-text="event.action"></span>
-              <span class="result-status" :class="'result-' + event.result" x-text="event.result"></span>
-            </li>
-          </template>
-        </ul>
+        <p class="dashboard-hint">Thời gian Việt Nam (UTC+7). Nhật ký được lưu trên máy chủ và giữ lại sau khi đăng xuất.</p>
+        <template x-for="group in activityGroups" :key="group.key">
+          <details class="audit-day">
+            <summary class="audit-day-summary">
+              <span x-text="group.label"></span>
+              <span class="audit-count" x-text="`${group.events.length} hoạt động`"></span>
+            </summary>
+            <ul class="dashboard-list audit-event-list">
+              <template x-for="event in group.events" :key="event.id">
+                <li class="audit-event">
+                  <div class="audit-event-heading">
+                    <time class="audit-time" x-text="formatActivityTime(event.created_at)"></time>
+                    <span x-text="event.username || 'system'"></span>
+                    <strong x-text="activityActionLabel(event.action)"></strong>
+                    <span class="result-status" :class="'result-' + (event.result === 'failure' ? 'failed' : event.result)" x-text="activityResultLabel(event.result)"></span>
+                  </div>
+                  <p class="audit-event-message" x-show="event.message" x-text="event.message"></p>
+                  <pre class="audit-event-details" x-show="event.details" x-text="formatActivityDetails(event.details)"></pre>
+                </li>
+              </template>
+            </ul>
+          </details>
+        </template>
+        <p class="dashboard-hint" x-show="!activityEvents.length && !activityLoading && !activityError">Chưa có hoạt động nào được ghi lại.</p>
+        <p class="error-text" x-show="activityError" x-text="activityError"></p>
+        <button class="audit-load-more" type="button" x-show="activityHasMore" :disabled="activityLoading" @click="loadMoreActivity()"
+                x-text="activityLoading ? 'Đang tải…' : 'Tải lịch sử cũ hơn'"></button>
       </section>
     </div>
     </template>

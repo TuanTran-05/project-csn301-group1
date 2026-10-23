@@ -8,6 +8,8 @@ import logging
 import re
 from datetime import datetime
 
+from sqlalchemy import and_, or_
+
 from ..extensions import db
 from .model import AuditLog
 
@@ -159,6 +161,8 @@ def list_events(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 100,
+    before_created_at: datetime | None = None,
+    before_id: int | None = None,
 ) -> list[AuditLog]:
     query = db.session.query(AuditLog)
     if project_id is not None:
@@ -176,8 +180,35 @@ def list_events(
     if until:
         query = query.filter(AuditLog.created_at <= until)
     from ..governance.visibility import events
-    return events(
-        query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-        .limit(min(max(limit, 1), 500))
-        .all()
-    )
+    visible = []
+    page_limit = min(max(limit, 1), 500)
+    batch_size = min(max(page_limit, 100), 500)
+    cursor_created_at = before_created_at
+    cursor_id = before_id
+
+    while len(visible) < page_limit:
+        page = query
+        if cursor_created_at is not None and cursor_id is not None:
+            page = page.filter(
+                or_(
+                    AuditLog.created_at < cursor_created_at,
+                    and_(
+                        AuditLog.created_at == cursor_created_at,
+                        AuditLog.id < cursor_id,
+                    ),
+                )
+            )
+        rows = (
+            page.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(batch_size)
+            .all()
+        )
+        if not rows:
+            break
+        visible.extend(events(rows))
+        cursor_created_at = rows[-1].created_at
+        cursor_id = rows[-1].id
+        if len(rows) < batch_size:
+            break
+
+    return visible[:page_limit]
