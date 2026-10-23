@@ -1,0 +1,48 @@
+<section class="login-screen" x-show="!currentUser" x-cloak>
+  <aside class="login-brand" aria-label="Eastern International University">
+    <img class="login-brand-logo" src="{{ url_for('static', filename='img/eiu-logo.jpg') }}" alt="Logo EIU — Trường Đại học Quốc tế Miền Đông" />
+
+    <div class="login-brand-copy">
+      <span class="login-brand-rule" aria-hidden="true"></span>
+      <p class="login-motto">Kiến tạo tri thức<br />vì một tương lai bền vững</p>
+      <p class="login-motto-en">CREATING KNOWLEDGE<br />FOR A SUSTAINABLE FUTURE</p>
+    </div>
+
+    <div class="login-campus" aria-hidden="true">
+      <span class="campus-building campus-building--left"></span>
+      <span class="campus-building campus-building--middle"></span>
+      <span class="campus-building campus-building--right"></span>
+    </div>
+  </aside>
+
+  <div class="login-stage">
+    <form class="login-form" @submit.prevent="login()">
+      <img class="login-form-brand" src="{{ url_for('static', filename='img/eiu-logo.jpg') }}" alt="Logo EIU — Trường Đại học Quốc tế Miền Đông" />
+
+      <header class="login-heading">
+        <h1>Đăng nhập hệ thống</h1>
+        <p>Vui lòng đăng nhập để tiếp tục sử dụng AI Tool</p>
+      </header>
+
+      <label class="login-field">
+        <span class="sr-only">Tên đăng nhập</span>
+        <span class="login-field-icon login-field-icon--user" aria-hidden="true"></span>
+        <input type="text" x-model="loginForm.username" required autocomplete="username" placeholder="Tên đăng nhập" />
+      </label>
+
+      <div class="login-password-field" x-data="{ showPassword: false }">
+        <label class="login-field">
+          <span class="sr-only">Mật khẩu</span>
+          <span class="login-field-icon login-field-icon--lock" aria-hidden="true"></span>
+          <input :type="showPassword ? 'text' : 'password'" x-model="loginForm.password" required autocomplete="current-password" placeholder="Mật khẩu" />
+        </label>
+        <button class="login-password-toggle" type="button" :aria-label="showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'" @click="showPassword = !showPassword">
+          <span class="login-eye" :class="{ 'is-visible': showPassword }" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <p class="error-text" x-show="loginError" x-text="loginError" role="alert"></p>
+      <button class="login-submit" type="submit"><span>Đăng nhập</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
+    </form>
+  </div>
+</section>

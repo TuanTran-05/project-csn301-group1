@@ -10,7 +10,8 @@
           aria-controls="user-menu-panel"
           :aria-expanded="open"
           @click="open = true">
-    <span x-text="currentUser && currentUser.username"></span>
+    <span class="user-avatar" aria-hidden="true" x-text="((currentUser && (currentUser.display_name || currentUser.full_name || currentUser.username)) || 'A').charAt(0).toUpperCase()"></span>
+    <span class="account-name" x-text="currentUser && currentUser.username"></span>
     <span class="role-pill" x-text="currentUser && currentUser.role"></span>
     <span class="user-menu-caret" aria-hidden="true">▾</span>
   </button>
@@ -39,9 +40,12 @@
       Quản lý người dùng
     </a>
 
-    <button type="button" class="user-menu-password-toggle" @click="passwordOpen = !passwordOpen; passwordError = ''; passwordNotice = ''">
-      <span x-text="passwordOpen ? 'Ẩn đổi mật khẩu' : 'Đổi mật khẩu'"></span>
-    </button>
+    <div class="user-menu-actions">
+      <button type="button" class="user-menu-password-toggle" @click="passwordOpen = !passwordOpen; passwordError = ''; passwordNotice = ''">
+        <span x-text="passwordOpen ? 'Ẩn đổi mật khẩu' : 'Đổi mật khẩu'"></span>
+      </button>
+      <button type="button" class="user-menu-logout" @click="logout()">Đăng xuất</button>
+    </div>
     <form class="user-menu-password-form" x-show="passwordOpen" x-cloak @submit.prevent="changePassword()">
       <label>Mật khẩu hiện tại
         <input type="password" x-model="passwordForm.current_password" required autocomplete="current-password" />

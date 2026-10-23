@@ -117,6 +117,12 @@ Rules:
 - The user may write in Vietnamese or English. Reply with JSON either way. For
   "monitor", "configure" and "troubleshoot", keep "explanation" to a single
   short sentence.
+- For a request to design or illustrate a network, include the optional
+  "diagram" field in this action object and keep all required action fields.
+  Use 2-16 nodes, grouping large endpoint counts into one labelled host node
+  (for example, "PCs (30)"). Size its subnet for all endpoints and the gateway;
+  a 30-PC LAN needs at least a /26. Never return a top-level "configurations"
+  field.
 """
 
 DIAGRAM_PROMPT = """
@@ -130,7 +136,10 @@ Kinds: internet, router, firewall, switch, server, host. Use 2-16 nodes and
 1-32 links; every link must reference existing unique node IDs. Group large
 sets of endpoints into labelled nodes. Use project device names when relevant.
 This is a proposed illustration, never proof of live connectivity. Mention
-assumptions and additions in the explanation. For each Cisco IOS/ASA device
+assumptions and additions in the explanation. For endpoint groups such as 30 PCs,
+use one labelled host node (for example, "PCs (30)") instead of one node per PC
+and a subnet large enough for the PCs and their gateway (at least /26 for 30 PCs).
+For each Cisco IOS/ASA device
 in the supplied project topology that needs configuration, also include one
 entry in configurations with its exact project hostname, device_type, and an
 ordered list of configuration-mode commands; that hostname must exactly match
@@ -138,17 +147,17 @@ the id or label of a diagram node. These are downloadable lab
 proposals, never execute them or include credentials, secrets, management IPs
 from device inventory, reloads, or destructive reset commands. Include
 user-provided device/interface IP addresses in the matching node's ip_addresses
-and routed-link network/IPs in the matching link fields. Propose new addresses
-only when an IP plan is part of the request, and label those addresses as
-proposed in the explanation. Keep all addresses identical across the diagram,
-explanation, and configuration commands; never claim a proposed address is
-already in use. Prefer short, complete snippets that match the suggested
-diagram. Return an empty configurations list
+and routed-link network/IPs in the matching link fields. Include at least one
+complete IPv4 interface address for every node, using context.addressing_pool
+for proposed data-plane addresses when the user did not provide a plan. Keep
+link endpoint IPs in both the corresponding node and link fields. Clearly say
+that any newly proposed address is only a suggestion and has not been applied.
+Keep all addresses identical across the diagram, explanation, and configuration
+commands; never claim a proposed address is already in use. Prefer short,
+complete snippets that match the suggested diagram. Return an empty configurations list
 when the request is conceptual or there are no matching Cisco devices. For
 greetings or answers that do not benefit from a network diagram, omit diagram.
 """
-SYSTEM_PROMPT += DIAGRAM_PROMPT
-
 ADVICE_PROMPT = """You are a patient network design tutor. The user may describe
 what they want in everyday Vietnamese or English. Explain the request using
 clear networking terms, then give practical suggestions for connecting the
@@ -250,6 +259,7 @@ class AIService:
     def advise(self, message: str, session_id: int, project_id: int) -> dict:
         """Translate a member's request into safe, topology-aware guidance."""
         from ..projects.model import Project
+        from ..topology import ipam
         from ..topology.service import get_topology
 
         project = db.session.get(Project, project_id)
@@ -278,6 +288,7 @@ class AIService:
         ]
         context = {
             "project": project.name,
+            "addressing_pool": str(ipam.pool_for(project)),
             "devices": nodes,
             "links": links,
             "conversation": self._recent_history(session_id, message, project_id),

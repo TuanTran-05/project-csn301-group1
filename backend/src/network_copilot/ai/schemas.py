@@ -130,6 +130,9 @@ class AIAdvice(BaseModel):
 def diagram_schema() -> dict:
     # Gemini supports a subset of JSON Schema. Keep this provider schema
     # deliberately small; Pydantic enforces the stronger runtime bounds.
+    # No minItems/maxItems here: nested array bounds (16 nodes x 4 addresses,
+    # 32 links) push constrained decoding past Gemini's complexity limit and
+    # the whole request fails with a bare 400 INVALID_ARGUMENT.
     return {
         "type": "object",
         "required": ["title", "nodes", "links"],
@@ -147,7 +150,10 @@ def diagram_schema() -> dict:
                             "type": "string",
                             "enum": ["internet", "router", "firewall", "switch", "server", "host"],
                         },
-                        "ip_addresses": {"type": "array", "items": {"type": "string"}},
+                        "ip_addresses": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
                     },
                 },
             },

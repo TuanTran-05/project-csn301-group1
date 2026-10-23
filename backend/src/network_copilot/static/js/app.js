@@ -65,9 +65,14 @@ document.addEventListener("alpine:init", () => {
 
     // -- chat --
     messages: [],
+    messagesLoading: false,
+    hasOlderMessages: false,
+    loadingOlderMessages: false,
+    messagePageSize: 50,
     draftMessage: "",
     sending: false,
     _messagesRefreshGeneration: 0,
+    _messagesPollPending: false,
     _clientMessageSequence: 0,
     topologyChoiceBusy: false,
     topologyChoiceError: "",
@@ -606,6 +611,7 @@ document.addEventListener("alpine:init", () => {
       this._batchesRefreshGeneration += 1;
       this._batchesRefreshRequestToken += 1;
       this._messagesRefreshGeneration += 1;
+      this._messagesPollPending = false;
       this.devices = [];
       this.changesById = {};
       this.confirmInputs = {};
@@ -618,6 +624,9 @@ document.addEventListener("alpine:init", () => {
       this.batchesLoading = false;
       this.batchesError = "";
       this.messages = [];
+      this.messagesLoading = false;
+      this.hasOlderMessages = false;
+      this.loadingOlderMessages = false;
       this.draftMessage = "";
       this.sending = false;
       this.sessions = [];
@@ -657,6 +666,7 @@ document.addEventListener("alpine:init", () => {
       this._batchesRefreshGeneration += 1;
       this._batchesRefreshRequestToken += 1;
       this._messagesRefreshGeneration += 1;
+      this._messagesPollPending = false;
       this.token = null;
       this.currentUser = null;
       clearTimeout(this._authRetryTimer);
@@ -676,6 +686,9 @@ document.addEventListener("alpine:init", () => {
       this.batchesLoading = false;
       this.batchesError = "";
       this.messages = [];
+      this.messagesLoading = false;
+      this.hasOlderMessages = false;
+      this.loadingOlderMessages = false;
       this.draftMessage = "";
       this.sending = false;
       this.sessions = [];
@@ -1289,12 +1302,18 @@ document.addEventListener("alpine:init", () => {
       localStorage.setItem("nc_session_id", String(this.currentSessionId));
     },
 
-    async switchSession(sessionId) {
-      if (sessionId === this.currentSessionId) return;
+    async switchSession(sessionId, forceReload = false) {
+      // Alpine's x-model updates currentSessionId before the change handler
+      // runs, so selecting a different option can arrive here with the new
+      // ID already set. Force a reload from the select's change event in that
+      // case; calls such as startNewChat still skip redundant reloads.
+      if (sessionId === this.currentSessionId && !forceReload) return;
       this._messagesRefreshGeneration += 1;
       this.currentSessionId = sessionId;
       localStorage.setItem("nc_session_id", String(sessionId));
       this.messages = [];
+      this.hasOlderMessages = false;
+      this.loadingOlderMessages = false;
       try {
         await this.hydrateMessages();
       } catch {
@@ -1316,28 +1335,102 @@ document.addEventListener("alpine:init", () => {
 
     async hydrateMessages() {
       const generation = this._messagesRefreshGeneration;
-      const data = await this.authFetch(
-        `/api/chat/messages?session_id=${this.currentSessionId}`
-      );
-      if (generation !== this._messagesRefreshGeneration) return;
-      for (const message of data.items) this._ingestMessage(message);
-      this.$nextTick(() => {
-        if (generation === this._messagesRefreshGeneration) {
-          this._scrollToBottom();
+      const sessionId = this.currentSessionId;
+      this.messagesLoading = true;
+      try {
+        const data = await this.authFetch(
+          `/api/chat/messages?session_id=${sessionId}&limit=${this.messagePageSize + 1}`
+        );
+        if (generation !== this._messagesRefreshGeneration) return;
+        const items = data.items || [];
+        this.hasOlderMessages = items.length > this.messagePageSize;
+        for (const message of items.slice(-this.messagePageSize)) {
+          this._ingestMessage(message);
         }
-      });
+        this.$nextTick(() => {
+          if (generation === this._messagesRefreshGeneration) {
+            this._scrollToBottom();
+          }
+        });
+      } finally {
+        if (generation === this._messagesRefreshGeneration) {
+          this.messagesLoading = false;
+          if (this._messagesPollPending) {
+            this._messagesPollPending = false;
+            this.pollMessages().catch(() => {});
+          }
+        }
+      }
+    },
+
+    async loadOlderMessages() {
+      if (!this.hasOlderMessages || this.loadingOlderMessages || this.messagesLoading) return;
+      const firstServerMessage = this.messages.find(
+        (message) => !message._client && Number.isFinite(Number(message.id))
+      );
+      if (!firstServerMessage) return;
+
+      const generation = this._messagesRefreshGeneration;
+      const log = this.$refs.chatLog;
+      const previousHeight = log ? log.scrollHeight : 0;
+      const previousTop = log ? log.scrollTop : 0;
+      this.loadingOlderMessages = true;
+      try {
+        const data = await this.authFetch(
+          `/api/chat/messages?session_id=${this.currentSessionId}` +
+            `&limit=${this.messagePageSize + 1}&before_id=${firstServerMessage.id}`
+        );
+        if (generation !== this._messagesRefreshGeneration) return;
+        const items = data.items || [];
+        this.hasOlderMessages = items.length > this.messagePageSize;
+        const olderItems = items.slice(-this.messagePageSize);
+        const knownIds = new Set(this.messages.map((message) => message.id));
+        this.messages = [
+          ...olderItems.filter((message) => !knownIds.has(message.id)),
+          ...this.messages,
+        ];
+        await new Promise((resolve) => this.$nextTick(resolve));
+        if (generation === this._messagesRefreshGeneration && this.$refs.chatLog) {
+          const updatedLog = this.$refs.chatLog;
+          updatedLog.scrollTop = previousTop + updatedLog.scrollHeight - previousHeight;
+        }
+      } finally {
+        if (generation === this._messagesRefreshGeneration) {
+          this.loadingOlderMessages = false;
+          if (this._messagesPollPending) {
+            this._messagesPollPending = false;
+            this.pollMessages().catch(() => {});
+          }
+        }
+      }
     },
 
     async pollMessages() {
+      if (this.messagesLoading || this.loadingOlderMessages) {
+        this._messagesPollPending = true;
+        return;
+      }
       const generation = this._messagesRefreshGeneration;
       const wasAtBottom = this._isScrolledToBottom();
+      const newestServerMessage = [...this.messages]
+        .reverse()
+        .find((message) => !message._client && Number.isFinite(Number(message.id)));
+      const cursor = newestServerMessage
+        ? `&after_id=${newestServerMessage.id}`
+        : `&limit=${this.messagePageSize + 1}`;
       const data = await this.authFetch(
-        `/api/chat/messages?session_id=${this.currentSessionId}`
+        `/api/chat/messages?session_id=${this.currentSessionId}${cursor}`
       );
       if (generation !== this._messagesRefreshGeneration) return;
       const known = new Set(this.messages.map((message) => message.id));
       let appended = false;
-      for (const message of data.items) {
+      const items = data.items || [];
+      if (!newestServerMessage) {
+        this.hasOlderMessages = items.length > this.messagePageSize;
+      }
+      for (const message of newestServerMessage
+        ? items
+        : items.slice(-this.messagePageSize)) {
         if (!known.has(message.id)) {
           this._ingestMessage(message);
           known.add(message.id);

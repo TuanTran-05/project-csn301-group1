@@ -40,9 +40,14 @@ def test_diagram_rejects_invalid_device_addresses(address):
 
 def test_provider_schema_accepts_optional_topology_addresses():
     schema = diagram_schema()
+    node_array = schema["properties"]["nodes"]
+    link_array = schema["properties"]["links"]
     node_properties = schema["properties"]["nodes"]["items"]["properties"]
     link_properties = schema["properties"]["links"]["items"]["properties"]
 
+    # Bounds live in NetworkDiagram; Gemini rejects them in the provider schema.
+    assert node_array["type"] == link_array["type"] == "array"
+    assert "minItems" not in node_array and "maxItems" not in link_array
     assert node_properties["ip_addresses"]["type"] == "array"
     assert link_properties["network"]["type"] == "string"
     assert link_properties["ip_source"]["type"] == "string"
