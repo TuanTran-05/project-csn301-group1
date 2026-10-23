@@ -160,12 +160,51 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
-    allOspfNoData() {
-      return (
-        this.summary &&
-        this.summary.ospf.length > 0 &&
-        this.summary.ospf.every((entry) => entry.health === "no_data")
-      );
+    deviceTotals() {
+      const totals = { online: 0, offline: 0, unknown: 0, total: 0 };
+      const byRole = this.summary?.devices?.by_role || {};
+      for (const counts of Object.values(byRole)) {
+        totals.online += counts.online || 0;
+        totals.offline += counts.offline || 0;
+        totals.unknown += counts.unknown || 0;
+        totals.total += counts.total || 0;
+      }
+      return totals;
     },
+
+    ospfOverview() {
+      const entries = this.summary?.ospf || [];
+      if (!entries.length || entries.every((entry) => entry.health === "no_data")) {
+        return {
+          state: "unknown",
+          symbol: "?",
+          title: "Chưa có dữ liệu OSPF",
+          description: "Kiểm tra MONITORING_ENABLED trên máy chủ để xem trạng thái các router.",
+        };
+      }
+      if (entries.every((entry) => entry.health === "ok")) {
+        return {
+          state: "ok",
+          symbol: "✓",
+          title: "Hoạt động bình thường",
+          description: `Tất cả ${entries.length} tiến trình OSPF đang hoạt động ổn định.`,
+        };
+      }
+      if (entries.some((entry) => entry.health === "down")) {
+        return {
+          state: "down",
+          symbol: "!",
+          title: "Có router chưa kết nối OSPF",
+          description: "Một hoặc nhiều router chưa thiết lập được neighbor OSPF.",
+        };
+      }
+      return {
+        state: "degraded",
+        symbol: "!",
+        title: "Cần kiểm tra kết nối OSPF",
+        description: "Một số neighbor chưa đạt trạng thái FULL.",
+      };
+    },
+
   }));
 });

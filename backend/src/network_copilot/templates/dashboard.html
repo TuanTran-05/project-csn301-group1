@@ -11,7 +11,7 @@
 
   {% include "_login_screen.html" %}
 
-  <div class="app-shell" x-show="currentUser" x-cloak>
+  <div class="app-shell dashboard-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
       {% include "_app_brand.html" %}
       <nav class="top-bar-nav" aria-label="Điều hướng chính">
@@ -25,108 +25,235 @@
             </select>
           </label>
         </div>
-        <a class="nav-link nav-projects" href="/projects">Projects</a>
+        <a class="nav-link nav-projects" href="/projects"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h7l2 2h8v10h-17z"/><path d="M3.5 7.5v-2a1 1 0 0 1 1-1h5l2 2h5"/></svg><span>Projects</span></a>
         <a class="nav-link nav-topology"
-           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">Sơ đồ mạng</a>
-        <a class="nav-link nav-dashboard" href="/dashboard" aria-current="page">Dashboard</a>
-        <a class="nav-link nav-chat" href="/">Chat</a>
+           :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-3h12v3"/></svg><span>Sơ đồ mạng</span></a>
+        <a class="nav-link nav-dashboard" href="/dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V11h4v8zM10 19V5h4v14zM16 19V8h4v11z"/></svg><span>Dashboard</span></a>
+        <a class="nav-link nav-chat" href="/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v12H11l-5 3v-3H4z"/><path d="M8 10h8M8 13.5h5"/></svg><span>Chat</span></a>
         {% include "_account_menu.html" %}
       </nav>
     </header>
 
-    <p class="dashboard-error" x-show="lastError" x-cloak>
-      Không tải được dữ liệu mới nhất lúc <span x-text="lastError"></span>
-    </p>
+    <div class="dashboard-layout">
+      <aside class="dashboard-sidebar">
+        <h1 class="sidebar-app-title">AI Tool</h1>
+        <nav class="dashboard-side-nav" aria-label="Điều hướng ứng dụng">
+          <a class="dashboard-side-link" href="/projects">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h7l2 2h8v10h-17z"/><path d="M3.5 7.5v-2a1 1 0 0 1 1-1h5l2 2h5"/></svg>
+            <span>Projects</span>
+          </a>
+          <a class="dashboard-side-link" :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' : '/projects?tab=topology'">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-3h12v3"/></svg>
+            <span>Sơ đồ mạng</span>
+          </a>
+          <a class="dashboard-side-link active" href="/dashboard" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V11h4v8zM10 19V5h4v14zM16 19V8h4v11z"/></svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="dashboard-side-link" href="/">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v12H11l-5 3v-3H4z"/><path d="M8 10h8M8 13.5h5"/></svg>
+            <span>Chat</span>
+          </a>
+        </nav>
+        <div class="projects-sidebar-story dashboard-sidebar-story" aria-label="Thông điệp Eastern International University">
+          <span class="sidebar-brand-rule" aria-hidden="true"></span>
+          <p class="sidebar-motto">Kiến tạo tri thức<br />vì một tương lai bền vững</p>
+          <p class="sidebar-motto-en">CREATING KNOWLEDGE<br />FOR A SUSTAINABLE FUTURE</p>
+          <div class="sidebar-campus" aria-hidden="true">
+            <span class="campus-building campus-building--left"></span>
+            <span class="campus-building campus-building--middle"></span>
+            <span class="campus-building campus-building--right"></span>
+          </div>
+        </div>
+      </aside>
 
-    <p class="project-empty" x-show="noProject" x-cloak>Chưa có project để hiển thị. <a href="/projects">Mở Projects</a> hoặc nhờ quản trị viên chia sẻ project.</p>
-    <template x-if="summary">
-    <div class="dashboard-grid">
-      <section class="dashboard-panel">
-        <h2>Trạng thái thiết bị</h2>
-        <table class="dashboard-table">
-          <thead>
-            <tr><th>Vai trò</th><th>Online</th><th>Offline</th><th>Unknown</th><th>Tổng</th></tr>
-          </thead>
-          <tbody>
-            <template x-for="[role, counts] in Object.entries(summary.devices.by_role)" :key="role">
-              <tr>
-                <td x-text="role"></td>
-                <td><span class="status-dot status-online"></span><span x-text="counts.online"></span></td>
-                <td><span class="status-dot status-offline"></span><span x-text="counts.offline"></span></td>
-                <td><span class="status-dot status-unknown"></span><span x-text="counts.unknown"></span></td>
-                <td x-text="counts.total"></td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </section>
-
-      <section class="dashboard-panel">
-        <h2>Tình trạng OSPF</h2>
-        <p class="dashboard-hint" x-show="allOspfNoData()">
-          Chưa có dữ liệu OSPF — kiểm tra MONITORING_ENABLED trên máy chủ.
+      <main class="dashboard-main">
+        <p class="dashboard-error" x-show="lastError" x-cloak>
+          Không tải được dữ liệu mới nhất lúc <span x-text="lastError"></span>
         </p>
-        <template x-for="entry in summary.ospf" :key="entry.device_id">
-          <div class="ospf-entry">
-            <div class="ospf-entry-header">
-              <strong x-text="entry.hostname"></strong>
-              <span class="health-pill" :class="'health-' + entry.health" x-text="entry.health"></span>
-              <span class="ospf-count" x-text="entry.neighbor_count + ' neighbor(s)'"></span>
-            </div>
-            <ul class="ospf-neighbor-list" x-show="entry.neighbors.length">
-              <template x-for="neighbor in entry.neighbors" :key="neighbor.neighbor_id + neighbor.interface">
-                <li>
-                  <code x-text="neighbor.neighbor_id"></code>
-                  <span x-text="neighbor.state"></span>
-                  <span x-text="neighbor.interface"></span>
-                </li>
+        <p class="dashboard-empty project-empty" x-show="noProject" x-cloak>
+          Chưa có project để hiển thị. <a href="/projects">Mở Projects</a> hoặc nhờ quản trị viên chia sẻ project.
+        </p>
+
+        <div class="dashboard-heading">
+          <div>
+            <h1>Dashboard</h1>
+            <p>Tổng quan trạng thái hệ thống và hoạt động thiết bị trong project hiện tại.</p>
+          </div>
+          <label class="dashboard-project-switch" x-show="projects.length" x-cloak>
+            <span>Project hiện tại</span>
+            <select class="project-select" :value="currentProjectId" @change="selectProject(Number($event.target.value))">
+              <template x-for="project in projects" :key="project.id">
+                <option :value="project.id" :selected="project.id === currentProjectId" x-text="project.name"></option>
               </template>
-            </ul>
+            </select>
+          </label>
+        </div>
+
+        <template x-if="summary">
+          <div class="dashboard-grid">
+            <section class="dashboard-panel dashboard-device-panel">
+              <div class="dashboard-panel-heading">
+                <h2>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9h10M7 12h6"/></svg>
+                  Trạng thái thiết bị
+                </h2>
+                <div class="dashboard-panel-actions">
+                  <span class="dashboard-updated"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cập nhật: <time x-text="new Date(summary.generated_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })"></time></span>
+                  <button class="dashboard-refresh" type="button" aria-label="Làm mới trạng thái thiết bị" title="Làm mới" @click="refreshSummary()">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 9A6.5 6.5 0 0 1 17 6l3 6M4 12l3 6a6.5 6.5 0 0 0 10.8-3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="dashboard-stat-grid" aria-label="Tổng quan thiết bị">
+                <div class="dashboard-stat stat-online">
+                  <span class="dashboard-stat-dot" aria-hidden="true"></span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="7" rx="1.5"/><rect x="5" y="14" width="14" height="7" rx="1.5"/><path d="M8 6.5h.01M8 17.5h.01M11 6.5h5M11 17.5h5"/></svg>
+                  <strong x-text="deviceTotals().online"></strong>
+                  <span>Online</span>
+                </div>
+                <div class="dashboard-stat stat-offline">
+                  <span class="dashboard-stat-dot" aria-hidden="true"></span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="7" rx="1.5"/><rect x="5" y="14" width="14" height="7" rx="1.5"/><path d="M8 6.5h.01M8 17.5h.01M11 6.5h5M11 17.5h5"/></svg>
+                  <strong x-text="deviceTotals().offline"></strong>
+                  <span>Offline</span>
+                </div>
+                <div class="dashboard-stat stat-unknown">
+                  <span class="dashboard-stat-dot" aria-hidden="true"></span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 4.2 2c-1.1.8-1.7 1.3-1.7 2.7M12 17h.01"/></svg>
+                  <strong x-text="deviceTotals().unknown"></strong>
+                  <span>Unknown</span>
+                </div>
+                <div class="dashboard-stat stat-total">
+                  <span class="dashboard-stat-dot" aria-hidden="true"></span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="7" rx="1.5"/><rect x="5" y="14" width="14" height="7" rx="1.5"/><path d="M8 6.5h.01M8 17.5h.01M11 6.5h5M11 17.5h5"/></svg>
+                  <strong x-text="deviceTotals().total"></strong>
+                  <span>Tổng thiết bị</span>
+                </div>
+              </div>
+              <details class="dashboard-role-details">
+                <summary>Chi tiết theo vai trò</summary>
+                <div class="dashboard-table-scroll">
+                  <table class="dashboard-table">
+                    <thead><tr><th>Vai trò</th><th>Online</th><th>Offline</th><th>Unknown</th><th>Tổng</th></tr></thead>
+                    <tbody>
+                      <template x-for="[role, counts] in Object.entries(summary.devices.by_role)" :key="role">
+                        <tr>
+                          <td x-text="role"></td>
+                          <td><span class="status-dot status-online"></span><span x-text="counts.online"></span></td>
+                          <td><span class="status-dot status-offline"></span><span x-text="counts.offline"></span></td>
+                          <td><span class="status-dot status-unknown"></span><span x-text="counts.unknown"></span></td>
+                          <td x-text="counts.total"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
+            <section class="dashboard-panel dashboard-ospf-panel">
+              <div class="dashboard-panel-heading">
+                <h2>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.5 7 6.5 16M13.5 7l4 9M7.5 18h9"/></svg>
+                  Tình trạng OSPF
+                </h2>
+                <div class="dashboard-panel-actions">
+                  <span class="dashboard-updated"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cập nhật: <time x-text="new Date(summary.generated_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })"></time></span>
+                  <button class="dashboard-refresh" type="button" aria-label="Làm mới tình trạng OSPF" title="Làm mới" @click="refreshSummary()">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 9A6.5 6.5 0 0 1 17 6l3 6M4 12l3 6a6.5 6.5 0 0 0 10.8-3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="dashboard-ospf-overview" :class="'ospf-overview-' + ospfOverview().state">
+                <span class="dashboard-ospf-symbol" aria-hidden="true" x-text="ospfOverview().symbol"></span>
+                <div>
+                  <strong x-text="ospfOverview().title"></strong>
+                  <p x-text="ospfOverview().description"></p>
+                </div>
+              </div>
+              <details class="dashboard-ospf-details" x-show="summary.ospf.length">
+                <summary>Chi tiết router <span x-text="summary.ospf.length"></span></summary>
+                <div class="dashboard-ospf-list">
+                  <template x-for="entry in summary.ospf" :key="entry.device_id">
+                    <div class="ospf-entry">
+                      <div class="ospf-entry-header">
+                        <strong x-text="entry.hostname"></strong>
+                        <span class="health-pill" :class="'health-' + entry.health" x-text="entry.health"></span>
+                        <span class="ospf-count" x-text="entry.neighbor_count + ' neighbor(s)'"></span>
+                      </div>
+                      <ul class="ospf-neighbor-list" x-show="entry.neighbors.length">
+                        <template x-for="neighbor in entry.neighbors" :key="neighbor.neighbor_id + neighbor.interface">
+                          <li><code x-text="neighbor.neighbor_id"></code><span x-text="neighbor.state"></span><span x-text="neighbor.interface"></span></li>
+                        </template>
+                      </ul>
+                    </div>
+                  </template>
+                </div>
+              </details>
+            </section>
+
+            <section class="dashboard-panel dashboard-changes-panel" x-data="{ activeChangeTab: 'pending' }">
+              <div class="dashboard-panel-heading">
+                <h2>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.5-6.2L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+                  Thay đổi
+                </h2>
+              </div>
+              <div class="dashboard-change-tabs" role="tablist" aria-label="Lọc thay đổi">
+                <button type="button" role="tab" :aria-selected="activeChangeTab === 'pending'" :class="{ active: activeChangeTab === 'pending' }" @click="activeChangeTab = 'pending'">Đang chờ duyệt</button>
+                <button type="button" role="tab" :aria-selected="activeChangeTab === 'recent'" :class="{ active: activeChangeTab === 'recent' }" @click="activeChangeTab = 'recent'">Gần đây</button>
+              </div>
+              <div class="dashboard-change-content" x-show="activeChangeTab === 'pending'" role="tabpanel">
+                <ul class="dashboard-list dashboard-change-list" x-show="summary.changes.pending_approval.length">
+                  <template x-for="change in summary.changes.pending_approval" :key="'pending-' + change.id">
+                    <li><a href="/"><span x-text="change.device.hostname"></span><span class="risk-pill" x-text="change.risk_level"></span></a></li>
+                  </template>
+                </ul>
+                <div class="dashboard-empty-state" x-show="!summary.changes.pending_approval.length">
+                  <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="11" y="8" width="42" height="48" rx="7"/><path d="M24 21h18M24 32h18M24 43h12"/><circle cx="18" cy="21" r="1.5"/><circle cx="18" cy="32" r="1.5"/><circle cx="18" cy="43" r="1.5"/></svg>
+                  <strong>Chưa có thay đổi nào đang chờ duyệt</strong>
+                  <span>Các thay đổi cấu hình sẽ hiển thị tại đây.</span>
+                </div>
+              </div>
+              <div class="dashboard-change-content" x-show="activeChangeTab === 'recent'" role="tabpanel" x-cloak>
+                <ul class="dashboard-list dashboard-change-list" x-show="summary.changes.recent.length">
+                  <template x-for="change in summary.changes.recent" :key="'recent-' + change.id">
+                    <li><a href="/"><span x-text="change.device.hostname"></span><span class="status-pill" x-text="change.status"></span></a></li>
+                  </template>
+                </ul>
+                <div class="dashboard-empty-state" x-show="!summary.changes.recent.length">
+                  <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="11" y="8" width="42" height="48" rx="7"/><path d="M24 21h18M24 32h18M24 43h12"/><circle cx="18" cy="21" r="1.5"/><circle cx="18" cy="32" r="1.5"/><circle cx="18" cy="43" r="1.5"/></svg>
+                  <strong>Chưa có thay đổi gần đây</strong>
+                  <span>Lịch sử thay đổi sẽ hiển thị tại đây.</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="dashboard-panel dashboard-audit-panel">
+              <div class="dashboard-panel-heading">
+                <h2>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h12M9 12h12M9 19h12"/><circle cx="4" cy="5" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="19" r="1"/></svg>
+                  Nhật ký hoạt động
+                </h2>
+              </div>
+              <ul class="dashboard-audit-list" x-show="summary.audit.recent.length">
+                <template x-for="event in summary.audit.recent" :key="event.id">
+                  <li class="dashboard-audit-row">
+                    <span class="dashboard-audit-dot" :class="'audit-' + (event.result === 'failure' ? 'failure' : event.result)" aria-hidden="true"></span>
+                    <time class="audit-time" x-text="new Date(event.created_at).toLocaleTimeString('vi-VN')"></time>
+                    <span class="dashboard-audit-actor" x-text="event.username || 'system'"></span>
+                    <span class="dashboard-audit-action" x-text="event.action"></span>
+                    <span class="result-status" :class="'result-' + (event.result === 'failure' ? 'failed' : event.result)" x-text="event.result"></span>
+                  </li>
+                </template>
+              </ul>
+              <div class="dashboard-audit-empty" x-show="!summary.audit.recent.length">Chưa có hoạt động nào được ghi nhận.</div>
+            </section>
           </div>
         </template>
-      </section>
-
-      <section class="dashboard-panel">
-        <h2>Thay đổi</h2>
-        <h3>Đang chờ duyệt</h3>
-        <ul class="dashboard-list">
-          <template x-for="change in summary.changes.pending_approval" :key="'pending-' + change.id">
-            <li>
-              <a href="/">
-                <span x-text="change.device.hostname"></span>
-                <span class="risk-pill" x-text="change.risk_level"></span>
-              </a>
-            </li>
-          </template>
-        </ul>
-        <h3>Gần đây</h3>
-        <ul class="dashboard-list">
-          <template x-for="change in summary.changes.recent" :key="'recent-' + change.id">
-            <li>
-              <a href="/">
-                <span x-text="change.device.hostname"></span>
-                <span class="status-pill" x-text="change.status"></span>
-              </a>
-            </li>
-          </template>
-        </ul>
-      </section>
-
-      <section class="dashboard-panel">
-        <h2>Nhật ký hoạt động</h2>
-        <ul class="dashboard-list">
-          <template x-for="event in summary.audit.recent" :key="event.id">
-            <li>
-              <span class="audit-time" x-text="new Date(event.created_at).toLocaleTimeString('vi-VN')"></span>
-              <span x-text="event.username || 'system'"></span>
-              <span x-text="event.action"></span>
-              <span class="result-status" :class="'result-' + event.result" x-text="event.result"></span>
-            </li>
-          </template>
-        </ul>
-      </section>
+      </main>
     </div>
-    </template>
   </div>
 
   <script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
