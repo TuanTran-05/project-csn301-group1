@@ -10,7 +10,8 @@
           aria-controls="user-menu-panel"
           :aria-expanded="open"
           @click="open = true">
-    <span x-text="currentUser && currentUser.username"></span>
+    <span class="user-avatar" aria-hidden="true" x-text="((currentUser && (currentUser.display_name || currentUser.full_name || currentUser.username)) || 'A').charAt(0).toUpperCase()"></span>
+    <span class="account-name" x-text="currentUser && currentUser.username"></span>
     <span class="role-pill" x-text="currentUser && currentUser.role"></span>
     <span class="user-menu-caret" aria-hidden="true">▾</span>
   </button>

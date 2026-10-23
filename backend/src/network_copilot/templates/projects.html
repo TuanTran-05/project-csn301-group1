@@ -13,10 +13,10 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">AI Tool</span>
+      {% include "_app_brand.html" %}
       <nav class="top-bar-nav" aria-label="Điều hướng chính">
-        <div class="top-bar-project-slot">
-          <label class="project-switch" x-show="projects.length" x-cloak>
+        <div class="top-bar-project-slot" x-show="projects.length" x-cloak>
+          <label class="project-switch">
             <span class="sr-only">Project</span>
             <select class="project-select" :value="currentProjectId" @change="selectProject(Number($event.target.value))">
               <template x-for="item in projects" :key="item.id">

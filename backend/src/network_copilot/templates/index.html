@@ -14,10 +14,10 @@
 
   <div class="app-shell" x-show="currentUser" x-cloak>
     <header class="top-bar">
-      <span class="app-title">AI Tool</span>
+      {% include "_app_brand.html" %}
       <nav class="top-bar-nav" aria-label="Điều hướng chính">
-        <div class="top-bar-project-slot">
-          <label class="project-switch" x-show="projects.length" x-cloak>
+        <div class="top-bar-project-slot" x-show="projects.length" x-cloak>
+          <label class="project-switch">
             <span class="sr-only">Project</span>
             <select
               class="project-select"
@@ -50,8 +50,19 @@
     </p>
     <div class="main-grid">
       <aside class="sidebar devices-panel">
-        <h2>Thiết bị</h2>
-        <p class="sidebar-state" x-show="!devices.length">Project chưa có thiết bị. <a href="/projects">Thêm thiết bị</a>.</p>
+        <h1 class="sidebar-app-title">AI Tool</h1>
+        <div class="devices-heading">
+          <h2>Thiết bị</h2>
+          <a class="add-device-link" href="/projects" aria-label="Mở project để thêm thiết bị" title="Thêm thiết bị">+</a>
+        </div>
+        <a class="device-project-card" href="/projects" aria-label="Mở project hiện tại">
+          <span class="device-project-icon" aria-hidden="true"></span>
+          <span class="device-project-copy">
+            <strong x-text="currentProject ? currentProject.name : 'Project mặc định'"></strong>
+            <small x-show="!devices.length">Chưa có thiết bị. Thêm thiết bị ›</small>
+            <small x-show="devices.length" x-text="devices.length + ' thiết bị'"></small>
+          </span>
+        </a>
         <ul>
           <template x-for="device in devices" :key="device.id">
             <li class="device-item" tabindex="0" role="button"
@@ -69,6 +80,16 @@
             </li>
           </template>
         </ul>
+        <div class="sidebar-brand-story" aria-label="Thông điệp Eastern International University">
+          <span class="sidebar-brand-rule" aria-hidden="true"></span>
+          <p class="sidebar-motto">Kiến tạo tri thức<br />vì một tương lai bền vững</p>
+          <p class="sidebar-motto-en">CREATING KNOWLEDGE<br />FOR A SUSTAINABLE FUTURE</p>
+          <div class="sidebar-campus" aria-hidden="true">
+            <span class="campus-building campus-building--left"></span>
+            <span class="campus-building campus-building--middle"></span>
+            <span class="campus-building campus-building--right"></span>
+          </div>
+        </div>
       </aside>
       <main class="chat-panel">
         <div class="chat-toolbar">
@@ -542,7 +563,11 @@
         <p
           class="sidebar-state"
           x-show="!changesLoading && !batchesLoading && !changesError && !batchesError && pendingChanges.length === 0 && pendingBatches.length === 0"
-        >No pending changes or batches.</p>
+        >
+          <span class="pending-empty-icon" aria-hidden="true"></span>
+          <span>Không có thay đổi đang chờ</span>
+          <small>No pending changes or batches.</small>
+        </p>
         <ul>
           <template x-for="change in pendingChanges" :key="'change-' + change.id">
             <li>
