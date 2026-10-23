@@ -98,6 +98,16 @@ def permitted(user, action, group_id=None, device=None, environment=None):
         return False
     if role(user) == "ADMIN":
         return True
+    if role(user) == "OPERATOR" and action == "device.read" and device is not None:
+        # Legacy Operators use project ownership/sharing rather than the
+        # Teacher/Student group-grant system. Preserve that project boundary
+        # when listing or resolving devices, including before a project-scoped
+        # edit such as deleting one.
+        from ..projects.model import Project
+        from ..projects.service import access_level
+
+        project = db.session.get(Project, device.project_id)
+        return project is not None and access_level(user, project) is not None
     if role(user) not in {"TEACHER", "STUDENT"}:
         return False
     if role(user) == "TEACHER" and action in TEACHER_DEFAULT_ACTIONS:

@@ -1,5 +1,6 @@
 """Copy a saved AI chat diagram into the editable project topology."""
 
+import ipaddress
 import re
 
 from flask import current_app
@@ -12,6 +13,7 @@ from ..devices.model import Device
 from ..devices.schemas import DeviceCreateSchema
 from ..errors import NotFoundError, ValidationError
 from ..extensions import db
+from . import ipam
 from .model import TopologyLink
 from .templates import next_free_interface
 
@@ -25,6 +27,7 @@ _NODE_TYPES = {
     "host": ("generic", "host", "pc", "provisioned"),
 }
 _NODE_ORDER = ("internet", "firewall", "router", "switch", "server", "host")
+_IMPORT_MARKER_KEY = "_topology_imported_project_ids"
 
 
 def _hostname(label: str, fallback: str, used: set[str]) -> str:
@@ -94,16 +97,166 @@ def get_suggestion(source_project_id: int, message_id: int):
     return message, diagram
 
 
+def complete_diagram_addresses(project, raw_diagram: dict) -> tuple[dict, int]:
+    """Give every suggested device an address while preserving explicit IPs.
+
+    Link endpoint IPs are copied onto their nodes so both the chat renderer and
+    the project canvas carry the same address plan. Missing addresses use a
+    free /24 from the project's data addressing pool, never its management
+    network.
+    """
+    try:
+        diagram = NetworkDiagram.model_validate(raw_diagram)
+    except PydanticValidationError as exc:
+        raise ValidationError("Tin nhắn này không có sơ đồ mạng hợp lệ.") from exc
+
+    nodes = {node.id: node.model_dump() for node in diagram.nodes}
+    links = [link.model_dump() for link in diagram.links]
+    used_ips: set[tuple[int, str]] = set()
+    added = 0
+
+    def remember(node_id: str, address: str | None) -> None:
+        nonlocal added
+        if not address:
+            return
+        interface = ipaddress.ip_interface(address)
+        key = (interface.version, str(interface.ip))
+        used_ips.add(key)
+        addresses = nodes[node_id]["ip_addresses"]
+        if address not in addresses and len(addresses) < 4:
+            addresses.append(address)
+            added += 1
+
+    for node in diagram.nodes:
+        for address in node.ip_addresses:
+            interface = ipaddress.ip_interface(address)
+            used_ips.add((interface.version, str(interface.ip)))
+
+    for link in links:
+        remember(link["source"], link.get("ip_source"))
+        remember(link["target"], link.get("ip_target"))
+
+    # If a link declares its subnet but omits endpoint addresses, allocate
+    # distinct hosts from that subnet and put them on the same diagram nodes.
+    try:
+        management = ipaddress.ip_network(project.management_network, strict=False)
+    except ValueError:
+        management = None
+    for link in links:
+        raw_network = link.get("network")
+        if not raw_network:
+            continue
+        network = ipaddress.ip_network(raw_network, strict=False)
+        if network.version != 4 or (management and network.overlaps(management)):
+            continue
+        for node_key, field in (
+            ("source", "ip_source"),
+            ("target", "ip_target"),
+        ):
+            if link.get(field):
+                continue
+            node = nodes[link[node_key]]
+            matching = next(
+                (
+                    address
+                    for address in node["ip_addresses"]
+                    if ipaddress.ip_interface(address).ip in network
+                ),
+                None,
+            )
+            if matching:
+                link[field] = matching
+                continue
+            host = next(
+                (
+                    candidate
+                    for candidate in network.hosts()
+                    if (4, str(candidate)) not in used_ips
+                ),
+                None,
+            )
+            if host is None:
+                continue
+            address = f"{host}/{network.prefixlen}"
+            link[field] = address
+            remember(link[node_key], address)
+
+    missing = [node for node in diagram.nodes if not nodes[node.id]["ip_addresses"]]
+    if missing:
+        pool = ipam.pool_for(project)
+        prefix = max(24, pool.prefixlen)
+        reserved = []
+        for link in links:
+            if not link.get("network"):
+                continue
+            network = ipaddress.ip_network(link["network"], strict=False)
+            if network.version == 4:
+                reserved.append(network)
+        subnet = ipam.allocate(project, prefix, reserved=reserved)
+        hosts = iter(subnet.hosts())
+        for node in missing:
+            host = next(
+                (
+                    candidate
+                    for candidate in hosts
+                    if (4, str(candidate)) not in used_ips
+                ),
+                None,
+            )
+            if host is None:
+                raise ValidationError(
+                    f"Dải IP {subnet} không còn đủ địa chỉ cho sơ đồ gợi ý."
+                )
+            remember(node.id, f"{host}/{subnet.prefixlen}")
+
+    completed = NetworkDiagram.model_validate({
+        "title": diagram.title,
+        "nodes": list(nodes.values()),
+        "links": links,
+    })
+    return completed.model_dump(), added
+
+
+def _was_imported(project, message) -> bool:
+    payload = message.payload if isinstance(message.payload, dict) else {}
+    project_ids = payload.get(_IMPORT_MARKER_KEY, [])
+    if isinstance(project_ids, list) and project.id in project_ids:
+        return True
+    marker = f"[chat:{message.id}]"
+    return db.session.query(Device.id).filter(
+        Device.project_id == project.id,
+        Device.description.contains(marker),
+    ).first() is not None
+
+
+def was_imported(project, message) -> bool:
+    """Whether this chat diagram has already been linked to this project."""
+    return _was_imported(project, message)
+
+
+def mark_imported(project, message) -> None:
+    payload = dict(message.payload) if isinstance(message.payload, dict) else {}
+    project_ids = payload.get(_IMPORT_MARKER_KEY, [])
+    if not isinstance(project_ids, list):
+        project_ids = []
+    if project.id not in project_ids:
+        payload[_IMPORT_MARKER_KEY] = [*project_ids, project.id]
+    message.payload = payload
+
+
 def import_diagram(project, message_id: int, source_project_id: int | None = None) -> dict:
     """Import one project assistant message atomically and idempotently."""
     message, diagram = get_suggestion(source_project_id or project.id, message_id)
 
-    marker = f"[chat:{message.id}]"
-    already_imported = db.session.query(Device.id).filter(
-        Device.project_id == project.id,
-        Device.description.contains(marker),
-    ).first() is not None
-    if already_imported:
+    completed, _ = complete_diagram_addresses(project, diagram.model_dump())
+    diagram = NetworkDiagram.model_validate(completed)
+    payload = dict(message.payload) if isinstance(message.payload, dict) else {}
+    payload["diagram"] = completed
+    message.payload = payload
+
+    if _was_imported(project, message):
+        mark_imported(project, message)
+        db.session.commit()
         return {"created": False, "message_id": message.id, "devices": [], "links": []}
 
     device_count = db.session.query(Device.id).filter_by(project_id=project.id).count()
@@ -169,12 +322,16 @@ def import_diagram(project, message_id: int, source_project_id: int | None = Non
                 device_b_id=device_b.id,
                 interface_b=next_free_interface(project.id, device_b),
                 link_type="physical",
+                network=suggestion.network,
+                ip_a=suggestion.ip_source,
+                ip_b=suggestion.ip_target,
                 bring_up=True,
                 description=_link_description(suggestion),
             )
             db.session.add(link)
             links.append(link)
 
+        mark_imported(project, message)
         db.session.commit()
     except Exception:
         db.session.rollback()
