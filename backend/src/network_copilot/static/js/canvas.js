@@ -695,7 +695,14 @@
           this.multi = [];
           this.selectLink(Number(linkEl.dataset.linkId));
         } else {
-          this._startBand(event);
+          if (event.shiftKey || event.ctrlKey || event.metaKey) {
+            this._startBand(event);
+          } else {
+            this.multi = [];
+            this.selectedNodeId = null;
+            this.selectedLinkId = null;
+            this._startPan(event);
+          }
         }
       },
 
