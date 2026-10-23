@@ -1,4 +1,5 @@
 :root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
   --bg: #0e1826;
   --surface: #131f30;
   --surface-raised: #0b1420;
@@ -36,10 +37,15 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
 }
+
+button,
+input,
+select,
+textarea { font-family: inherit; }
 
 /* -- Login screen -- */
 
@@ -118,7 +124,7 @@ body {
   grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
   overflow: auto;
   background: #fbfcfd;
-  font-family: Arial, "Segoe UI", Tahoma, sans-serif;
+  font-family: var(--font-sans);
 }
 
 .login-brand {
@@ -201,7 +207,7 @@ body {
 .login-motto {
   margin: 0;
   color: #edf3f8;
-  font-family: Arial, "Segoe UI", Tahoma, sans-serif;
+  font-family: var(--font-sans);
   font-size: clamp(25px, 2.6vw, 38px);
   font-style: italic;
   line-height: 1.25;
@@ -268,7 +274,7 @@ body {
 .login-heading h1 {
   margin: 0;
   color: #123b5d;
-  font-family: Arial, "Segoe UI", Tahoma, sans-serif;
+  font-family: var(--font-sans);
   font-size: clamp(25px, 2.2vw, 31px);
   font-weight: 700;
 }
