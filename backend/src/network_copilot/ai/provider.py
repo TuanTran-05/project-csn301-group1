@@ -25,6 +25,34 @@ DEFAULT_TEMPERATURE = 0
 # 190-315 extra tokens per call. Disabled, the answer is identical every time.
 NO_THINKING = {"thinking_budget": 0}
 
+# Hints for the Gemini HTTP failures a lab operator can actually fix.
+GEMINI_FAILURE_HINTS = {
+    400: "check AI_API_KEY and AI_MODEL",
+    401: "AI_API_KEY was rejected",
+    403: "AI_API_KEY lacks access to this model or the API is disabled",
+    404: "AI_MODEL does not exist or was retired; pick a current model",
+    429: "quota or rate limit exceeded; wait or use another key/model",
+    500: "Gemini had an internal error; retry later",
+    503: "Gemini is overloaded; retry later",
+    504: "Gemini timed out; retry later",
+}
+
+
+def _api_error_code(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, int) else None
+
+
+def _describe_gemini_failure(exc: Exception) -> str:
+    """Summarise a failure without echoing upstream text, which may hold the key."""
+    code = _api_error_code(exc)
+    if code is None:
+        return type(exc).__name__
+    status = getattr(exc, "status", None)
+    detail = f"HTTP {code} {status}" if isinstance(status, str) and status else f"HTTP {code}"
+    hint = GEMINI_FAILURE_HINTS.get(code)
+    return f"{detail}: {hint}" if hint else detail
+
 
 class AIProvider(Protocol):
     def complete(
@@ -112,7 +140,7 @@ class GeminiProvider:
             # so only the exception type is surfaced.
             logger.exception("Gemini request failed.")
             raise AIProviderError(
-                f"The Gemini API call failed ({type(exc).__name__})."
+                f"The Gemini API call failed ({_describe_gemini_failure(exc)})."
             ) from exc
 
         return response.text or ""
@@ -123,8 +151,11 @@ class GeminiProvider:
             return client.models.generate_content(
                 model=self.model, contents=contents, config=config
             )
-        except Exception:
-            if "thinking_config" not in config:
+        except Exception as exc:
+            code = _api_error_code(exc)
+            # Only a 400 can mean "this model cannot disable thinking"; a bad
+            # key, quota or missing model would just fail twice.
+            if "thinking_config" not in config or (code is not None and code != 400):
                 raise
             # Some models (gemini-2.5-pro among them) refuse to disable
             # thinking. Retry once without it rather than failing the request.
