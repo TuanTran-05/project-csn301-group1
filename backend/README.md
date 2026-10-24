@@ -69,9 +69,17 @@ Open <http://127.0.0.1:5000/projects>.
   SSH login, kept only in the page, is stored (encrypted) on each new device.
   *Nối dây* cables two devices with two clicks and picks the free ports itself;
   `Delete` removes the selected device or link, `Esc` leaves cabling mode.
-- **Importing from PNETLab.** *Devices → Nhập từ PNETLab* reads a lab's nodes and
-  cabling through the EVE-NG compatible API (`/api/auth/login`, `/api/labs/<lab>.unl/
-  nodes|topology`; read-only, nothing in the lab is started or edited). Pick the
+- **Importing from PNETLab.** *Devices → Nhập từ PNETLab* reads a lab's nodes,
+  networks and cabling. PNETLab 4/5 only has a session-bound API (its EVE-NG paths
+  answer "Resource not found (60038)"): the backend logs in through
+  `/store/public/auth/login/login`, reuses the lab already open in that account's
+  session or opens it with `/api/labs/session/factory/create {path}`, and reads
+  `/api/labs/session/topology`; cables come from each interface's `network_id`, and a
+  cloud network (`pnet0` = Cloud0) is never taken for a cable. EVE-NG (`/api/auth/login`,
+  `/api/labs/<lab>.unl/nodes|topology|networks`) is the fallback; *Kiểu API* forces
+  either. Leave the lab path empty to use the lab open in the session. PNETLab keeps one
+  session per account and a running lab belongs to the account that opened it, so use
+  that account (its browser tab may need to log in again). No node is started or edited. Pick the
   nodes, fix the management IPs (PNETLab does not know them), and import: devices
   come with their canvas positions and the cables between them. Only private
   lab addresses are accepted as the PNETLab URL, redirects are refused, and the

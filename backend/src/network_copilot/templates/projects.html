@@ -172,13 +172,22 @@
               <template x-if="pnet">
                 <div class="card">
                   <h4>Nhập thiết bị từ PNETLab</h4>
-                  <p class="hint">Đọc danh sách node và dây nối của một lab (API tương thích EVE-NG). Chỉ đọc: không bật/tắt hay sửa lab.
-                    Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.</p>
+                  <p class="hint">Đọc danh sách node, mạng và dây nối của một lab qua API phiên của PNETLab (hoặc API kiểu EVE-NG).
+                    Không bật/tắt hay sửa node. Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.
+                    PNETLab chỉ giữ một phiên cho mỗi tài khoản và lab đang chạy thuộc tài khoản đã mở nó: dùng đúng tài khoản đó;
+                    tab PNETLab của tài khoản này có thể bị đăng xuất, khi đó chỉ cần đăng nhập lại.</p>
                   <form class="form-grid" @submit.prevent="pnetPreview()">
                     <label>URL PNETLab <input type="text" x-model="pnet.form.url" required placeholder="http://172.16.0.5" /></label>
                     <label>Tài khoản <input type="text" x-model="pnet.form.username" required autocomplete="off" /></label>
                     <label>Mật khẩu <input type="password" x-model="pnet.form.password" required autocomplete="new-password" /></label>
-                    <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" required placeholder="/Course/Lab1.unl" /></label>
+                    <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" placeholder="để trống: lab đang mở trong phiên" /></label>
+                    <label>Kiểu API
+                      <select x-model="pnet.form.api_mode">
+                        <option value="auto">Tự động (phiên PNETLab, rồi EVE-NG)</option>
+                        <option value="session">PNETLab – API phiên</option>
+                        <option value="eveng">EVE-NG – API theo đường dẫn</option>
+                      </select>
+                    </label>
                     <label class="check"><input type="checkbox" x-model="pnet.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
                     <div class="form-actions">
                       <button type="submit" class="primary-btn" :disabled="pnet.loading">Tải danh sách node</button>
@@ -203,6 +212,7 @@
                         </template>
                       </tbody>
                     </table>
+                    <p class="hint" x-show="pnet.api">Đọc qua: <strong x-text="pnet.api === 'session' ? 'API phiên PNETLab' : 'API EVE-NG'"></strong></p>
                     <p class="hint">Phát hiện <span x-text="pnet.links.length"></span> dây nối giữa hai node. PNETLab không biết IP quản trị của
                       thiết bị: IP gợi ý chỉ là chỗ trống trong dải của project, hãy nhập IP thật đã cấu hình trên thiết bị.</p>
                     <form class="form-grid" @submit.prevent="pnetImport()">
@@ -226,7 +236,7 @@
                     </div>
                   </div>
 
-                  <div class="pnet-boot" x-show="pnet.form.url && pnet.form.lab">
+                  <div class="pnet-boot" x-show="pnet.form.url">
                     <h4>Khởi tạo SSH qua console</h4>
                     <p class="hint">Node mới trong PNETLab chưa có IP quản trị và SSH. Bước này mở console telnet của từng node
                       (đang chạy) qua máy PNETLab, đặt IP quản trị và tài khoản SSH đã lưu cho thiết bị, bật SSH rồi kiểm tra lại bằng SSH.

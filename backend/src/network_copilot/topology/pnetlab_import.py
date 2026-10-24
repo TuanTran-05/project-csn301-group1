@@ -1,6 +1,7 @@
 """Turn a PNETLab lab into devices and links of a project."""
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,8 +20,12 @@ class LabSource(BaseModel):
     url: str = Field(min_length=1, max_length=255)
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
-    lab: str = Field(min_length=1, max_length=255)
+    # Empty: the lab already open in the account's PNETLab session.
+    lab: str = Field(default="", max_length=255)
     verify_tls: bool = True
+    # "session": PNETLab's session-bound API; "eveng": the EVE-NG path API;
+    # "auto": session first, EVE-NG when the server has no session API.
+    api_mode: Literal["auto", "session", "eveng"] = "auto"
 
 
 class NodeChoice(BaseModel):
@@ -96,13 +101,20 @@ def layout_positions(nodes: dict) -> dict:
     return result
 
 
-def derive_links(nodes: dict, topology: list) -> list[dict]:
+def is_cloud(network: dict | None) -> bool:
+    """A cloud network (pnet0 = Management(Cloud0) ... pnet9) bridges to a host NIC."""
+    return str((network or {}).get("type", "")).lower().startswith("pnet")
+
+
+def derive_links(nodes: dict, topology: list, networks: dict | None = None) -> list[dict]:
     """Node-to-node cables from the lab topology.
 
     PNETLab joins nodes through (usually hidden) bridge networks, so entries
     are grouped by network: a network with exactly two nodes is one cable.
+    A cloud network is never a cable, however many nodes it holds.
     Direct node-to-node entries are honoured too.
     """
+    networks = networks or {}
     by_network: dict[str, list] = {}
     links = []
     for entry in topology:
@@ -117,7 +129,10 @@ def derive_links(nodes: dict, topology: list) -> list[dict]:
             by_network.setdefault(destination, []).append((source, entry.get("source_label")))
         elif destination_type == "node" and source_type == "network":
             by_network.setdefault(source, []).append((destination, entry.get("destination_label")))
-    links.extend(ends for ends in by_network.values() if len(ends) == 2)
+    links.extend(
+        ends for network, ends in by_network.items()
+        if len(ends) == 2 and not is_cloud(networks.get(network.removeprefix("network")))
+    )
 
     known = {f"node{key}" for key in nodes} | {str(key) for key in nodes}
     result = []
@@ -140,13 +155,15 @@ def derive_links(nodes: dict, topology: list) -> list[dict]:
 
 def _fetch(source: LabSource):
     client = build_client(source.model_dump())
-    return client.nodes(source.lab), client.topology(source.lab)
+    nodes, topology = client.nodes(source.lab), client.topology(source.lab)
+    networks = client.networks(source.lab) if hasattr(client, "networks") else {}
+    return nodes, topology, networks, getattr(client, "mode_used", None)
 
 
 def preview(project, payload: dict) -> dict:
     """What an import would do, without changing anything."""
     source = validate(LabSource, payload, "Import")
-    nodes, topology = _fetch(source)
+    nodes, topology, networks, api = _fetch(source)
     positions = layout_positions(nodes)
     existing = {
         d.hostname.upper()
@@ -173,13 +190,14 @@ def preview(project, payload: dict) -> dict:
             "kind": kind.get("kind") if kind else None,
         }
         items.append(item)
-    return {"nodes": items, "links": derive_links(nodes, topology), "positions": len(positions)}
+    return {"nodes": items, "links": derive_links(nodes, topology, networks), "positions": len(positions),
+            "api": api}
 
 
 def import_lab(project, payload: dict) -> dict:
     """Create the chosen nodes as devices (and their cables as links)."""
     request = validate(ImportRequest, payload, "Import")
-    nodes, topology = _fetch(request)
+    nodes, topology, networks, _ = _fetch(request)
     positions = layout_positions(nodes)
     chosen = {choice.id: choice for choice in request.nodes}
 
@@ -227,7 +245,7 @@ def import_lab(project, payload: dict) -> dict:
 
     link_results = []
     if request.import_links:
-        for link in derive_links(nodes, topology):
+        for link in derive_links(nodes, topology, networks):
             a, b = by_node.get(link["node_a"]), by_node.get(link["node_b"])
             if a is None or b is None:
                 continue

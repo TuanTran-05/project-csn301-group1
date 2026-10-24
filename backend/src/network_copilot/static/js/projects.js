@@ -931,7 +931,8 @@ document.addEventListener("alpine:init", () => {
 
     openPnet() {
       this.pnet = {
-        form: { url: "", username: "", password: "", lab: "", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        form: { url: "", username: "", password: "", lab: "", api_mode: "auto", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        api: null,
         nodes: [],
         links: [],
         loading: false,
@@ -948,7 +949,10 @@ document.addEventListener("alpine:init", () => {
 
     _pnetSource() {
       const f = this.pnet.form;
-      return { url: f.url, username: f.username, password: f.password, lab: f.lab, verify_tls: !!f.verify_tls };
+      return {
+        url: f.url, username: f.username, password: f.password, lab: f.lab,
+        api_mode: f.api_mode || "auto", verify_tls: !!f.verify_tls,
+      };
     },
 
     async pnetPreview() {
@@ -963,6 +967,7 @@ document.addEventListener("alpine:init", () => {
         });
         pnet.nodes = data.nodes.map((n) => ({ ...n, selected: n.supported && !n.exists }));
         pnet.links = data.links;
+        pnet.api = data.api || null;
         pnet.loaded = true;
       } catch (err) {
         pnet.error = this.describeError(err);

@@ -80,15 +80,23 @@ def cloud_interfaces(node_id: str, topology: list, networks: dict) -> list[str]:
 
 
 def console_port(node: dict) -> int | None:
-    """The telnet port of a node's console, from its ``url``."""
-    url = str(node.get("url") or "")
-    parsed = urlparse(url)
-    if parsed.scheme != "telnet":
-        return None
+    """The telnet port of a node's console: its ``telnet://`` url, else ``port``.
+
+    PNETLab's session API reports an HTML5 link in ``url`` when the account
+    uses the web console, but still carries the telnet port in ``port``.
+    """
+    parsed = urlparse(str(node.get("url") or ""))
+    if parsed.scheme == "telnet":
+        try:
+            if parsed.port:
+                return parsed.port
+        except ValueError:
+            pass
     try:
-        return parsed.port
-    except ValueError:
+        port = int(node.get("port") or 0)
+    except (TypeError, ValueError):
         return None
+    return port if 0 < port < 65536 else None
 
 
 def _gateway(project, raw: str | None) -> str | None:
@@ -242,7 +250,7 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
         entry["commands"] = build_commands(device, interface, project, gateway, credential)
         entry["ready"] = True
         entry["_run"] = (device, credential, host, port, interface, gateway)
-    return entries, {"gateway": gateway}
+    return entries, {"gateway": gateway, "api": getattr(client, "mode_used", None)}
 
 
 def _public(entry: dict) -> dict:
