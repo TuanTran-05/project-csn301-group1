@@ -73,6 +73,7 @@ document.addEventListener("alpine:init", () => {
     sending: false,
     _messagesRefreshGeneration: 0,
     _messagesPollPending: false,
+    _messagesPollInFlight: false,
     _clientMessageSequence: 0,
     topologyChoiceBusy: false,
     topologyChoiceError: "",
@@ -734,15 +735,18 @@ document.addEventListener("alpine:init", () => {
 
     startPolling() {
       this.stopPolling();
-      // While the event stream is healthy the server says when to refresh, so
-      // these timers only act when it is not.
+      // The event stream triggers device, change, and batch refreshes. These
+      // timers cover gaps when streaming is unavailable; chat also has its own
+      // one-second poll so new messages stay timely through buffered streams.
       const unlessStreaming = (refresh) => () => {
         if (!this._streamHealthy) refresh().catch(() => {});
       };
       this._deviceTimer = setInterval(unlessStreaming(() => this.refreshDevices()), 15000);
       this._changesTimer = setInterval(unlessStreaming(() => this.refreshChanges()), 15000);
       this._batchesTimer = setInterval(unlessStreaming(() => this.refreshBatches()), 15000);
-      this._messagesTimer = setInterval(unlessStreaming(() => this.pollMessages()), 7000);
+      // Keep the active transcript fresh even when the SSE connection appears
+      // healthy; proxies can keep a stream open while buffering its events.
+      this._messagesTimer = setInterval(() => this.pollMessages().catch(() => {}), 1000);
       // A slow full refresh as a safety net against a missed event.
       this._safetyTimer = setInterval(() => this._refreshEverything(), 60000);
     },
@@ -1417,39 +1421,52 @@ document.addEventListener("alpine:init", () => {
         this._messagesPollPending = true;
         return;
       }
-      const generation = this._messagesRefreshGeneration;
-      const wasAtBottom = this._isScrolledToBottom();
-      const newestServerMessage = [...this.messages]
-        .reverse()
-        .find((message) => !message._client && Number.isFinite(Number(message.id)));
-      const cursor = newestServerMessage
-        ? `&after_id=${newestServerMessage.id}`
-        : `&limit=${this.messagePageSize + 1}`;
-      const data = await this.authFetch(
-        `/api/chat/messages?session_id=${this.currentSessionId}${cursor}`
-      );
-      if (generation !== this._messagesRefreshGeneration) return;
-      const known = new Set(this.messages.map((message) => message.id));
-      let appended = false;
-      const items = data.items || [];
-      if (!newestServerMessage) {
-        this.hasOlderMessages = items.length > this.messagePageSize;
+      if (this._messagesPollInFlight) {
+        this._messagesPollPending = true;
+        return;
       }
-      for (const message of newestServerMessage
-        ? items
-        : items.slice(-this.messagePageSize)) {
-        if (!known.has(message.id)) {
-          this._ingestMessage(message);
-          known.add(message.id);
-          appended = true;
+      this._messagesPollInFlight = true;
+      try {
+        const generation = this._messagesRefreshGeneration;
+        const wasAtBottom = this._isScrolledToBottom();
+        const newestServerMessage = [...this.messages]
+          .reverse()
+          .find((message) => !message._client && Number.isFinite(Number(message.id)));
+        const cursor = newestServerMessage
+          ? `&after_id=${newestServerMessage.id}`
+          : `&limit=${this.messagePageSize + 1}`;
+        const data = await this.authFetch(
+          `/api/chat/messages?session_id=${this.currentSessionId}${cursor}`
+        );
+        if (generation !== this._messagesRefreshGeneration) return;
+        const known = new Set(this.messages.map((message) => message.id));
+        let appended = false;
+        const items = data.items || [];
+        if (!newestServerMessage) {
+          this.hasOlderMessages = items.length > this.messagePageSize;
         }
-      }
-      if (appended && wasAtBottom) {
-        this.$nextTick(() => {
-          if (generation === this._messagesRefreshGeneration) {
-            this._scrollToBottom();
+        for (const message of newestServerMessage
+          ? items
+          : items.slice(-this.messagePageSize)) {
+          if (!known.has(message.id)) {
+            this._ingestMessage(message);
+            known.add(message.id);
+            appended = true;
           }
-        });
+        }
+        if (appended && wasAtBottom) {
+          this.$nextTick(() => {
+            if (generation === this._messagesRefreshGeneration) {
+              this._scrollToBottom();
+            }
+          });
+        }
+      } finally {
+        this._messagesPollInFlight = false;
+        if (this._messagesPollPending && !this.messagesLoading && !this.loadingOlderMessages) {
+          this._messagesPollPending = false;
+          this.pollMessages().catch(() => {});
+        }
       }
     },
 

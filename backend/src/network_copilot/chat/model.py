@@ -7,6 +7,23 @@ from ..extensions import db, in_check
 CHAT_ROLES = ("user", "assistant", "system")
 
 
+def utc_isoformat(value: datetime | None) -> str | None:
+    """Serialize stored UTC timestamps with an explicit timezone marker.
+
+    SQL databases commonly return ``DateTime(timezone=False)`` values as naive
+    datetimes even though this app writes them in UTC. Without the marker,
+    browsers interpret the timestamp as local time and display it several
+    hours off.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 class ChatSession(db.Model):
     """A named conversation thread within the shared team chat.
 
@@ -79,7 +96,7 @@ class ChatMessage(db.Model):
             "role": self.role,
             "content": self.content,
             "payload": self.payload,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": utc_isoformat(self.created_at),
         }
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
