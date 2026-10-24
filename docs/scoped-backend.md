@@ -42,7 +42,34 @@ Tài khoản Operator và Viewer đều thấy project lab mặc định (projec
 
 Operator có thể nhập “Tạo project mới” trong chat. Hệ thống tạo project và hỏi số thiết bị mạng (2–25), sau đó hiển thị các sơ đồ hình sao, vòng, campus hoặc hub and spoke phù hợp với số lượng. Chọn một phương án sẽ tạo các thiết bị ở dạng kế hoạch và mở canvas topology để Operator thêm, sửa hoặc xóa. Thiết bị phải được cấp IP và thông tin truy cập trước khi có thể cấu hình thật.
 
-Project là phạm vi chia sẻ của nhóm: Operator có thể thêm tài khoản Viewer hoặc Operator từ tab “Nhóm / chia sẻ”. Viewer chỉ xem topology, dùng chat tư vấn và đọc các phiên chat trong project; Operator được thêm có quyền editor để cùng chỉnh sửa thiết bị và sơ đồ. Chỉ chủ project hoặc ADMIN mới quản lý thành viên và cài đặt project.
+Project là phạm vi chia sẻ của nhóm: Operator có thể thêm tài khoản Viewer hoặc Operator từ tab “Nhóm / chia sẻ”. Viewer chỉ xem topology và dùng chat tư vấn; Operator được thêm có quyền editor để cùng chỉnh sửa thiết bị và sơ đồ. Chỉ chủ project hoặc ADMIN mới quản lý thành viên và cài đặt project.
+
+### Phiên chat là riêng của từng người
+
+Thành viên dùng chung thiết bị và topology của project, nhưng **mỗi người có phiên chat riêng**. Phiên thuộc về người tạo ra nó (`chat_sessions.created_by_id`):
+
+- `GET /api/chat/sessions` chỉ trả về phiên của chính người gọi, kể cả Admin.
+- `GET /api/chat/messages` và `POST /api/ai/chat` không có `session_id`, hoặc với `session_id` của người khác, sẽ dùng phiên gần nhất của chính người gọi (tạo mới nếu chưa có). Viewer không thể đọc hay ghi vào phiên của Operator và ngược lại.
+- Admin được đọc mọi phiên trong project theo `session_id` để kiểm tra (audit), nhưng không ghi vào phiên của người khác.
+- Chỉ áp dụng / tải cấu hình từ gợi ý AI nằm trong phiên của chính mình.
+- Phiên cũ không có người tạo (`created_by_id` NULL, từ trước thay đổi này) chỉ Admin còn đọc được.
+
+### Bảng quyền theo vai trò
+
+Quyền thực tế = vai trò tài khoản ∩ quyền trên project (`owner` / `editor` / `viewer`). Tài khoản VIEWER luôn bị hạ xuống `viewer` trên mọi project, kể cả project được chia sẻ quyền sửa. Lab mặc định là `viewer` với mọi tài khoản trừ Admin.
+
+| Hành động | ADMIN | OPERATOR | VIEWER |
+|---|---|---|---|
+| Xem mọi project | ✓ | chỉ project của mình / được chia sẻ / lab mặc định | chỉ project được chia sẻ / lab mặc định |
+| Tạo project (kể cả “Tạo project mới” trong chat) | ✓ | ✓ | ✗ |
+| Chia sẻ project | ✓ | trên project mình sở hữu: thêm Viewer hoặc Operator (Operator được quyền editor) | ✗ |
+| Sửa topology / thiết bị / áp thiết kế AI | ✓ | khi là owner/editor | ✗ |
+| Chat tư vấn AI (không chạy lệnh) | — | ✓ | ✓ |
+| Chat AI chạy lệnh / tạo Preview → Approve → Apply | ✓ | ✗ | ✗ |
+| Duyệt và áp cấu hình AI lên PNETLab (AI Management) | ✗ (dùng pipeline Preview/Approve/Apply) | khi là owner/editor và project bật AI Management | ✗ |
+| Tải file cấu hình từ gợi ý AI | ✓ | ✓ (gợi ý trong phiên của mình) | ✓ (gợi ý trong phiên của mình) |
+| Đọc phiên chat | mọi phiên (audit) | phiên của mình | phiên của mình |
+| Quản lý người dùng | ✓ | ✗ | ✗ |
 
 ## Cấp quyền ban đầu
 

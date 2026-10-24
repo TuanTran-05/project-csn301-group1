@@ -30,6 +30,7 @@ def list_messages():
         project_id=project.id,
         before_id=before_id,
         after_id=after_id,
+        user=current_user(),
     )
     return jsonify({"items": [message.to_dict() for message in messages]}), 200
 
@@ -38,7 +39,9 @@ def list_messages():
 @jwt_required()
 def list_sessions():
     project = current_project()
-    return jsonify({"items": session_service.list_sessions(project.id)}), 200
+    return jsonify(
+        {"items": session_service.list_sessions(project.id, current_user())}
+    ), 200
 
 
 @bp.post("/sessions")
@@ -57,16 +60,7 @@ def create_session():
 def export_message_configurations(message_id: int):
     """Package the configurations in one assistant reply for manual lab import."""
     project = current_project()
-    message = (
-        db.session.query(ChatMessage)
-        .join(ChatSession, ChatSession.id == ChatMessage.session_id)
-        .filter(
-            ChatMessage.id == message_id,
-            ChatMessage.role == "assistant",
-            ChatSession.project_id == project.id,
-        )
-        .one_or_none()
-    )
+    message = _chat_advice(message_id, project.id, current_user())
     if message is None:
         raise NotFoundError("The chat suggestion was not found in this project.")
     approval = request.get_json(silent=True)
@@ -126,8 +120,13 @@ def export_message_configurations(message_id: int):
     )
 
 
-def _chat_advice(message_id: int, project_id: int):
-    return (
+def _chat_advice(message_id: int, project_id: int, user, write: bool = False):
+    """An assistant reply in one of ``user``'s own sessions of the project.
+
+    With ``write`` the session must be the user's own even for ADMIN, so
+    nobody acts on a suggestion from someone else's conversation.
+    """
+    message = (
         db.session.query(ChatMessage)
         .join(ChatSession, ChatSession.id == ChatMessage.session_id)
         .filter(
@@ -137,6 +136,25 @@ def _chat_advice(message_id: int, project_id: int):
         )
         .one_or_none()
     )
+    if message is None or not session_service.can_use_session(
+        user, db.session.get(ChatSession, message.session_id), write
+    ):
+        return None
+    return message
+
+
+def _require_ai_management_operator():
+    """The project and user for an AI Management apply.
+
+    Only an OPERATOR with edit rights on the project may push an AI
+    suggestion to devices. A VIEWER is read-only everywhere and ADMIN uses
+    the regular Preview -> Approve -> Apply pipeline instead.
+    """
+    project = current_project(need="editor")
+    user = current_user()
+    if user is None or user.role != "OPERATOR":
+        raise ForbiddenError("Only an Operator can approve an AI chat suggestion here.")
+    return project, user
 
 
 def _approved_chat_configs(message, project):
@@ -183,10 +201,7 @@ def _approved_chat_configs(message, project):
 @limiter.limit("10 per minute")
 def apply_chat_configurations(message_id: int):
     """Apply one explicitly approved AI suggestion through the change pipeline."""
-    project = current_project()
-    user = current_user()
-    if user is None or user.role not in {"OPERATOR", "VIEWER"}:
-        raise ForbiddenError("Only an Operator or Viewer can approve an AI chat suggestion here.")
+    project, user = _require_ai_management_operator()
     if project.environment != "pnetlab" or not project.ai_management_enabled:
         raise InvalidStateError(
             "The project owner must enable AI Management for this PNETLab project first."
@@ -195,7 +210,7 @@ def apply_chat_configurations(message_id: int):
     if not isinstance(payload, dict) or payload.get("approved") is not True:
         raise ValidationError("Explicitly approve this chat suggestion before applying it.")
 
-    message = _chat_advice(message_id, project.id)
+    message = _chat_advice(message_id, project.id, user, write=True)
     if message is None:
         raise NotFoundError("The chat suggestion was not found in this project.")
 
@@ -278,7 +293,7 @@ def apply_chat_design(message_id: int):
     from ..topology.design import list_design
 
     project = write_project()
-    message = _chat_advice(message_id, project.id)
+    message = _chat_advice(message_id, project.id, current_user(), write=True)
     payload = (message.payload or {}) if message is not None else {}
     if payload.get("flow") != "design_proposal" or not isinstance(payload.get("design"), dict):
         raise NotFoundError("The design proposal was not found in this project.")
@@ -306,10 +321,7 @@ def apply_chat_design(message_id: int):
 @limiter.limit("10 per minute")
 def apply_approved_chat_batch(batch_id: int):
     """Finish an AI Management apply that requested a stronger phrase."""
-    project = current_project()
-    user = current_user()
-    if user is None or user.role not in {"OPERATOR", "VIEWER"}:
-        raise ForbiddenError("This batch is not an AI Management chat apply.")
+    project, user = _require_ai_management_operator()
     if project.environment != "pnetlab" or not project.ai_management_enabled:
         raise InvalidStateError("AI Management is not enabled for this project.")
     payload = request.get_json(silent=True)
@@ -326,7 +338,7 @@ def apply_approved_chat_batch(batch_id: int):
         or batch.requested_by_id != user.id
     ):
         raise NotFoundError("This batch is not an AI Management suggestion for this user.")
-    message = _chat_advice(batch.chat_message_id, project.id)
+    message = _chat_advice(batch.chat_message_id, project.id, user, write=True)
     if message is None:
         raise NotFoundError("The original chat suggestion no longer exists.")
     _approved_chat_configs(message, project)
@@ -342,10 +354,7 @@ def apply_approved_chat_batch(batch_id: int):
 @jwt_required()
 @limiter.limit("10 per minute")
 def cancel_approved_chat_batch(batch_id: int):
-    project = current_project()
-    user = current_user()
-    if user is None or user.role not in {"OPERATOR", "VIEWER"}:
-        raise ForbiddenError("This batch is not an AI Management chat apply.")
+    project, user = _require_ai_management_operator()
     from ..changes import batch_service
 
     batch = batch_service.get_batch(batch_id, project.id)

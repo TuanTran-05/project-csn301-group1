@@ -5,7 +5,7 @@ from pydantic import ValidationError as PydanticValidationError
 from ..auth.model import User
 from ..auth.service import current_user
 from ..chat.service import record_message as record_chat_message
-from ..chat.session_service import create_session
+from ..chat.session_service import create_session, resolve_or_create_session
 from ..chat.onboarding import (
     requests_network_design,
     requests_project,
@@ -52,9 +52,12 @@ def record_failed_chat_response(response):
     content = payload.get("message")
     if not isinstance(content, str):
         content = "Request failed."
-    body = request.get_json(silent=True) or {}
-    raw_session_id = body.get("session_id") if isinstance(body, dict) else None
-    session_id = raw_session_id if isinstance(raw_session_id, int) else None
+    # Set by chat() once it resolved the caller's own session. A request that
+    # failed before that goes to the caller's latest session, never to a
+    # session id taken from the body, which may be someone else's.
+    session_id = getattr(g, "chat_session_id", None)
+    if session_id is None:
+        session_id = resolve_or_create_session(None, project_id, user, write=True).id
     record_chat_message(
         user.id if user else None,
         user.username if user else None,
@@ -107,6 +110,12 @@ def chat():
     user = current_user()
     user_id = user.id if user else None
     username = user.username if user else None
+    # Chat sessions are private to the user who started them. A missing id,
+    # or one belonging to another member, is replaced by the caller's own.
+    data.session_id = resolve_or_create_session(
+        data.session_id, project.id, user, write=True
+    ).id
+    g.chat_session_id = data.session_id
 
     if (
         user.role == "OPERATOR"
@@ -132,7 +141,7 @@ def chat():
         return jsonify({"intent": "project_created", "explanation": content,
                         "session_id": session.id, **payload}), 201
 
-    if user.role == "OPERATOR" and data.session_id is not None:
+    if user.role == "OPERATOR":
         from ..chat.model import ChatMessage, ChatSession
         prompt = db.session.query(ChatMessage).filter_by(
             session_id=data.session_id, role="assistant"
@@ -187,4 +196,5 @@ def chat():
         user_id, username, "assistant", result.get("explanation", ""), result,
         session_id=data.session_id, project_id=project.id,
     )
-    return jsonify({**result, "chat_message_id": saved.id if saved else None}), 200
+    return jsonify({**result, "session_id": data.session_id,
+                    "chat_message_id": saved.id if saved else None}), 200
