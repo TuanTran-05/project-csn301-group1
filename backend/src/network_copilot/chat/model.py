@@ -7,20 +7,36 @@ from ..extensions import db, in_check
 CHAT_ROLES = ("user", "assistant", "system")
 
 
-class ChatSession(db.Model):
-    """A named conversation thread within the shared team chat.
+def utc_isoformat(value: datetime | None) -> str | None:
+    """Serialize stored UTC timestamps with an explicit timezone marker.
 
-    Sessions are shared across a project's team, not private per user: any
-    user with access to the project can see and switch to any of its sessions. created_by_id
-    only records who started it - it does not restrict who can read it.
-    There is no stored title: it is derived from the session's first
-    message by chat/session_service.py, computed at read time.
+    SQL databases commonly return ``DateTime(timezone=False)`` values as naive
+    datetimes even though this app writes them in UTC. Without the marker,
+    browsers interpret the timestamp as local time and display it several
+    hours off.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+class ChatSession(db.Model):
+    """A named conversation thread belonging to one user within a project.
+
+    Project members share devices and topology, while each user has private
+    chat sessions. Admins can read other members' sessions for auditing.
+    There is no stored title: it is derived from the session's first message
+    by chat/session_service.py, computed at read time.
     """
 
     __tablename__ = "chat_sessions"
 
     id = db.Column(db.Integer, primary_key=True)
-    # Sessions are shared by the members of one project, not across projects.
+    # Sessions are scoped to one project and private to their creator.
     project_id = db.Column(
         db.Integer,
         db.ForeignKey("projects.id", ondelete="CASCADE"),
@@ -79,7 +95,7 @@ class ChatMessage(db.Model):
             "role": self.role,
             "content": self.content,
             "payload": self.payload,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": utc_isoformat(self.created_at),
         }
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper

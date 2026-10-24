@@ -321,8 +321,8 @@ def share_project(project: Project, granted_by: User, payload: dict) -> ProjectM
     target = db.session.query(User).filter_by(username=data.username).one_or_none()
     if target is None or not target.is_active:
         raise NotFoundError(f"User {data.username} was not found.")
-    if granted_by.role == "OPERATOR" and target.role != "VIEWER":
-        raise ForbiddenError("Operators can add Viewer accounts to their project.")
+    if granted_by.role == "OPERATOR" and target.role not in {"VIEWER", "OPERATOR"}:
+        raise ForbiddenError("Operators can add Viewer or Operator accounts to their project.")
     if target.id == project.owner_id:
         raise ConflictError("The owner already has full access to the project.")
 
@@ -336,7 +336,12 @@ def share_project(project: Project, granted_by: User, payload: dict) -> ProjectM
             project_id=project.id, user_id=target.id, granted_by_id=granted_by.id
         )
         db.session.add(member)
-    member.access = "viewer" if target.role == "VIEWER" else data.access
+    if target.role == "VIEWER":
+        member.access = "viewer"
+    elif granted_by.role == "OPERATOR" and target.role == "OPERATOR":
+        member.access = "editor"
+    else:
+        member.access = data.access
     db.session.commit()
     return member
 

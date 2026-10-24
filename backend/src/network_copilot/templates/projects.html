@@ -950,6 +950,9 @@
                 Project là không gian nhóm chung: thành viên có thể xem cùng topology và khung chat. <strong>viewer</strong> chỉ xem;
                 <strong>editor</strong> thêm/sửa thiết bị và sơ đồ. ADMIN luôn thấy mọi project.
               </p>
+              <p class="hint" x-show="currentUser && currentUser.role === 'OPERATOR'">
+                Bạn có thể thêm Viewer để họ xem project hoặc Operator để cùng chỉnh sửa.
+              </p>
               <p class="error-text" x-show="shareError" x-text="shareError"></p>
               <table class="data-table" x-show="members.length">
                 <thead><tr><th>Người dùng</th><th>Quyền</th><th></th></tr></thead>
@@ -973,13 +976,13 @@
               </table>
               <p class="hint" x-show="!members.length">Chưa chia sẻ cho ai.</p>
               <form class="inline-form" @submit.prevent="shareProject()" x-show="isOwner">
-                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" :placeholder="currentUser && currentUser.role === 'OPERATOR' ? 'tên Viewer (gõ 2 ký tự để gợi ý)' : 'tên đăng nhập (gõ 2 ký tự để gợi ý)'" required autocomplete="off" />
+                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" :placeholder="currentUser && currentUser.role === 'OPERATOR' ? 'tên Viewer hoặc Operator (gõ 2 ký tự để gợi ý)' : 'tên đăng nhập (gõ 2 ký tự để gợi ý)'" required autocomplete="off" />
                 <datalist id="share-candidates"><template x-for="c in shareCandidates" :key="c"><option :value="c"></option></template></datalist>
                 <select x-model="shareForm.access" x-show="currentUser && currentUser.role !== 'OPERATOR'">
                   <option value="viewer">viewer</option>
                   <option value="editor">editor</option>
                 </select>
-                <button type="submit" class="primary-btn" x-text="currentUser && currentUser.role === 'OPERATOR' ? 'Thêm Viewer' : 'Chia sẻ'"></button>
+                <button type="submit" class="primary-btn" x-text="currentUser && currentUser.role === 'OPERATOR' ? 'Thêm thành viên' : 'Chia sẻ'"></button>
               </form>
               <div class="form-actions" x-show="project && !isOwner">
                 <button type="button" class="danger-btn" @click="leaveCurrentProject()">Rời project này</button>

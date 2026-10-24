@@ -7,7 +7,7 @@ project by id for auditing, but still lists only their own.
 """
 
 from ..extensions import db
-from .model import ChatMessage, ChatSession
+from .model import ChatMessage, ChatSession, utc_isoformat
 
 _TITLE_MAX_LENGTH = 60
 
@@ -92,7 +92,7 @@ def session_to_dict(session: ChatSession) -> dict:
     return {
         "id": session.id,
         "title": _title_for_session(session.id),
-        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "created_at": utc_isoformat(session.created_at),
     }
 
 
@@ -129,7 +129,7 @@ def list_sessions(project_id: int, user=None) -> list[dict]:
         {
             "id": session.id,
             "title": _title_from_content(content),
-            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "created_at": utc_isoformat(session.created_at),
         }
         for session, content in rows
     ]

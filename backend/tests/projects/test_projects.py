@@ -74,29 +74,37 @@ def test_admin_sees_every_project(client, two_projects, admin_headers):
     assert {two_projects[0].id, two_projects[1].id} <= ids
 
 
-def test_share_gives_read_access_only_to_the_target(client, two_projects, alice_headers, bob_headers):
+def test_operator_can_share_project_with_another_operator_as_editor(
+    client, two_projects, alice_headers, bob_headers
+):
     a, *_ = two_projects
     assert client.get(f"/api/projects/{a.id}", headers=bob_headers).status_code == 404
 
     shared = client.post(
         f"/api/projects/{a.id}/members",
         headers=alice_headers,
-        json={"username": "bob", "access": "viewer"},
+        json={"username": "bob"},
     )
     assert shared.status_code == 201
 
-    assert client.get(f"/api/projects/{a.id}", headers=bob_headers).get_json()["access"] == "viewer"
+    assert client.get(f"/api/projects/{a.id}", headers=bob_headers).get_json()["access"] == "editor"
     devices = client.get("/api/devices", headers=scope(bob_headers, a))
     assert devices.status_code == 200
     assert [d["hostname"] for d in devices.get_json()["items"]] == ["R1"]
-
-
-def test_viewer_share_cannot_change_inventory(client, two_projects, alice_headers, bob_headers):
-    a, *_ = two_projects
-    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"})
-    response = client.post(
+    created = client.post(
         "/api/devices",
         headers=scope(bob_headers, a),
+        json={"hostname": "R2", "management_ip": "10.10.0.2", "device_type": "cisco_ios", "role": "core"},
+    )
+    assert created.status_code == 201
+
+
+def test_viewer_share_cannot_change_inventory(client, two_projects, alice_headers, viewer_headers):
+    a, *_ = two_projects
+    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "viewer"})
+    response = client.post(
+        "/api/devices",
+        headers=scope(viewer_headers, a),
         json={"hostname": "R2", "management_ip": "10.10.0.2", "device_type": "cisco_ios", "role": "core"},
     )
     assert response.status_code == 403
@@ -175,11 +183,11 @@ def test_cannot_share_with_an_unknown_user_or_the_owner(client, two_projects, al
     assert client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "alice"}).status_code == 409
 
 
-def test_member_listing_is_visible_to_a_viewer(client, two_projects, alice_headers, bob_headers):
+def test_member_listing_is_visible_to_a_viewer(client, two_projects, alice_headers, viewer_headers):
     a, *_ = two_projects
-    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"})
-    members = client.get(f"/api/projects/{a.id}/members", headers=bob_headers).get_json()["items"]
-    assert [(m["username"], m["access"]) for m in members] == [("bob", "viewer")]
+    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "viewer"})
+    members = client.get(f"/api/projects/{a.id}/members", headers=viewer_headers).get_json()["items"]
+    assert [(m["username"], m["access"]) for m in members] == [("viewer", "viewer")]
 
 
 def test_shrinking_the_network_below_existing_devices_is_refused(client, two_projects, alice_headers):

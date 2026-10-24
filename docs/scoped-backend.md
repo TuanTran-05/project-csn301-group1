@@ -42,7 +42,7 @@ Tài khoản Operator và Viewer đều thấy project lab mặc định (projec
 
 Operator có thể nhập “Tạo project mới” trong chat. Hệ thống tạo project và hỏi số thiết bị mạng (2–25), sau đó hiển thị các sơ đồ hình sao, vòng, campus hoặc hub and spoke phù hợp với số lượng. Chọn một phương án sẽ tạo các thiết bị ở dạng kế hoạch và mở canvas topology để Operator thêm, sửa hoặc xóa. Thiết bị phải được cấp IP và thông tin truy cập trước khi có thể cấu hình thật.
 
-Project là phạm vi chia sẻ của nhóm: Operator thêm tài khoản Viewer từ tab “Nhóm / chia sẻ”. Viewer xem topology và dùng chat tư vấn; chỉ người có quyền sửa project mới thay đổi sơ đồ.
+Project là phạm vi chia sẻ của nhóm: Operator có thể thêm tài khoản Viewer hoặc Operator từ tab “Nhóm / chia sẻ”. Viewer chỉ xem topology và dùng chat tư vấn; Operator được thêm có quyền editor để cùng chỉnh sửa thiết bị và sơ đồ. Chỉ chủ project hoặc ADMIN mới quản lý thành viên và cài đặt project.
 
 ### Phiên chat là riêng của từng người
 
@@ -62,7 +62,7 @@ Quyền thực tế = vai trò tài khoản ∩ quyền trên project (`owner` /
 |---|---|---|---|
 | Xem mọi project | ✓ | chỉ project của mình / được chia sẻ / lab mặc định | chỉ project được chia sẻ / lab mặc định |
 | Tạo project (kể cả “Tạo project mới” trong chat) | ✓ | ✓ | ✗ |
-| Chia sẻ project | ✓ | chỉ thêm tài khoản Viewer, trên project mình sở hữu | ✗ |
+| Chia sẻ project | ✓ | trên project mình sở hữu: thêm Viewer hoặc Operator (Operator được quyền editor) | ✗ |
 | Sửa topology / thiết bị / áp thiết kế AI | ✓ | khi là owner/editor | ✗ |
 | Chat tư vấn AI (không chạy lệnh) | — | ✓ | ✓ |
 | Chat AI chạy lệnh / tạo Preview → Approve → Apply | ✓ | ✗ | ✗ |
