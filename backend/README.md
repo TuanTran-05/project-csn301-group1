@@ -78,6 +78,20 @@ Open <http://127.0.0.1:5000/projects>.
   lab password is never stored or logged. vIOS/IOL/CSR nodes become routers,
   `*l2*` nodes switches, ASAv firewalls; other templates (VPCS, Linux…) are listed
   as unsupported.
+- **Bootstrapping SSH through the console.** A node freshly started in PNETLab has
+  a blank configuration, so the address and login the import stored cannot be used
+  yet. *Khởi tạo SSH qua console* (same panel) opens each running node's telnet
+  console on the PNETLab host and sets the hostname, the management IP (on the
+  port the lab cables to **Management(Cloud0)**, or one you name; an L2 switch gets
+  it on `Vlan1`), an optional gateway, the device's saved login, RSA keys, SSH v2
+  and `transport input ssh` on the VTY lines, then `write memory` and an SSH check.
+  The preview shows the exact commands (secrets masked) and opens no console.
+  Running it is limited to the project owner or an ADMIN and is audited. A device
+  that already has another login, or another address on that interface, is left
+  untouched unless *Ghi đè* is ticked; existing RSA keys are kept. Only Cisco IOS
+  PNETLab devices are handled (ASA by hand), and the lab is never edited: nodes
+  must be running and the Cloud0 cable must already exist. After that, everything
+  goes over SSH as before.
 - **Discovering the real cabling.** *Khám phá (CDP/LLDP)* asks every IOS device for
   `show cdp neighbors detail` (LLDP when CDP says nothing), four at a time, read-only,
   and compares the answer with the diagram: green = matches, red dashed = designed
@@ -428,6 +442,8 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | PUT | `/api/projects/<pid>/topology/layout` | editor | Save node positions |
 | GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
 | POST | `/api/projects/<pid>/topology/import/pnetlab/preview` · `/import/pnetlab` | editor | Read / import a PNETLab lab (10 req/min) |
+| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab/preview` | editor | Console commands that would bootstrap SSH on PNETLab nodes (10 req/min) |
+| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab` | owner | Configure management IP + SSH on the nodes through their console (30 req/min; the page sends one device per request) |
 | POST | `/api/projects/<pid>/topology/discover` · `/discover/apply` | editor | CDP/LLDP discovery and drift; add found cables |
 | GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, loopbacks, subinterfaces, routes, OSPF |
 | POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis` (`ip: "auto"`), `loopbacks`, `subinterfaces`, `routes`, `ospf` |

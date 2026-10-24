@@ -938,6 +938,7 @@ document.addEventListener("alpine:init", () => {
         loaded: false,
         error: "",
         result: null,
+        boot: { gateway: "", overwrite: false, devices: [], loaded: false, loading: false, error: "", result: null, progress: "" },
       };
     },
 
@@ -998,6 +999,74 @@ document.addEventListener("alpine:init", () => {
         pnet.error = this.describeError(err);
       } finally {
         pnet.loading = false;
+      }
+    },
+
+    // Console bootstrap: put the management IP and SSH from the database onto
+    // freshly started PNETLab nodes, through the console PNETLab serves.
+    _pnetBootBody() {
+      const boot = this.pnet.boot;
+      const body = { ...this._pnetSource(), overwrite: !!boot.overwrite };
+      if (boot.gateway.trim()) body.gateway = boot.gateway.trim();
+      if (boot.loaded) {
+        body.devices = boot.devices
+          .filter((d) => d.selected)
+          .map((d) => ({ device_id: d.device_id, interface: d.interface || null }));
+      }
+      return body;
+    },
+
+    async pnetBootPreview() {
+      const boot = this.pnet.boot;
+      boot.error = "";
+      boot.result = null;
+      boot.loading = true;
+      try {
+        const body = this._pnetBootBody();
+        delete body.devices;
+        const data = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab/preview"), {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        boot.devices = data.devices.map((d) => ({ ...d, selected: d.ready, open: false }));
+        boot.loaded = true;
+      } catch (err) {
+        boot.error = this.describeError(err);
+      } finally {
+        boot.loading = false;
+      }
+    },
+
+    get pnetBootSelectedCount() {
+      return this.pnet && this.pnet.boot.loaded ? this.pnet.boot.devices.filter((d) => d.selected).length : 0;
+    },
+
+    async pnetBootRun() {
+      const boot = this.pnet.boot;
+      const count = this.pnetBootSelectedCount;
+      if (!count) return;
+      if (!window.confirm(`Cấu hình IP quản trị, tài khoản và SSH trên ${count} thiết bị qua console PNETLab? Cấu hình được ghi thẳng lên thiết bị (write memory).`)) return;
+      boot.error = "";
+      boot.loading = true;
+      // One device per request: a console session takes several seconds, and
+      // short requests stay inside the server's worker timeout.
+      const { devices, ...body } = this._pnetBootBody();
+      boot.result = { devices: [] };
+      boot.progress = `0/${devices.length}`;
+      try {
+        for (const [index, target] of devices.entries()) {
+          const data = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab"), {
+            method: "POST",
+            body: JSON.stringify({ ...body, devices: [target] }),
+          });
+          boot.result.devices.push(...data.devices);
+          boot.progress = `${index + 1}/${devices.length}`;
+        }
+        await this.loadTopology();
+      } catch (err) {
+        boot.error = this.describeError(err);
+      } finally {
+        boot.loading = false;
       }
     },
 

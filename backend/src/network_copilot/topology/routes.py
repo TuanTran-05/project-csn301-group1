@@ -9,7 +9,7 @@ from ..errors import AppError
 from ..extensions import db, limiter
 from ..projects import service as project_service
 from ..projects.model import Project
-from . import blueprints, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
+from . import blueprints, bootstrap, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
 from . import chat_import
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
@@ -406,6 +406,44 @@ def pnetlab_import_route(project_id: int):
             "url": payload.get("url"),
             "devices": created,
             "links": sum(1 for l in result["links"] if l["status"] == "created"),
+        },
+    )
+    return jsonify(result), 200
+
+
+@bp.post("/bootstrap/pnetlab/preview")
+@jwt_required()
+@limiter.limit("10 per minute")
+def bootstrap_preview(project_id: int):
+    """The console commands that would give each device its management IP and SSH."""
+    project = _project(project_id, "editor")
+    return jsonify(bootstrap.preview(project, request.get_json(silent=True) or {})), 200
+
+
+@bp.post("/bootstrap/pnetlab")
+@jwt_required()
+@limiter.limit("30 per minute")
+def bootstrap_run(project_id: int):
+    """Configure management IP and SSH on PNETLab nodes through their console.
+
+    This writes to devices without the change workflow (they cannot be reached
+    over SSH yet), so only the project owner or an ADMIN may run it.
+    """
+    project = _project(project_id, "owner")
+    payload = request.get_json(silent=True) or {}
+    result = bootstrap.run(project, payload)
+    record_event(
+        action="topology.pnetlab_bootstrap",
+        result="success" if all(d["status"] in ("ok", "skipped") for d in result["devices"]) else "failure",
+        user_id=current_user().id,
+        details={
+            "lab": payload.get("lab"),
+            "url": payload.get("url"),
+            "overwrite": bool(payload.get("overwrite")),
+            "devices": [
+                {"hostname": d.get("hostname"), "status": d["status"], "interface": d.get("interface")}
+                for d in result["devices"]
+            ],
         },
     )
     return jsonify(result), 200

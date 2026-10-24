@@ -7,6 +7,7 @@ Endpoints used (the EVE-NG compatible API PNETLab exposes):
     POST /api/auth/login
     GET  /api/labs/<lab>.unl/nodes
     GET  /api/labs/<lab>.unl/topology
+    GET  /api/labs/<lab>.unl/networks
 """
 
 import ipaddress
@@ -130,6 +131,10 @@ class PNETLabClient:
     def topology(self, lab: str) -> list:
         data = self._get(f"/api/labs{_lab_path(lab)}/topology").get("data")
         return data if isinstance(data, list) else []
+
+    def networks(self, lab: str) -> dict:
+        data = self._get(f"/api/labs{_lab_path(lab)}/networks").get("data")
+        return data if isinstance(data, dict) else {}
 
 
 def build_client(params: dict):

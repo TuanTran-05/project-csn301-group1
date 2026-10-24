@@ -225,6 +225,57 @@
                       </p>
                     </div>
                   </div>
+
+                  <div class="pnet-boot" x-show="pnet.form.url && pnet.form.lab">
+                    <h4>Khởi tạo SSH qua console</h4>
+                    <p class="hint">Node mới trong PNETLab chưa có IP quản trị và SSH. Bước này mở console telnet của từng node
+                      (đang chạy) qua máy PNETLab, đặt IP quản trị và tài khoản SSH đã lưu cho thiết bị, bật SSH rồi kiểm tra lại bằng SSH.
+                      Cổng quản trị là cổng nối vào mạng <strong>Management(Cloud0)</strong> trong lab, hoặc cổng bạn nhập.</p>
+                    <form class="form-grid" @submit.prevent="pnetBootPreview()">
+                      <label>Gateway (tuỳ chọn) <input type="text" x-model="pnet.boot.gateway" :placeholder="'trong ' + project.management_network" /></label>
+                      <label class="check"><input type="checkbox" x-model="pnet.boot.overwrite" /> Ghi đè thiết bị đã có tài khoản/IP khác</label>
+                      <div class="form-actions">
+                        <button type="submit" :disabled="pnet.boot.loading">Xem lệnh khởi tạo</button>
+                      </div>
+                    </form>
+                    <p class="error-text" x-show="pnet.boot.error" x-text="pnet.boot.error"></p>
+                    <div x-show="pnet.boot.loaded">
+                      <table class="data-table">
+                        <thead><tr><th></th><th>Thiết bị</th><th>IP quản trị</th><th>Cổng quản trị</th><th>Console</th><th></th></tr></thead>
+                        <tbody>
+                          <template x-for="d in pnet.boot.devices" :key="d.device_id">
+                            <tr :class="{ muted: !d.ready }">
+                              <td><input type="checkbox" x-model="d.selected" :disabled="!d.ready" /></td>
+                              <td x-text="d.hostname || d.device_id"></td>
+                              <td x-text="d.management_ip || ''"></td>
+                              <td><input type="text" x-model="d.interface" :disabled="!d.ready" placeholder="e0/3" maxlength="64" /></td>
+                              <td x-text="d.console || ''"></td>
+                              <td>
+                                <span class="hint" x-show="!d.ready" x-text="d.message"></span>
+                                <button type="button" class="link-btn" x-show="d.ready" @click="d.open = !d.open" x-text="d.open ? 'Ẩn lệnh' : 'Xem lệnh'"></button>
+                                <pre x-show="d.open" x-text="(d.commands || []).join('\n')"></pre>
+                              </td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                      <p class="hint" x-show="!isOwner">Chỉ chủ project hoặc ADMIN được chạy khởi tạo.</p>
+                      <div class="form-actions" x-show="isOwner">
+                        <button type="button" class="primary-btn" @click="pnetBootRun()" :disabled="pnet.boot.loading || !pnetBootSelectedCount">
+                          <span x-text="pnet.boot.loading ? 'Đang cấu hình qua console… ' + pnet.boot.progress : 'Khởi tạo ' + pnetBootSelectedCount + ' thiết bị'"></span>
+                        </button>
+                      </div>
+                      <div x-show="pnet.boot.result">
+                        <template x-for="item in (pnet.boot.result ? pnet.boot.result.devices : [])" :key="item.device_id">
+                          <p :class="item.status === 'ok' ? 'ok-text' : 'hint'">
+                            <strong x-text="item.hostname || item.device_id"></strong>: <span x-text="item.status"></span>
+                            <span x-text="item.message ? '— ' + item.message : ''"></span>
+                            <span x-text="item.errors ? ' (' + item.errors.join('; ') + ')' : ''"></span>
+                          </p>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </template>
               <p class="error-text" x-show="deviceError" x-text="deviceError"></p>
