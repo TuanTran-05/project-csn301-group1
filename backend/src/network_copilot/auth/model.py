@@ -63,7 +63,12 @@ class User(db.Model):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    __table_args__ = (in_check("role", ROLES, "role_valid"),)
+    __table_args__ = (
+        in_check("role", ROLES, "role_valid"),
+        # At most one ADMIN account (the same partial index the migration creates).
+        Index("uq_single_admin", "role", unique=True,
+              sqlite_where=text("role = 'ADMIN'"), postgresql_where=text("role = 'ADMIN'")),
+    )
 
     teaching_groups = db.relationship(
         "Group", secondary="teacher_groups", back_populates="teachers"

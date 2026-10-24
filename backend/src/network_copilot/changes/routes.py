@@ -5,7 +5,7 @@ from pydantic import ValidationError as PydanticValidationError
 from ..auth.service import current_user, roles_required
 from ..errors import ValidationError
 from ..extensions import limiter
-from ..projects.scope import current_project
+from ..projects.scope import change_project, current_project
 from . import service
 from .schemas import ChangePreviewSchema
 
@@ -40,7 +40,7 @@ def _parse(schema, payload: dict):
 @bp.post("/preview")
 @jwt_required()
 def preview():
-    project = current_project(need="editor")
+    project = change_project()
     data = _parse(ChangePreviewSchema, request.get_json(silent=True) or {})
     user = current_user()
     change = service.create_preview(
@@ -82,7 +82,7 @@ def get_change(change_id: int):
 @bp.post("/<int:change_id>/approve")
 @jwt_required()
 def approve(change_id: int):
-    project = current_project(need="editor")
+    project = change_project()
     service.get_change(change_id, project.id)  # 404 for another project's change
     user = current_user()
     change = service.approve(change_id, user.id if user else None)
@@ -93,7 +93,7 @@ def approve(change_id: int):
 @jwt_required()
 @limiter.limit("10 per minute")
 def apply(change_id: int):
-    project = current_project(need="editor")
+    project = change_project()
     service.get_change(change_id, project.id)  # 404 for another project's change
     user = current_user()
     payload = request.get_json(silent=True) or {}

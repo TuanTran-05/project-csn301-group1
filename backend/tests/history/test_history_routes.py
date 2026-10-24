@@ -59,6 +59,10 @@ def test_snapshots_undo_redo_branch_backup_restore_without_core_writes(client, a
 def test_user_and_topology_isolation(client, admin_headers, app, db):
     from network_copilot.auth.model import User
     from network_copilot.auth.service import issue_token
+    from sqlalchemy import text
+    # Two administrator identities (as before and after an admin transfer):
+    # lift the single-admin index in this test database only.
+    db.session.execute(text("DROP INDEX uq_single_admin"))
     other = User(username="other-history-admin", role="ADMIN")
     other.set_password("OtherHistoryPass123!")
     db.session.add(other)
@@ -90,7 +94,9 @@ def test_authentication_and_active_role(client, admin_headers, viewer_headers, a
         assert client.get(endpoint, headers=viewer_headers).status_code == 403
     for suffix in ("/states", "/undo", "/redo", "/restore"):
         assert client.post(BASE + suffix, headers=viewer_headers, json={}).status_code == 403
-    admin_user.is_active = False
+    # The role is read live, not from the token. (The sole Administrator can
+    # never be deactivated, so demote the account behind the token's back.)
+    admin_user.role = "TEACHER"
     db.session.commit()
     assert client.get(BASE, headers=admin_headers).status_code == 403
 

@@ -39,16 +39,18 @@ def test_blueprint_over_the_device_quota_leaves_nothing_behind(app, client, alic
     assert client.get(base, headers=alice_headers).get_json()["nodes"] == []
 
 
-def test_share_candidates_search_and_leave(client, alice_headers, bob_headers, alice, bob):
+def test_share_candidates_search_and_leave(client, alice_headers, bob_headers, vera_headers, alice, bob, vera):
     project = new_project(client, alice_headers).get_json()
     pid = project["id"]
-    found = client.get(f"/api/projects/{pid}/share-candidates?q=bo", headers=alice_headers).get_json()["items"]
-    assert [u["username"] for u in found] == ["bob"]
-    assert client.get(f"/api/projects/{pid}/share-candidates?q=b", headers=alice_headers).get_json()["items"] == []
-    assert client.get(f"/api/projects/{pid}/share-candidates?q=bo", headers=bob_headers).status_code == 404
-
-    client.post(f"/api/projects/{pid}/members", headers=alice_headers, json={"username": "bob", "access": "viewer"})
+    found = client.get(f"/api/projects/{pid}/share-candidates?q=ve", headers=alice_headers).get_json()["items"]
+    assert [u["username"] for u in found] == ["vera"]
+    # an Operator is only offered Viewer accounts
     assert client.get(f"/api/projects/{pid}/share-candidates?q=bo", headers=alice_headers).get_json()["items"] == []
+    assert client.get(f"/api/projects/{pid}/share-candidates?q=v", headers=alice_headers).get_json()["items"] == []
+    assert client.get(f"/api/projects/{pid}/share-candidates?q=ve", headers=bob_headers).status_code == 404
+
+    client.post(f"/api/projects/{pid}/members", headers=alice_headers, json={"username": "vera", "access": "viewer"})
+    assert client.get(f"/api/projects/{pid}/share-candidates?q=ve", headers=alice_headers).get_json()["items"] == []
     assert client.delete(f"/api/projects/{pid}/membership", headers=alice_headers).status_code == 409  # owner
-    assert client.delete(f"/api/projects/{pid}/membership", headers=bob_headers).status_code == 204
-    assert client.get(f"/api/projects/{pid}", headers=bob_headers).status_code == 404
+    assert client.delete(f"/api/projects/{pid}/membership", headers=vera_headers).status_code == 204
+    assert client.get(f"/api/projects/{pid}", headers=vera_headers).status_code == 404

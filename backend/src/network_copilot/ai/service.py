@@ -653,6 +653,11 @@ class AIService:
         project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
+        if user_id is not None:
+            # Needs the ai.use permission and counts against the daily quota.
+            from ..governance.quotas import consume_ai
+
+            consume_ai(user_id, group_id)
         action = self.interpret(
             message, user_id, session_id=session_id, project_id=project_id
         )

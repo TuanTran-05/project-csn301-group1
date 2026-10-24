@@ -72,7 +72,7 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
             "verification_commands": ["show clock"],
         },
     )
-    assert preview.status_code == 201
+    assert preview.status_code == 201, preview.get_json()
     change_id = preview.get_json()["id"]
 
     response = client.post(f"/api/changes/{change_id}/apply", headers=headers)
@@ -173,5 +173,5 @@ def test_teacher_can_toggle_auto_approval_for_managed_group(
         json={"is_auto_approve": True},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     assert response.get_json()["is_auto_approve"] is True

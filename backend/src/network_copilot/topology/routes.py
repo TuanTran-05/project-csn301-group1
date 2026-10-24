@@ -534,8 +534,9 @@ def config_plan(project_id: int):
 def config_preview(project_id: int):
     """Freeze the design's configuration as a change batch awaiting approval.
 
-    Any editor may do this: a preview is only a proposal. Approving and applying
-    it stays an ADMIN action.
+    Needs editor access to the project and, like any change, a config.create
+    permission (an ADMIN, or a scoped group grant). Approving and applying it
+    stays an ADMIN action.
     """
     project = _project(project_id, "editor")
     data = _config_request()

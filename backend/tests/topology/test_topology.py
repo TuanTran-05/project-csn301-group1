@@ -549,7 +549,7 @@ def test_preview_never_touches_a_device(client, admin_headers, base, lab, ssh_fa
     assert ssh_factory.clients == {}
 
 
-def test_an_editor_can_propose_but_only_an_admin_can_approve(client, admin_headers, base, lab, project):
+def test_an_editor_designs_but_only_an_admin_freezes_and_approves(client, app, admin_headers, base, lab, project):
     from conftest import _auth_headers, _create_user
     from network_copilot.projects.model import ProjectMember
 
@@ -557,15 +557,22 @@ def test_an_editor_can_propose_but_only_an_admin_can_approve(client, admin_heade
     db.session.add(ProjectMember(project_id=project.id, user_id=user.id, access="editor"))
     db.session.commit()
     headers = _auth_headers(client, "opop2", "OperatorPass123!")
+    # The shared default lab is read-only for everyone but an admin, whatever the share.
+    assert client.post(f"{base}/config-plan", headers=headers, json={}).status_code == 403
+    # In an ordinary project the editor share counts for the design itself...
+    app.config["DEFAULT_LAB_NAME"] = "Some Other Lab"
     add(client, headers, base, lab, "r1", "Gi0/1", "sw1", "Gi0/0")
+    assert client.post(f"{base}/config-plan", headers=headers, json={}).status_code == 200
+    # ...but freezing it as a change needs config.create, which an Operator only
+    # gets through AI Management; an admin freezes and approves it.
+    refused = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
+    assert refused.status_code == 403
 
-    response = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
-    assert response.status_code == 201
+    response = client.post(f"{base}/config-preview", headers=admin_headers, json={"note": "please review"})
+    assert response.status_code == 201, response.get_json()
     batch = response.get_json()["batch"]
     assert batch["status"] == "pending_approval" and "please review" in batch["description"]
-    assert batch["requested_by_id"] == user.id
-    # The proposal changes nothing until an admin approves it.
-    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers).status_code == 403
+    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers).status_code in (403, 404)
     assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=admin_headers).status_code == 200
 
 

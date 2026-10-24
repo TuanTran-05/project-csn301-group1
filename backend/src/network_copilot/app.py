@@ -169,6 +169,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(ai_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(groups_bp)
     app.register_blueprint(governance_bp)
     app.register_blueprint(learning_bp)
     init_history_extension(app)

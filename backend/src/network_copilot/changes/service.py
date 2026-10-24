@@ -417,7 +417,9 @@ def create_preview(
         result="success",
         user_id=user_id,
         device_id=device.id,
-        message=description,
+        # The description is free text and may quote a secret; it stays on the
+        # access-controlled change record that change_id points to.
+        message="Change previewed.",
         details={
             "change_id": change.id,
             "commands": change.commands,
