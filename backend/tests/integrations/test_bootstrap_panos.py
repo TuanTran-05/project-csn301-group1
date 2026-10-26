@@ -265,7 +265,9 @@ def test_mgmt_cabled_to_cloud0_is_the_default_and_needs_no_zone(client, admin_he
     assert entry["ready"] and entry["interface"] == "mgmt" and entry["mode"] == "mgmt"
     commands = entry["commands"]
     assert commands[0] == "configure" and commands[-1] == "commit"
-    assert "set deviceconfig system ip-address 172.16.3.123 netmask 255.255.255.0" in commands
+    ip_line = commands.index("set deviceconfig system ip-address 172.16.3.123 netmask 255.255.255.0")
+    # the mgmt port is a DHCP client until it is made static
+    assert commands[ip_line - 1] == "set deviceconfig system type static"
     assert "set deviceconfig system default-gateway 172.16.3.1" in commands
     assert not any(word in " ".join(commands) for word in ("zone", "virtual-router", "interface-management-profile"))
     # admin (default): no extra user is created
@@ -311,7 +313,8 @@ def test_waits_for_the_boot_logs_in_as_admin_and_commits(client, admin_headers, 
     assert result["status"] == "ok", result
     assert result["password_changed"] and result["account"] == "admin" and result["credential_user"] == "admin"
     assert fw.passwords["admin"] == SSH_PASSWORD and fw.committed and not fw.reverted
-    assert fw.config[1] == "set deviceconfig system ip-address 172.16.3.123 netmask 255.255.255.0"
+    assert fw.config[1:3] == ["set deviceconfig system type static",
+                              "set deviceconfig system ip-address 172.16.3.123 netmask 255.255.255.0"]
     assert not any("mgmt-config" in line or "zone" in line for line in fw.config)
     assert "set cli scripting-mode on" in fw.op
     # SSH is checked, and from now on as admin with the saved password

@@ -121,6 +121,9 @@ def plan_steps(device, interface: str, project, gateway: str | None, credential,
         ("set", f"set deviceconfig system hostname {device.hostname}", False),
     ]
     if interface == MGMT:
+        # A PA-VM's mgmt port starts as a DHCP client (ip-assignment: dhcp); the
+        # address below only takes effect once the port is static.
+        steps.append(("set", "set deviceconfig system type static", True))
         steps.append(("set", f"set deviceconfig system ip-address {device.management_ip} "
                              f"netmask {network.netmask}", True))
         if gateway:

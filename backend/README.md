@@ -121,7 +121,8 @@ Open <http://127.0.0.1:5000/projects>.
   case, a digit or a special character; checked in the preview). It turns on
   `set cli scripting-mode on`, types slowly (a serial console drops a burst, which reads as
   "Invalid syntax"), then `configure`s: **mgmt** (default when mgmt/eth0 is cabled to
-  Cloud0) is `set deviceconfig system ip-address <ip> netmask <mask>` (+ `default-gateway`)
+  Cloud0) is `set deviceconfig system type static` (a PA-VM's mgmt port starts as a DHCP
+  client) then `set deviceconfig system ip-address <ip> netmask <mask>` (+ `default-gateway`)
   and nothing else; **dataplane** (optional, e.g. `ethernet1/3`) adds an `AITOOL-MGMT`
   interface-management-profile for ssh/https/ping, the `default` virtual router and a
   zone. *Tài khoản PAN-OS* keeps using `admin` (default; the device's SSH login becomes
@@ -239,6 +240,13 @@ change their own password on the same page.
 The schema is documented, with an entity diagram, in
 [`docs/database.md`](../docs/database.md): foreign keys are enforced, enumerated
 columns have CHECK constraints, and hostnames/IPs are unique per project.
+
+### Static files and browser caches
+
+Every `url_for('static', ...)` URL carries a hash of the file's content
+(`/static/js/projects.js?v=1a2b3c4d5e6f`), and pages are sent with
+`Cache-Control: no-cache`, so after a deploy the browser loads the new scripts
+instead of a cached copy.
 
 ### Live updates and monitoring load
 
