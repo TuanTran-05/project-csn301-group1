@@ -238,9 +238,10 @@
 
                   <div class="pnet-boot" x-show="pnet.form.url">
                     <h4>Khởi tạo SSH qua console</h4>
-                    <p class="hint">Với firewall Palo Alto: hệ thống chờ PAN-OS khởi động (tới 15 phút), đăng nhập admin/mật khẩu mặc định,
-                      đổi mật khẩu lần đầu thành mật khẩu SSH đã lưu, đặt IP trên cổng mgmt hoặc cổng dataplane (vd. ethernet1/3, kèm
-                      interface-management-profile cho ssh/https/ping), tạo tài khoản rồi commit.</p>
+                    <p class="hint">Với firewall Palo Alto: hệ thống chạy job nền, chờ PAN-OS khởi động (tới 15 phút), đăng nhập admin/mật khẩu mặc định,
+                      đổi mật khẩu lần đầu thành mật khẩu SSH đã lưu (≥ 8 ký tự, có chữ hoa, chữ thường, số hoặc ký tự đặc biệt), đặt IP trên cổng
+                      mgmt (mặc định khi mgmt nối Cloud0) hoặc cổng dataplane (vd. ethernet1/3, kèm interface-management-profile) rồi commit.
+                      Bước phụ lỗi (hostname, gateway, tạo user) được ghi lại và vẫn commit; console phải là TELNET, không phải VNC.</p>
                     <p class="hint">Node mới trong PNETLab chưa có IP quản trị và SSH. Bước này mở console telnet của từng node
                       (đang chạy) qua máy PNETLab, đặt IP quản trị và tài khoản SSH đã lưu cho thiết bị, bật SSH rồi kiểm tra lại bằng SSH.
                       Cổng quản trị là cổng nối vào mạng <strong>Management(Cloud0)</strong> trong lab, hoặc cổng bạn nhập.</p>
@@ -248,6 +249,12 @@
                       <label>Gateway (tuỳ chọn) <input type="text" x-model="pnet.boot.gateway" :placeholder="'trong ' + project.management_network" /></label>
                       <label class="check"><input type="checkbox" x-model="pnet.boot.overwrite" /> Ghi đè thiết bị đã có tài khoản/IP khác</label>
                       <label>Mật khẩu mặc định PAN-OS <input type="password" x-model="pnet.boot.default_password" autocomplete="new-password" title="Dùng một lần để đăng nhập firewall mới (admin/admin); không được lưu" /></label>
+                      <label>Tài khoản PAN-OS
+                        <select x-model="pnet.boot.panos_account">
+                          <option value="admin">Dùng admin (mật khẩu = mật khẩu SSH đã lưu)</option>
+                          <option value="create">Tạo user SSH đã lưu (superuser)</option>
+                        </select>
+                      </label>
                       <div class="form-actions">
                         <button type="submit" :disabled="pnet.boot.loading">Xem lệnh khởi tạo</button>
                       </div>
@@ -276,16 +283,32 @@
                       <p class="hint" x-show="!isOwner">Chỉ chủ project hoặc ADMIN được chạy khởi tạo.</p>
                       <div class="form-actions" x-show="isOwner">
                         <button type="button" class="primary-btn" @click="pnetBootRun()" :disabled="pnet.boot.loading || !pnetBootSelectedCount">
-                          <span x-text="pnet.boot.loading ? 'Đang cấu hình qua console… ' + pnet.boot.progress : 'Khởi tạo ' + pnetBootSelectedCount + ' thiết bị'"></span>
+                          <span x-text="pnet.boot.loading ? 'Đang chạy job khởi tạo…' : 'Khởi tạo ' + pnetBootSelectedCount + ' thiết bị'"></span>
                         </button>
                       </div>
-                      <p class="hint" x-show="pnet.boot.waiting" x-text="pnet.boot.waiting"></p>
+                      <div x-show="pnet.boot.job && pnet.boot.loading">
+                        <p class="hint" x-show="pnet.boot.job && pnet.boot.job.current">
+                          <strong x-text="pnet.boot.job && pnet.boot.job.current ? pnet.boot.job.current.hostname : ''"></strong>:
+                          <span x-text="pnet.boot.job && pnet.boot.job.current ? (pnet.boot.job.current.message || pnet.boot.job.current.phase || '') : ''"></span>
+                        </p>
+                      </div>
+                      <details x-show="pnet.boot.job && pnet.boot.job.log && pnet.boot.job.log.length" class="boot-log">
+                        <summary>Nhật ký từng bước (<span x-text="pnet.boot.job ? pnet.boot.job.log.length : 0"></span>)</summary>
+                        <template x-for="(s, i) in (pnet.boot.job ? pnet.boot.job.log : [])" :key="i">
+                          <div :class="s.ok ? 'ok-text' : 'error-text'">
+                            <span x-text="(s.ok ? '✓ ' : '✗ ') + (s.hostname ? s.hostname + ': ' : '') + s.command + (s.note ? ' (' + s.note + ')' : '')"></span>
+                            <pre x-show="!s.ok && s.output" x-text="s.output"></pre>
+                          </div>
+                        </template>
+                      </details>
                       <div x-show="pnet.boot.result">
                         <template x-for="item in (pnet.boot.result ? pnet.boot.result.devices : [])" :key="item.device_id">
                           <p :class="item.status === 'ok' ? 'ok-text' : 'hint'">
                             <strong x-text="item.hostname || item.device_id"></strong>: <span x-text="item.status"></span>
                             <span x-text="item.message ? '— ' + item.message : ''"></span>
                             <span x-text="item.errors ? ' (' + item.errors.join('; ') + ')' : ''"></span>
+                            <span x-text="item.warnings ? ' — bước phụ lỗi: ' + item.warnings.join('; ') : ''"></span>
+                            <span x-text="item.credential_user ? ' — SSH từ nay dùng tài khoản ' + item.credential_user : ''"></span>
                           </p>
                         </template>
                       </div>

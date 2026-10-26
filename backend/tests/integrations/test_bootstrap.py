@@ -301,8 +301,9 @@ def test_gateway_must_be_inside_the_management_network(client, admin_headers, ba
 
 def test_run_configures_each_node_on_its_console_and_checks_ssh(client, admin_headers, base, lab, devices, ssh_factory):
     response = client.post(base, headers=admin_headers, json=SOURCE)
-    assert response.status_code == 200
-    body = response.get_json()
+    assert response.status_code == 202
+    body = response.get_json()["job"]
+    assert body["status"] == "done"
     assert {d["hostname"]: d["status"] for d in body["devices"]} == {"R1": "ok", "SW1": "ok"}
 
     r1 = lab.by_port[32769]
@@ -321,7 +322,7 @@ def test_run_configures_each_node_on_its_console_and_checks_ssh(client, admin_he
 
 def test_existing_rsa_keys_are_kept(client, admin_headers, base, lab, devices):
     lab.by_port[32769] = FakeIOS(has_keys=True)
-    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()
+    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()["job"]
     assert {d["hostname"]: d["status"] for d in body["devices"]}["R1"] == "ok"
     r1 = lab.by_port[32769]
     assert not r1.replaced_keys and "ip ssh version 2" in r1.config
@@ -329,21 +330,21 @@ def test_existing_rsa_keys_are_kept(client, admin_headers, base, lab, devices):
 
 def test_a_configured_device_is_left_alone_unless_overwrite(client, admin_headers, base, lab, devices):
     lab.by_port[32769] = FakeIOS(users=["student"], addresses={"Ethernet0/3": "192.168.1.5"})
-    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()
+    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()["job"]
     r1 = next(d for d in body["devices"] if d["hostname"] == "R1")
     assert r1["status"] == "refused"
     assert "student" in r1["message"] and "192.168.1.5" in r1["message"]
     assert lab.by_port[32769].config == []
 
     lab.by_port[32769] = FakeIOS(users=["student"])
-    body = client.post(base, headers=admin_headers, json={**SOURCE, "overwrite": True}).get_json()
+    body = client.post(base, headers=admin_headers, json={**SOURCE, "overwrite": True}).get_json()["job"]
     assert next(d for d in body["devices"] if d["hostname"] == "R1")["status"] == "ok"
 
 
 def test_rejected_commands_are_reported_with_the_secret_masked(client, admin_headers, base, lab, devices):
     lab.by_port[32769] = FakeIOS(reject={"ip ssh version 2",
                                          f"username netops privilege 15 secret {SSH_PASSWORD}"})
-    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()
+    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()["job"]
     r1 = next(d for d in body["devices"] if d["hostname"] == "R1")
     assert r1["status"] == "error"
     assert any(e.startswith("ip ssh version 2") for e in r1["errors"])
@@ -354,7 +355,7 @@ def test_rejected_commands_are_reported_with_the_secret_masked(client, admin_hea
 
 def test_ssh_still_failing_after_the_console_is_reported(client, admin_headers, base, lab, devices, ssh_factory):
     ssh_factory.set_client("R1", reachable=False)
-    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()
+    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()["job"]
     assert next(d for d in body["devices"] if d["hostname"] == "R1")["status"] == "configured"
 
 
@@ -365,7 +366,7 @@ def test_an_unreachable_console_fails_only_that_device(client, admin_headers, ba
         return lab(host, port)
 
     app.config["CONSOLE_CLIENT_FACTORY"] = factory
-    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()
+    body = client.post(base, headers=admin_headers, json=SOURCE).get_json()["job"]
     assert {d["hostname"]: d["status"] for d in body["devices"]} == {"R1": "error", "SW1": "ok"}
 
 

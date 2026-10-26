@@ -9,7 +9,7 @@ from ..errors import AppError
 from ..extensions import db, limiter
 from ..projects import service as project_service
 from ..projects.model import Project
-from . import blueprints, bootstrap, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
+from . import blueprints, bootstrap, bootstrap_jobs, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
 from . import chat_import
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
@@ -422,31 +422,31 @@ def bootstrap_preview(project_id: int):
 
 @bp.post("/bootstrap/pnetlab")
 @jwt_required()
-@limiter.limit("30 per minute")
+@limiter.limit("10 per minute")
 def bootstrap_run(project_id: int):
-    """Configure management IP and SSH on PNETLab nodes through their console.
+    """Start configuring management IP and SSH on PNETLab nodes through their console.
 
     This writes to devices without the change workflow (they cannot be reached
-    over SSH yet), so only the project owner or an ADMIN may run it.
+    over SSH yet), so only the project owner or an ADMIN may run it. A PA-VM
+    takes minutes to boot and commit, so the work runs as a background job:
+    the answer is the job, and the page polls ``/bootstrap/jobs/<id>``.
     """
+    from flask import current_app
+
     project = _project(project_id, "owner")
     payload = request.get_json(silent=True) or {}
-    result = bootstrap.run(project, payload)
-    record_event(
-        action="topology.pnetlab_bootstrap",
-        result="success" if all(d["status"] in ("ok", "skipped", "waiting") for d in result["devices"]) else "failure",
-        user_id=current_user().id,
-        details={
-            "lab": payload.get("lab"),
-            "url": payload.get("url"),
-            "overwrite": bool(payload.get("overwrite")),
-            "devices": [
-                {"hostname": d.get("hostname"), "status": d["status"], "interface": d.get("interface")}
-                for d in result["devices"]
-            ],
-        },
+    bootstrap.validate_request(payload)  # a bad request fails now, not in the job
+    job = bootstrap_jobs.start(
+        current_app._get_current_object(), project.id, current_user().id, payload, bootstrap.run
     )
-    return jsonify(result), 200
+    return jsonify({"job": job}), 202
+
+
+@bp.get("/bootstrap/jobs/<job_id>")
+@jwt_required()
+def bootstrap_job(project_id: int, job_id: str):
+    project = _project(project_id, "owner")
+    return jsonify({"job": bootstrap_jobs.get(job_id, project.id)}), 200
 
 
 @bp.get("/design")

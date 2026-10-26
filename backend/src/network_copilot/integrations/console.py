@@ -24,6 +24,15 @@ class ConsoleError(ValidationError):
     """The console could not be used; the message is safe to show the user."""
 
 
+VNC_MESSAGE = "Console đang là VNC, đổi sang TELNET trong PNETLab."
+_VNC_GREETING = re.compile(r"^\s*RFB \d{3}\.\d{3}")
+
+
+def looks_like_vnc(text: str) -> bool:
+    """A VNC server opens with "RFB 003.008"; a telnet console never does."""
+    return bool(_VNC_GREETING.match(text or ""))
+
+
 def strip_telnet(data: bytes, pending: bytes = b"") -> tuple[bytes, bytes, bytes]:
     """Split raw bytes into (text, replies to send, incomplete tail).
 
@@ -115,6 +124,8 @@ class TelnetConsole:
             if replies:
                 self._sock.sendall(replies)
             self._buffer = (self._buffer + text.decode("utf-8", "replace"))[-MAX_BUFFER:]
+            if looks_like_vnc(self._buffer):
+                raise ConsoleError(VNC_MESSAGE)
 
     def close(self) -> None:
         try:

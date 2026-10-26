@@ -110,17 +110,27 @@ Open <http://127.0.0.1:5000/projects>.
   `configure`, sends the lines and runs `commit`. If a line is rejected or the commit does not
   report success, the candidate is reverted (`revert config`), the change fails and nothing is
   applied. Rollback suggestions turn each `set` into a `delete` (never run automatically).
-  *Khởi tạo SSH qua console* also handles a fresh PA-VM: it waits for the boot (each request
-  waits up to `BOOTSTRAP_PANOS_POLL_SECONDS`, 90, and answers `waiting`; the page asks again for
-  up to `BOOTSTRAP_PANOS_BOOT_SECONDS`, 900), logs in as `admin` with the factory password
-  (field *Mật khẩu mặc định PAN-OS*, not stored), answers the forced first-login change with
-  the saved SSH password, then configures either the `mgmt` port (`set deviceconfig system
-  ip-address … netmask …`) or a dataplane port cabled to Cloud0 such as `ethernet1/3` (an
-  `AITOOL-MGMT` interface-management-profile allowing ssh/https/ping, the address, the
-  `default` virtual router and an `AITOOL-MGMT` zone), creates the saved user as superuser
-  (`set mgmt-config users <user> password`), commits and checks SSH. A commit can take
-  minutes: run Gunicorn with `gthread` workers or a `--timeout` of at least `PANOS_COMMIT_TIMEOUT`
-  (600 s).
+  *Khởi tạo SSH qua console* also handles a fresh PA-VM, as a **background job**: the
+  request returns `202` with a job at once and the page polls
+  `GET /api/projects/<pid>/topology/bootstrap/jobs/<id>`, so neither a reverse proxy nor
+  Gunicorn cuts the minutes a PA-VM needs to boot (`BOOTSTRAP_PANOS_BOOT_SECONDS`, 900)
+  and commit (`PANOS_COMMIT_TIMEOUT`, 600). Jobs live in the process' memory: run one
+  Gunicorn worker with threads. The job logs in as `admin` with the factory password
+  (*Mật khẩu mặc định PAN-OS*, not stored) and answers the forced first-login change with
+  the saved SSH password, which must meet PAN-OS' rules (8+ characters, upper and lower
+  case, a digit or a special character; checked in the preview). It turns on
+  `set cli scripting-mode on`, types slowly (a serial console drops a burst, which reads as
+  "Invalid syntax"), then `configure`s: **mgmt** (default when mgmt/eth0 is cabled to
+  Cloud0) is `set deviceconfig system ip-address <ip> netmask <mask>` (+ `default-gateway`)
+  and nothing else; **dataplane** (optional, e.g. `ethernet1/3`) adds an `AITOOL-MGMT`
+  interface-management-profile for ssh/https/ping, the `default` virtual router and a
+  zone. *Tài khoản PAN-OS* keeps using `admin` (default; the device's SSH login becomes
+  `admin` + the saved password) or creates the saved user (password first, then
+  `permissions role-based superuser yes`). Every step is recorded in the job and the
+  service journal with passwords masked; a failed essential step (the address) or commit
+  reverts the candidate, a failed secondary step (hostname, gateway, the extra user) is
+  reported and the commit still happens. A console answering `RFB` (VNC) stops at once
+  with "Console đang là VNC, đổi sang TELNET trong PNETLab".
 - **Discovering the real cabling.** *Khám phá (CDP/LLDP)* asks every IOS device for
   `show cdp neighbors detail` (LLDP when CDP says nothing), four at a time, read-only,
   and compares the answer with the diagram: green = matches, red dashed = designed
@@ -472,7 +482,8 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
 | POST | `/api/projects/<pid>/topology/import/pnetlab/preview` · `/import/pnetlab` | editor | Read / import a PNETLab lab (10 req/min) |
 | POST | `/api/projects/<pid>/topology/bootstrap/pnetlab/preview` | editor | Console commands that would bootstrap SSH on PNETLab nodes (10 req/min) |
-| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab` | owner | Configure management IP + SSH on the nodes through their console (30 req/min; the page sends one device per request) |
+| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab` | owner | Start a background job that configures management IP + SSH on the nodes through their console (`202` + job; 10 req/min) |
+| GET | `/api/projects/<pid>/topology/bootstrap/jobs/<id>` | owner | Progress of that job: current device and phase, masked step log, results |
 | POST | `/api/projects/<pid>/topology/discover` · `/discover/apply` | editor | CDP/LLDP discovery and drift; add found cables |
 | GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, loopbacks, subinterfaces, routes, OSPF |
 | POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis` (`ip: "auto"`), `loopbacks`, `subinterfaces`, `routes`, `ospf` |

@@ -26,10 +26,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..credentials.service import get_device_credential
 from ..devices import service as device_service
 from ..errors import AppError, NotFoundError, ValidationError
-from ..integrations.console import ConsoleError, open_console
+from ..integrations.console import VNC_MESSAGE, ConsoleError, looks_like_vnc, open_console
 from ..integrations.pnetlab import build_client
 from ..projects.service import validate
-from .bootstrap_panos import bootstrap_panos, build_panos_commands, panos_interface
+from .bootstrap_panos import (
+    ACCOUNT_MODES,
+    bootstrap_panos,
+    build_panos_commands,
+    panos_interface,
+    panos_password_problem,
+    preferred_interface,
+)
 from .interfaces import normalize_label
 from .pnetlab_import import LabSource, hostname_for
 
@@ -54,6 +61,8 @@ class BootstrapRequest(LabSource):
     overwrite: bool = False
     # PAN-OS factory login (admin/admin); used once, never stored.
     default_password: str = Field(default="admin", min_length=1, max_length=128)
+    # PAN-OS: keep using "admin" (with the saved password) or create the saved user.
+    panos_account: str = Field(default="admin", pattern="^(admin|create)$")
 
 
 # -- planning --------------------------------------------------------------------
@@ -220,6 +229,12 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
         except NotFoundError:
             entry["message"] = "Save an SSH login for this device first."
             continue
+        if panos and (problem := panos_password_problem(credential.password)):
+            entry["message"] = (
+                f"PAN-OS needs a password with {problem} (8+ characters, upper and lower "
+                "case, a digit or a special character); change the saved SSH password."
+            )
+            continue
         if not console_typable(credential):
             entry["message"] = (
                 "The saved login cannot be typed on the console (spaces, '?' or "
@@ -235,6 +250,10 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
         entry.update(node_id=str(node_id), node_name=node.get("name"))
         if node.get("status") is not None and str(node.get("status")) == "0":
             entry["message"] = "The node is stopped in PNETLab; start it first."
+            continue
+        if str(node.get("console") or "").lower() in ("vnc", "rdp") or \
+                str(node.get("url") or "").lower().startswith("vnc"):
+            entry["message"] = VNC_MESSAGE
             continue
         port = console_port(node)
         if port is None:
@@ -252,12 +271,14 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
             if not found:
                 entry["message"] = "No interface is cabled to a Management(Cloud0) network; cable one or name it."
                 continue
-            interface = found[0]
+            interface = preferred_interface(found) if panos else found[0]
         entry["interface"] = interface
-        builder = build_panos_commands if panos else build_commands
-        entry["commands"] = builder(device, interface, project, gateway, credential)
         if panos:
-            entry["commands"] = ["configure", *entry["commands"], "commit"]
+            entry["mode"] = "mgmt" if interface == "mgmt" else "dataplane"
+            entry["commands"] = build_panos_commands(device, interface, project, gateway, credential,
+                                                     request.panos_account)
+        else:
+            entry["commands"] = build_commands(device, interface, project, gateway, credential)
         entry["ready"] = True
         entry["_run"] = (device, credential, host, port, interface, gateway)
     return entries, {"gateway": gateway, "api": getattr(client, "mode_used", None)}
@@ -306,6 +327,8 @@ class IOSConsole:
         self.console.send("\r")
         for _ in range(20):
             index, text = self.console.expect(patterns, self.timeout)
+            if looks_like_vnc(text):
+                raise ConsoleError(VNC_MESSAGE)
             if index == -1:
                 idle += 1
                 if idle > 3:
@@ -373,10 +396,10 @@ def _existing_state(ios: IOSConsole, interface: str) -> tuple[list[str], str | N
     return users, address
 
 
-def _bootstrap_one(entry: dict, overwrite: bool) -> dict:
+def _bootstrap_one(entry: dict, overwrite: bool, progress=None) -> dict:
     device, credential, host, port, interface, gateway = entry["_run"]
     if device.device_type == "paloalto_panos":
-        return bootstrap_panos(entry, open_console, _verify)
+        return bootstrap_panos(entry, open_console, _verify, progress)
     result = {"device_id": device.id, "hostname": device.hostname, "console": entry["console"]}
     console = open_console(host, port)
     try:
@@ -412,13 +435,20 @@ def _bootstrap_one(entry: dict, overwrite: bool) -> dict:
     return _verify(device, result)
 
 
-def _verify(device, result: dict, panos: bool = False) -> dict:
+def _verify(device, result: dict, panos: bool = False, account: str | None = None,
+            credential=None) -> dict:
     attempts = int(current_app.config.get("BOOTSTRAP_SSH_ATTEMPTS", 3))
     delay = float(current_app.config.get("BOOTSTRAP_SSH_RETRY_SECONDS", 3))
     if panos:
         # The PAN-OS management server restarts its SSH service after a commit.
         attempts = int(current_app.config.get("BOOTSTRAP_PANOS_SSH_ATTEMPTS", 10))
         delay = float(current_app.config.get("BOOTSTRAP_PANOS_SSH_RETRY_SECONDS", 6))
+        if account == "admin" and credential is not None and credential.username != "admin":
+            # The firewall is reached as admin with the saved password.
+            from ..credentials.service import store_device_credential
+
+            store_device_credential(device.id, "admin", credential.password, credential.enable_secret)
+            result["credential_user"] = "admin"
     detail = ""
     for attempt in range(max(attempts, 1)):
         if attempt:
@@ -431,8 +461,12 @@ def _verify(device, result: dict, panos: bool = False) -> dict:
     return result
 
 
-def run(project, payload: dict) -> dict:
-    """Configure every ready device through its console, one after another."""
+def run(project, payload: dict, progress=None) -> dict:
+    """Configure every ready device through its console, one after another.
+
+    ``progress(hostname=..., **update)`` is told what is happening (phase,
+    message, each recorded step); the background job shows it to the page.
+    """
     request = validate(BootstrapRequest, payload, "Bootstrap")
     entries, extra = _plan(project, request)
     results = []
@@ -442,8 +476,15 @@ def run(project, payload: dict) -> dict:
             continue
         entry["_project"] = project
         entry["_default_password"] = request.default_password
+        entry["_account"] = request.panos_account
+        hostname = entry.get("hostname")
+        report = (lambda **update: progress(hostname=hostname, **update)) if progress else None
         try:
-            results.append({**_public(entry), **_bootstrap_one(entry, request.overwrite)})
+            results.append({**_public(entry), **_bootstrap_one(entry, request.overwrite, report)})
         except AppError as exc:
             results.append({**_public(entry), "status": "error", "message": exc.message})
     return {"devices": results, **extra}
+
+
+def validate_request(payload: dict) -> BootstrapRequest:
+    return validate(BootstrapRequest, payload, "Bootstrap")

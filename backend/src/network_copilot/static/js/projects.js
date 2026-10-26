@@ -939,7 +939,7 @@ document.addEventListener("alpine:init", () => {
         loaded: false,
         error: "",
         result: null,
-        boot: { gateway: "", overwrite: false, default_password: "admin", devices: [], loaded: false, loading: false, error: "", result: null, progress: "", waiting: "" },
+        boot: { gateway: "", overwrite: false, default_password: "admin", panos_account: "admin", devices: [], loaded: false, loading: false, error: "", result: null, job: null },
       };
     },
 
@@ -1014,6 +1014,7 @@ document.addEventListener("alpine:init", () => {
       const body = { ...this._pnetSource(), overwrite: !!boot.overwrite };
       if (boot.gateway.trim()) body.gateway = boot.gateway.trim();
       if (boot.default_password) body.default_password = boot.default_password;
+      body.panos_account = boot.panos_account || "admin";
       if (boot.loaded) {
         body.devices = boot.devices
           .filter((d) => d.selected)
@@ -1054,41 +1055,27 @@ document.addEventListener("alpine:init", () => {
       if (!window.confirm(`Cấu hình IP quản trị, tài khoản và SSH trên ${count} thiết bị qua console PNETLab? Cấu hình được ghi thẳng lên thiết bị (write memory với Cisco, commit với PAN-OS).`)) return;
       boot.error = "";
       boot.loading = true;
-      // One device per request: a console session takes several seconds, and
-      // short requests stay inside the server's worker timeout.
-      const { devices, ...body } = this._pnetBootBody();
-      boot.result = { devices: [] };
-      boot.progress = `0/${devices.length}`;
+      boot.result = null;
+      boot.job = null;
+      // The work runs as a background job on the server (a PA-VM boots and
+      // commits for minutes); the page only polls its progress, so no request
+      // lives long enough for a proxy to cut it.
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       try {
-        for (const [index, target] of devices.entries()) {
-          // A PAN-OS firewall answers "waiting" while it boots (10-15 minutes);
-          // each call waits a little on the server, so keep asking until it is
-          // done or its boot budget is spent.
-          const started = Date.now();
-          let item = null;
-          for (;;) {
-            const data = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab"), {
-              method: "POST",
-              body: JSON.stringify({ ...body, devices: [target] }),
-            });
-            item = data.devices[0];
-            if (!item || item.status !== "waiting") break;
-            const budget = (item.boot_seconds || 900) * 1000;
-            const elapsed = Date.now() - started;
-            const minutes = Math.floor(elapsed / 60000);
-            const seconds = String(Math.floor((elapsed % 60000) / 1000)).padStart(2, "0");
-            boot.waiting = `${item.hostname}: PAN-OS đang khởi động (${minutes}:${seconds})…`;
-            if (elapsed > budget) {
-              item = { ...item, status: "error", message: "PAN-OS chưa khởi động xong sau thời gian chờ; thử lại sau." };
-              break;
-            }
-            await sleep(5000);
-          }
-          boot.waiting = "";
-          if (item) boot.result.devices.push(item);
-          boot.progress = `${index + 1}/${devices.length}`;
+        const started = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab"), {
+          method: "POST",
+          body: JSON.stringify(this._pnetBootBody()),
+        });
+        let job = started.job;
+        boot.job = job;
+        while (job.status === "queued" || job.status === "running") {
+          await sleep(2000);
+          if (!this.pnet || this.pnet.boot !== boot) return; // panel closed
+          job = (await this.authFetch(this.topologyUrl(`/bootstrap/jobs/${job.id}`))).job;
+          boot.job = job;
         }
+        if (job.status === "error") boot.error = job.message || "Job khởi tạo bị lỗi.";
+        boot.result = { devices: job.devices };
         await this.loadTopology();
       } catch (err) {
         boot.error = this.describeError(err);

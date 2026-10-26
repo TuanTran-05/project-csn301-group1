@@ -4312,3 +4312,5 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 
 .pnet-boot { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .pnet-boot pre { max-height: 220px; overflow: auto; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--bg); white-space: pre-wrap; font-size: 12px; }
+.boot-log { margin: 8px 0; font-size: 13px; }
+.boot-log pre { margin: 2px 0 6px 18px; }
