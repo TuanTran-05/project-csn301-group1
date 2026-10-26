@@ -247,6 +247,46 @@ def derive_rollback_commands(commands: list[str]) -> list[str]:
     return rollback
 
 
+# -- Palo Alto PAN-OS ------------------------------------------------------
+
+PANOS_CONFIG_ENTER = "configure"
+PANOS_COMMIT = "commit"
+_PANOS_LINE = re.compile(r"^(?:set|delete|rename|move)\s+\S", re.I)
+
+
+def _panos_body(commands: list[str]) -> list[str]:
+    from ..ssh.panos import panos_body
+
+    body = panos_body(commands)
+    if not body:
+        raise ValidationError("The change contains no PAN-OS configuration lines.")
+    bad = next((line for line in body if not _PANOS_LINE.match(line)), None)
+    if bad is not None:
+        raise ValidationError(
+            "PAN-OS changes are configure-mode lines starting with set, delete, "
+            "rename or move; configure and commit are added by the backend.",
+            {"command": bad},
+        )
+    return body
+
+
+def derive_panos_rollback(body: list[str]) -> list[str]:
+    """Best-effort inverse for PAN-OS: a set is undone by deleting that path.
+
+    A delete cannot be inverted from the command alone; the pre-change backup
+    (``show config running``) holds what was there.
+    """
+    rollback = [PANOS_CONFIG_ENTER]
+    for line in body:
+        verb, _, rest = line.partition(" ")
+        if verb.lower() == "set":
+            rollback.append(f"delete {rest}")
+        else:
+            rollback.append(f"# restore what '{line}' removed or moved from the pre-change backup")
+    rollback.append(PANOS_COMMIT)
+    return rollback
+
+
 def classify_risk(
     commands: list[str], device: Device, requires_confirmation: bool = False
 ) -> str:
@@ -263,6 +303,12 @@ def build_warnings(
     commands: list[str], device: Device, requires_confirmation: bool = False
 ) -> list[str]:
     warnings: list[str] = []
+    if device.device_type == "paloalto_panos":
+        warnings.append(
+            "PAN-OS: the lines are entered in configure mode and made live by commit. "
+            "If a line is rejected or the commit fails, the candidate configuration "
+            "is reverted and nothing is applied."
+        )
     if requires_confirmation:
         warnings.append(
             "This change contains a command flagged as dangerous. Applying it "
@@ -309,8 +355,17 @@ def prepare_change(
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
     device_service.ensure_deployable(device)
+    panos = device.device_type == "paloalto_panos"
+    if panos:
+        if execution_mode != "config":
+            raise ValidationError(
+                "PAN-OS changes run in configure mode and end with commit; "
+                "EXEC mode is not supported."
+            )
+        commands = _panos_body(commands)
     body, requires_confirmation = validate_commands(commands, device)
-    validate_execution_mode(body, execution_mode)
+    if not panos:
+        validate_execution_mode(body, execution_mode)
 
     if execution_mode == "exec" and any(_is_wrapper(command) for command in body):
         raise ValidationError(
@@ -318,7 +373,10 @@ def prepare_change(
             "'configure terminal' are not permitted."
         )
 
-    canonical = _wrap(body) if execution_mode == "config" else body
+    if panos:
+        canonical = [PANOS_CONFIG_ENTER, *body, PANOS_COMMIT]
+    else:
+        canonical = _wrap(body) if execution_mode == "config" else body
     assessment = assess_change(body, execution_mode, device.device_type)
 
     backend_save = execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS
@@ -342,7 +400,7 @@ def prepare_change(
         target_ssh_port=device.ssh_port,
         target_device_type=device.device_type,
         verification_commands=verification,
-        rollback_commands=derive_rollback_commands(canonical),
+        rollback_commands=derive_panos_rollback(body) if panos else derive_rollback_commands(canonical),
         warnings=build_warnings(canonical, device, requires_confirmation),
         capability_tier=assessment.capability_tier,
         verification_level=assessment.verification_level,

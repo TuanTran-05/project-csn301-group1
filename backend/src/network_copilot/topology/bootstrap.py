@@ -29,6 +29,7 @@ from ..errors import AppError, NotFoundError, ValidationError
 from ..integrations.console import ConsoleError, open_console
 from ..integrations.pnetlab import build_client
 from ..projects.service import validate
+from .bootstrap_panos import bootstrap_panos, build_panos_commands, panos_interface
 from .interfaces import normalize_label
 from .pnetlab_import import LabSource, hostname_for
 
@@ -51,15 +52,19 @@ class BootstrapRequest(LabSource):
     devices: list[Target] | None = Field(default=None, max_length=MAX_DEVICES)
     gateway: str | None = Field(default=None, max_length=45)
     overwrite: bool = False
+    # PAN-OS factory login (admin/admin); used once, never stored.
+    default_password: str = Field(default="admin", min_length=1, max_length=128)
 
 
 # -- planning --------------------------------------------------------------------
 
 
-def cloud_interfaces(node_id: str, topology: list, networks: dict) -> list[str]:
+def cloud_interfaces(node_id: str, topology: list, networks: dict,
+                     convert=normalize_label) -> list[str]:
     """Interfaces of a node that the lab cables to a cloud (pnetN) network.
 
     Cloud0 (pnet0) comes first: it is the one PNETLab bridges to its LAN.
+    ``convert`` turns PNETLab's label into the device's own interface name.
     """
     found = []
     for entry in topology:
@@ -73,7 +78,7 @@ def cloud_interfaces(node_id: str, topology: list, networks: dict) -> list[str]:
             network_id = str(entry.get(other, "")).removeprefix("network")
             network = networks.get(network_id) or {}
             kind = str(network.get("type", "")).lower()
-            label = normalize_label(entry.get(f"{side}_label"))
+            label = convert(entry.get(f"{side}_label"))
             if kind.startswith("pnet") and label:
                 found.append((kind, label))
     return [label for _, label in sorted(found)]
@@ -202,9 +207,11 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
         if device.environment != "pnetlab":
             entry["message"] = "Only PNETLab devices are bootstrapped through the console."
             continue
-        if not device.managed or device.device_type != "cisco_ios":
-            entry["message"] = "Only Cisco IOS devices are supported; configure ASA by hand."
+        if not device.managed or device.device_type not in ("cisco_ios", "paloalto_panos"):
+            entry["message"] = "Only Cisco IOS and Palo Alto PAN-OS devices are supported; configure ASA by hand."
             continue
+        panos = device.device_type == "paloalto_panos"
+        convert = panos_interface if panos else normalize_label
         if not device.deployable or not device.management_ip:
             entry["message"] = "Give the device a management IP (provision it) first."
             continue
@@ -236,18 +243,21 @@ def _plan(project, request: BootstrapRequest) -> tuple[list[dict], dict]:
         entry["console"] = f"{host}:{port}"
 
         if target.interface:
-            interface = normalize_label(target.interface)
+            interface = convert(target.interface)
             if interface is None:
                 entry["message"] = f"{target.interface!r} is not an interface name."
                 continue
         else:
-            found = cloud_interfaces(str(node_id), topology, networks)
+            found = cloud_interfaces(str(node_id), topology, networks, convert)
             if not found:
                 entry["message"] = "No interface is cabled to a Management(Cloud0) network; cable one or name it."
                 continue
             interface = found[0]
         entry["interface"] = interface
-        entry["commands"] = build_commands(device, interface, project, gateway, credential)
+        builder = build_panos_commands if panos else build_commands
+        entry["commands"] = builder(device, interface, project, gateway, credential)
+        if panos:
+            entry["commands"] = ["configure", *entry["commands"], "commit"]
         entry["ready"] = True
         entry["_run"] = (device, credential, host, port, interface, gateway)
     return entries, {"gateway": gateway, "api": getattr(client, "mode_used", None)}
@@ -365,6 +375,8 @@ def _existing_state(ios: IOSConsole, interface: str) -> tuple[list[str], str | N
 
 def _bootstrap_one(entry: dict, overwrite: bool) -> dict:
     device, credential, host, port, interface, gateway = entry["_run"]
+    if device.device_type == "paloalto_panos":
+        return bootstrap_panos(entry, open_console, _verify)
     result = {"device_id": device.id, "hostname": device.hostname, "console": entry["console"]}
     console = open_console(host, port)
     try:
@@ -400,9 +412,13 @@ def _bootstrap_one(entry: dict, overwrite: bool) -> dict:
     return _verify(device, result)
 
 
-def _verify(device, result: dict) -> dict:
+def _verify(device, result: dict, panos: bool = False) -> dict:
     attempts = int(current_app.config.get("BOOTSTRAP_SSH_ATTEMPTS", 3))
     delay = float(current_app.config.get("BOOTSTRAP_SSH_RETRY_SECONDS", 3))
+    if panos:
+        # The PAN-OS management server restarts its SSH service after a commit.
+        attempts = int(current_app.config.get("BOOTSTRAP_PANOS_SSH_ATTEMPTS", 10))
+        delay = float(current_app.config.get("BOOTSTRAP_PANOS_SSH_RETRY_SECONDS", 6))
     detail = ""
     for attempt in range(max(attempts, 1)):
         if attempt:
@@ -425,6 +441,7 @@ def run(project, payload: dict) -> dict:
             results.append({**_public(entry), "status": "skipped"})
             continue
         entry["_project"] = project
+        entry["_default_password"] = request.default_password
         try:
             results.append({**_public(entry), **_bootstrap_one(entry, request.overwrite)})
         except AppError as exc:

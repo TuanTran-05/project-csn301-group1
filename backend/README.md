@@ -100,6 +100,27 @@ Open <http://127.0.0.1:5000/projects>.
   PNETLab devices are handled (ASA by hand), and the lab is never edited: nodes
   must be running and the Cloud0 cable must already exist. After that, everything
   goes over SSH as before.
+- **Palo Alto firewalls (PAN-OS).** Device type `paloalto_panos` (palette *Firewall Palo
+  Alto*; PNETLab templates `paloalto`/`pa-vm` import as it, role `firewall`). It is reached
+  with Netmiko's `paloalto_panos` driver over SSH. Monitoring and the read-only policy use
+  `show system info`, `show interface all`, `show interface <name>` and `show routing route`
+  (parsed into facts, interfaces with zone/router/address, and routes per virtual router);
+  backups use `show config running`. A change is PAN-OS configure-mode lines (`set`,
+  `delete`, `rename`, `move`) that go through Preview → Approve → Apply: the backend enters
+  `configure`, sends the lines and runs `commit`. If a line is rejected or the commit does not
+  report success, the candidate is reverted (`revert config`), the change fails and nothing is
+  applied. Rollback suggestions turn each `set` into a `delete` (never run automatically).
+  *Khởi tạo SSH qua console* also handles a fresh PA-VM: it waits for the boot (each request
+  waits up to `BOOTSTRAP_PANOS_POLL_SECONDS`, 90, and answers `waiting`; the page asks again for
+  up to `BOOTSTRAP_PANOS_BOOT_SECONDS`, 900), logs in as `admin` with the factory password
+  (field *Mật khẩu mặc định PAN-OS*, not stored), answers the forced first-login change with
+  the saved SSH password, then configures either the `mgmt` port (`set deviceconfig system
+  ip-address … netmask …`) or a dataplane port cabled to Cloud0 such as `ethernet1/3` (an
+  `AITOOL-MGMT` interface-management-profile allowing ssh/https/ping, the address, the
+  `default` virtual router and an `AITOOL-MGMT` zone), creates the saved user as superuser
+  (`set mgmt-config users <user> password`), commits and checks SSH. A commit can take
+  minutes: run Gunicorn with `gthread` workers or a `--timeout` of at least `PANOS_COMMIT_TIMEOUT`
+  (600 s).
 - **Discovering the real cabling.** *Khám phá (CDP/LLDP)* asks every IOS device for
   `show cdp neighbors detail` (LLDP when CDP says nothing), four at a time, read-only,
   and compares the answer with the diagram: green = matches, red dashed = designed

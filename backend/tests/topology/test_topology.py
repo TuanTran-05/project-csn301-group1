@@ -599,7 +599,7 @@ def drop(client, headers, base, template="router", **extra):
 def test_templates_are_listed(client, admin_headers, base):
     items = client.get(f"{base}/templates", headers=admin_headers).get_json()["items"]
     assert {t["key"] for t in items} == {
-        "router", "switch_l3", "switch", "firewall", "pc", "server", "cloud", "ap", "segment",
+        "router", "switch_l3", "switch", "firewall", "firewall_pa", "pc", "server", "cloud", "ap", "segment",
     }
 
 

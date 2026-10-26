@@ -45,6 +45,8 @@ class ImportRequest(LabSource):
 def classify(template: str | None) -> dict | None:
     """Device type and role for a PNETLab template, or None when unsupported."""
     name = (template or "").lower()
+    if any(key in name for key in ("paloalto", "palo-alto", "panos", "pa-vm", "pavm")):
+        return {"device_type": "paloalto_panos", "role": "firewall"}
     if "asa" in name:
         return {"device_type": "cisco_asa", "role": "firewall"}
     if "l2" in name or "switch" in name:

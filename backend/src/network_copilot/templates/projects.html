@@ -238,12 +238,16 @@
 
                   <div class="pnet-boot" x-show="pnet.form.url">
                     <h4>Khởi tạo SSH qua console</h4>
+                    <p class="hint">Với firewall Palo Alto: hệ thống chờ PAN-OS khởi động (tới 15 phút), đăng nhập admin/mật khẩu mặc định,
+                      đổi mật khẩu lần đầu thành mật khẩu SSH đã lưu, đặt IP trên cổng mgmt hoặc cổng dataplane (vd. ethernet1/3, kèm
+                      interface-management-profile cho ssh/https/ping), tạo tài khoản rồi commit.</p>
                     <p class="hint">Node mới trong PNETLab chưa có IP quản trị và SSH. Bước này mở console telnet của từng node
                       (đang chạy) qua máy PNETLab, đặt IP quản trị và tài khoản SSH đã lưu cho thiết bị, bật SSH rồi kiểm tra lại bằng SSH.
                       Cổng quản trị là cổng nối vào mạng <strong>Management(Cloud0)</strong> trong lab, hoặc cổng bạn nhập.</p>
                     <form class="form-grid" @submit.prevent="pnetBootPreview()">
                       <label>Gateway (tuỳ chọn) <input type="text" x-model="pnet.boot.gateway" :placeholder="'trong ' + project.management_network" /></label>
                       <label class="check"><input type="checkbox" x-model="pnet.boot.overwrite" /> Ghi đè thiết bị đã có tài khoản/IP khác</label>
+                      <label>Mật khẩu mặc định PAN-OS <input type="password" x-model="pnet.boot.default_password" autocomplete="new-password" title="Dùng một lần để đăng nhập firewall mới (admin/admin); không được lưu" /></label>
                       <div class="form-actions">
                         <button type="submit" :disabled="pnet.boot.loading">Xem lệnh khởi tạo</button>
                       </div>
@@ -275,6 +279,7 @@
                           <span x-text="pnet.boot.loading ? 'Đang cấu hình qua console… ' + pnet.boot.progress : 'Khởi tạo ' + pnetBootSelectedCount + ' thiết bị'"></span>
                         </button>
                       </div>
+                      <p class="hint" x-show="pnet.boot.waiting" x-text="pnet.boot.waiting"></p>
                       <div x-show="pnet.boot.result">
                         <template x-for="item in (pnet.boot.result ? pnet.boot.result.devices : [])" :key="item.device_id">
                           <p :class="item.status === 'ok' ? 'ok-text' : 'hint'">
@@ -306,6 +311,7 @@
                   <select x-model="deviceForm.device_type">
                     <option value="cisco_ios">Cisco IOS</option>
                     <option value="cisco_asa">Cisco ASA</option>
+                    <option value="paloalto_panos">Palo Alto PAN-OS</option>
                   </select>
                 </label>
                 <label>Vai trò

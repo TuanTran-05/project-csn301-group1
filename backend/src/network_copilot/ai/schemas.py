@@ -91,7 +91,7 @@ class NetworkDiagram(BaseModel):
 
 class DeviceConfiguration(BaseModel):
     hostname: str = Field(min_length=1, max_length=64)
-    device_type: Literal["cisco_ios", "cisco_asa"]
+    device_type: Literal["cisco_ios", "cisco_asa", "paloalto_panos"]
     commands: list[str] = Field(min_length=1, max_length=120)
 
     @model_validator(mode="after")
@@ -184,7 +184,7 @@ def configurations_schema() -> dict:
             "required": ["hostname", "device_type", "commands"],
             "properties": {
                 "hostname": {"type": "string"},
-                "device_type": {"type": "string", "enum": ["cisco_ios", "cisco_asa"]},
+                "device_type": {"type": "string", "enum": ["cisco_ios", "cisco_asa", "paloalto_panos"]},
                 "commands": {"type": "array", "items": {"type": "string"}},
             },
         },

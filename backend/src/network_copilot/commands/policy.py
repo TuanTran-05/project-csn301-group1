@@ -119,6 +119,16 @@ def _switchport_detail(command: str) -> bool:
     except ValueError: return False
 
 
+_PANOS_INTERFACE = re.compile(
+    r"^show interface (?:ethernet\d+/\d+(?:\.\d+)?|ae\d+(?:\.\d+)?|mgmt|management|"
+    r"loopback(?:\.\d+)?|tunnel(?:\.\d+)?|vlan(?:\.\d+)?)$"
+)
+
+
+def _panos_interface(command: str) -> bool:
+    return bool(_PANOS_INTERFACE.match(command))
+
+
 @dataclass(frozen=True)
 class CommandRule:
     name: str
@@ -195,6 +205,20 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         "show version", _exact("show version"), description="Platform and image details"
     ),
     CommandRule("show clock", _exact("show clock"), description="Device clock"),
+    # Palo Alto PAN-OS operational commands (read-only).
+    CommandRule("show system info", _exact("show system info"),
+                description="PAN-OS platform, version and management address"),
+    CommandRule("show interface all", _exact("show interface all"),
+                description="PAN-OS interfaces: link state, zone, router and address"),
+    CommandRule("show interface <interface>", _panos_interface,
+                description="One PAN-OS interface in detail"),
+    CommandRule("show routing route", _exact("show routing route"),
+                description="PAN-OS routing table (every virtual router)"),
+    CommandRule(
+        "show config running",
+        _exact("show config running"),
+        description="PAN-OS running configuration, used for pre-change backups",
+    ),
     CommandRule(
         "ping <ipv4>", _ipv4_command("ping"), description="ICMP reachability test"
     ),
@@ -279,7 +303,7 @@ class CommandPolicy:
 
 default_policy = CommandPolicy()
 
-AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config"})
+AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config", "show config running"})
 AI_SAFE_READ_ONLY_RULES = tuple(
     rule for rule in READ_ONLY_RULES if rule.name not in AI_EXCLUDED_RULE_NAMES
 )

@@ -434,7 +434,7 @@ def bootstrap_run(project_id: int):
     result = bootstrap.run(project, payload)
     record_event(
         action="topology.pnetlab_bootstrap",
-        result="success" if all(d["status"] in ("ok", "skipped") for d in result["devices"]) else "failure",
+        result="success" if all(d["status"] in ("ok", "skipped", "waiting") for d in result["devices"]) else "failure",
         user_id=current_user().id,
         details={
             "lab": payload.get("lab"),

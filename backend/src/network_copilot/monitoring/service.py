@@ -17,6 +17,9 @@ IOS_BASE_COMMANDS = ["show ip interface brief", "show ip route"]
 # Cisco ASA uses a different vocabulary for the same two questions.
 ASA_BASE_COMMANDS = ["show interface ip brief", "show route"]
 ASA_DEVICE_TYPES = {"cisco_asa"}
+# Palo Alto PAN-OS: its own vocabulary, and no IOS role extras apply.
+PANOS_BASE_COMMANDS = ["show system info", "show interface all", "show routing route"]
+PANOS_DEVICE_TYPES = {"paloalto_panos"}
 
 # Kept as the IOS base so existing callers and tests are unaffected.
 BASE_COMMANDS = IOS_BASE_COMMANDS
@@ -50,6 +53,8 @@ def commands_for_device(device: Device) -> list[str]:
     commands with no model in the loop, so nothing else can catch a
     wrong-vendor spelling before it reaches the device.
     """
+    if device.device_type in PANOS_DEVICE_TYPES:
+        return list(PANOS_BASE_COMMANDS)
     base = (
         ASA_BASE_COMMANDS
         if device.device_type in ASA_DEVICE_TYPES

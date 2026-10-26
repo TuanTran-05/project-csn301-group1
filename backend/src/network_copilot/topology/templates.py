@@ -29,6 +29,9 @@ DEVICE_TEMPLATES = (
     _managed("switch_l3", "Switch L3", "l3_switch", "cisco_ios", "distribution", "DSW", 24),
     _managed("switch", "Switch L2", "switch", "cisco_ios", "access", "SW", 24),
     _managed("firewall", "Firewall ASA", "firewall", "cisco_asa", "firewall", "FW", 8),
+    # PAN-OS data ports are ethernet1/1, ethernet1/2, ... (numbering starts at 1).
+    {**_managed("firewall_pa", "Firewall Palo Alto", "firewall", "paloalto_panos", "firewall", "PA", 8),
+     "interface_prefix": "ethernet1/", "first_port": 1},
     _unmanaged("pc", "PC / Laptop", "host", "PC", 1),
     _unmanaged("server", "Server", "server", "SRV", 2),
     _unmanaged("cloud", "Cloud / Internet", "internet", "CLOUD", 8),
@@ -44,6 +47,8 @@ FIRST_SUGGESTED_HOST = 10
 def template_for_device(device) -> dict:
     """The template a device most resembles (decides its port inventory)."""
     kind = getattr(device, "kind", None)
+    if getattr(device, "device_type", None) == "paloalto_panos":
+        return get_template("firewall_pa")
     if kind in _BY_KIND:
         return _BY_KIND[kind]
     if device.device_type == "cisco_asa" or device.role == "firewall":
@@ -55,7 +60,10 @@ def template_for_device(device) -> dict:
     return get_template("switch")
 
 
-_BY_KIND = {t["kind"]: t for t in DEVICE_TEMPLATES}
+# The first template of each kind is its default (Firewall ASA for "firewall").
+_BY_KIND: dict = {}
+for _template in DEVICE_TEMPLATES:
+    _BY_KIND.setdefault(_template["kind"], _template)
 
 
 def port_inventory(project_id: int, device) -> list[dict]:
@@ -80,7 +88,8 @@ def port_inventory(project_id: int, device) -> list[dict]:
         used[canon(port.interface)] = f"access VLAN {port.vlan_id}"
 
     ports = []
-    for number in range(template["ports"]):
+    first = template.get("first_port", 0)
+    for number in range(first, first + template["ports"]):
         name = f"{template['interface_prefix']}{number}"
         ports.append({"name": name, "used": canon(name) in used, "used_by": used.get(canon(name))})
     return ports
