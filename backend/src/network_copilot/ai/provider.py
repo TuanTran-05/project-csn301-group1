@@ -29,6 +29,7 @@ NO_THINKING = {"thinking_budget": 0}
 GEMINI_FAILURE_HINTS = {
     400: "check AI_API_KEY and AI_MODEL",
     401: "AI_API_KEY was rejected",
+    402: "the Gemini project's prepaid credits or billing are exhausted; top up billing in AI Studio or use another key",
     403: "AI_API_KEY lacks access to this model or the API is disabled",
     404: "AI_MODEL does not exist or was retired; pick a current model",
     429: "quota or rate limit exceeded; wait or use another key/model",

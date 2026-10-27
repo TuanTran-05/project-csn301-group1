@@ -518,6 +518,16 @@ def test_gemini_failure_names_the_http_status_and_a_hint():
     assert "AIzaSECRET" not in message
 
 
+def test_gemini_payment_required_failure_points_at_billing():
+    fake = FakeGenaiClient(raise_with=_gemini_api_error(402, "RESOURCE_EXHAUSTED"))
+    with pytest.raises(AIProviderError) as info:
+        gemini_with(fake).complete("sys", "hi", {})
+    message = str(info.value.message if hasattr(info.value, "message") else info.value)
+    assert "HTTP 402 RESOURCE_EXHAUSTED" in message
+    assert "billing" in message
+    assert len(fake.models.calls) == 1
+
+
 def test_gemini_does_not_retry_failures_unrelated_to_thinking():
     fake = FakeGenaiClient(raise_with=_gemini_api_error(404, "NOT_FOUND"))
     with pytest.raises(AIProviderError):
