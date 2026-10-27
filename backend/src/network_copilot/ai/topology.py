@@ -13,6 +13,7 @@ import ipaddress
 import re
 
 from ..devices import service as device_service
+from ..extensions import db
 from ..monitoring.service import latest_snapshot
 
 INTERFACE_COMMAND = "show ip interface brief"
@@ -21,6 +22,20 @@ ROUTE_COMMAND = "show ip route"
 
 # Only these roles hold a routing table worth showing the model.
 ROUTING_ROLES = {"core", "distribution"}
+
+# Change requests whose interface addresses describe the network as it is
+# or is about to be. Failed and cancelled ones never reached the device.
+_ADDRESSING_CHANGE_STATUSES = ("success", "running", "approved", "pending_approval")
+
+_INTERFACE_LINE = re.compile(r"^interface\s+(?P<name>\S+)\s*$", re.I)
+_ADDRESS_LINE = re.compile(
+    r"^ip\s+address\s+(?P<ip>\d+\.\d+\.\d+\.\d+)\s+(?P<mask>\d+\.\d+\.\d+\.\d+)\s*$",
+    re.I,
+)
+
+# Global-configuration commands that end an "interface" block.
+_TOP_LEVEL = ("router ", "ip route", "hostname", "vlan ", "line ", "access-list",
+              "ip access-list", "ip dhcp", "ip nat", "route ", "object")
 
 # A switched virtual interface: "Vlan60" carries VLAN 60.
 _SVI = re.compile(r"^Vlan(?P<vlan_id>\d+)$", re.I)
@@ -159,4 +174,164 @@ def build_topology(project_id: int | None = None) -> dict:
     return {
         "networks": networks,
         "routing": _routing_for(devices, snapshots, networks),
+    }
+
+
+def _interface_entry(hostname, interface, address, source, management_ips):
+    """One addressed interface, or None when it is malformed or management."""
+    try:
+        network = ipaddress.ip_interface(address).network
+    except ValueError:
+        return None
+    if _hides_a_management_ip(str(network), management_ips):
+        return None
+    return {
+        "device": hostname,
+        "interface": interface,
+        "address": address,
+        "network": str(network),
+        "source": source,
+    }
+
+
+def _addresses_from_commands(commands) -> list[tuple[str, str]]:
+    """(interface, "ip/prefix") pairs set by an IOS configuration batch."""
+    found = []
+    interface = None
+    for line in commands or []:
+        if not isinstance(line, str):
+            continue
+        text = line.strip()
+        match = _INTERFACE_LINE.match(text)
+        if match:
+            interface = match.group("name")
+            continue
+        match = _ADDRESS_LINE.match(text)
+        if match and interface:
+            try:
+                prefix = ipaddress.ip_network(
+                    f"0.0.0.0/{match.group('mask')}"
+                ).prefixlen
+            except ValueError:
+                continue
+            found.append((interface, f"{match.group('ip')}/{prefix}"))
+        elif text.casefold() in ("exit", "end") or text.casefold().startswith(_TOP_LEVEL):
+            interface = None
+    return found
+
+
+def build_addressing(project_id: int | None) -> dict:
+    """Interface addresses, routed links and static routes the project defines.
+
+    Lets the model work out next hops and destination networks for routing
+    requests from what is already saved - the topology diagram, the network
+    design and configuration batches - instead of asking the user. As in
+    build_topology, any network holding a management IP is dropped.
+    """
+    if project_id is None:
+        return {"routed_links": [], "interfaces": [], "static_routes": []}
+
+    from ..changes.model import ChangeRequest
+    from ..devices.model import Device
+    from ..topology.model import (
+        DesignLoopback,
+        DesignStaticRoute,
+        DesignSubif,
+        DesignSvi,
+        TopologyLink,
+    )
+
+    devices = (
+        db.session.query(Device).filter(Device.project_id == project_id).all()
+    )
+    management_ips = _management_ips(devices)
+    hostnames = {device.id: device.hostname for device in devices}
+
+    routed_links = []
+    interfaces: dict[tuple[str, str], dict] = {}
+
+    def remember(entry):
+        if entry is not None:
+            interfaces[(entry["device"], entry["interface"].casefold())] = entry
+
+    links = (
+        db.session.query(TopologyLink)
+        .filter(TopologyLink.project_id == project_id)
+        .order_by(TopologyLink.id)
+    )
+    for link in links:
+        if link.link_type != "routed" or not link.network:
+            continue
+        if _hides_a_management_ip(link.network, management_ips):
+            continue
+        prefix = ipaddress.ip_network(link.network, strict=False).prefixlen
+        a = hostnames.get(link.device_a_id)
+        b = hostnames.get(link.device_b_id)
+        routed_links.append({
+            "network": link.network,
+            "device_a": a, "interface_a": link.interface_a, "ip_a": link.ip_a,
+            "device_b": b, "interface_b": link.interface_b, "ip_b": link.ip_b,
+        })
+        for host, iface, ip in ((a, link.interface_a, link.ip_a), (b, link.interface_b, link.ip_b)):
+            if host and ip:
+                remember(_interface_entry(host, iface, f"{ip}/{prefix}", "diagram", management_ips))
+
+    for svi in db.session.query(DesignSvi).filter(DesignSvi.project_id == project_id):
+        remember(_interface_entry(
+            hostnames.get(svi.device_id), f"Vlan{svi.vlan_id}",
+            f"{svi.ip}/{svi.prefix_length}", "design", management_ips,
+        ))
+    for sub in db.session.query(DesignSubif).filter(DesignSubif.project_id == project_id):
+        remember(_interface_entry(
+            hostnames.get(sub.device_id), f"{sub.interface}.{sub.vlan_id}",
+            f"{sub.ip}/{sub.prefix_length}", "design", management_ips,
+        ))
+    for loop in db.session.query(DesignLoopback).filter(DesignLoopback.project_id == project_id):
+        remember(_interface_entry(
+            hostnames.get(loop.device_id), f"Loopback{loop.number}",
+            f"{loop.ip}/32", "design", management_ips,
+        ))
+
+    # Batches last, oldest first, so the newest configuration wins.
+    changes = (
+        db.session.query(ChangeRequest)
+        .join(Device, ChangeRequest.device_id == Device.id)
+        .filter(
+            Device.project_id == project_id,
+            ChangeRequest.execution_mode == "config",
+            ChangeRequest.status.in_(_ADDRESSING_CHANGE_STATUSES),
+        )
+        .order_by(ChangeRequest.id)
+    )
+    for change in changes:
+        source = "applied_batch" if change.status == "success" else "pending_batch"
+        for iface, address in _addresses_from_commands(change.commands):
+            remember(_interface_entry(
+                change.target_hostname, iface, address, source, management_ips,
+            ))
+
+    static_routes = []
+    for route in db.session.query(DesignStaticRoute).filter(
+        DesignStaticRoute.project_id == project_id
+    ):
+        destination = f"{route.network}/{route.prefix_length}"
+        # A default route contains every address; only a specific route can
+        # reveal a management network.
+        if route.prefix_length and _hides_a_management_ip(destination, management_ips):
+            continue
+        if _hides_a_management_ip(f"{route.next_hop}/32", management_ips):
+            continue
+        static_routes.append({
+            "device": hostnames.get(route.device_id),
+            "network": destination,
+            "next_hop": route.next_hop,
+        })
+
+    return {
+        "routed_links": routed_links,
+        "interfaces": sorted(
+            (entry for entry in interfaces.values() if entry["device"]),
+            key=lambda entry: (entry["device"], entry["interface"]),
+        ),
+        "static_routes": static_routes,
     }

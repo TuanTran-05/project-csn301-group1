@@ -42,7 +42,7 @@ from .schemas import (
     configurations_schema,
     diagram_schema,
 )
-from .topology import build_topology
+from .topology import build_addressing, build_topology
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,15 @@ Rules:
   names a network ("guest", "IT", "VLAN 60"), use that entry's "subnet" and
   never "any"; use topology.routing to choose which interface and direction
   a rule belongs on.
+- For routing requests (static routes, default routes, OSPF networks), work
+  out destination networks and next hops from context.addressing before asking
+  the user anything. Each entry in "routed_links" joins two devices: the next
+  hop from one device is the other end's IP on that link. Destination networks
+  are the "network" of every entry in "interfaces" and "routed_links" that is
+  not directly connected to the router being configured. Write "ip route
+  <network> <mask> <next-hop>" with a dotted mask. Ask for details only when
+  addressing has no path between the named devices, and then say exactly
+  which link or address is missing.
 - An access list does nothing until it is applied to an interface with
   "ip access-group <name> in" or "out". A proposal that creates a list
   without applying it is incomplete.
@@ -165,7 +174,10 @@ devices shown in the supplied project topology. Use names and links from that
 topology when available. Explain relevant concepts such as VLAN, access port,
 802.1Q trunk, SVI/default gateway, static routing, OSPF, and ACL in plain
 language. If the topology lacks needed devices or links, say what is missing
-and suggest what to add. Never claim connectivity has been tested or a change
+and suggest what to add. For static routes, take destination networks and
+next hops from context.addressing and context.links (the next hop is the far
+end's IP on the routed link between two routers) instead of asking the user
+for them. Never claim connectivity has been tested or a change
 has been applied. Keep commands out of the prose; put device-specific
 configuration suggestions in the structured configurations field for the user
 to review. Do not request device counts here: the project setup flow handles
@@ -254,6 +266,7 @@ class AIService:
             "configuration_templates": [public(t) for t in db.session.query(ConfigTemplate).filter_by(enabled=True)],
             "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
             "topology": build_topology(project_id),
+            "addressing": build_addressing(project_id),
         }
 
     def advise(self, message: str, session_id: int, project_id: int) -> dict:
@@ -291,6 +304,7 @@ class AIService:
             "addressing_pool": str(ipam.pool_for(project)),
             "devices": nodes,
             "links": links,
+            "addressing": build_addressing(project_id),
             "conversation": self._recent_history(session_id, message, project_id),
         }
         schema = {

@@ -372,3 +372,85 @@ def test_a_router_with_no_relevant_routes_is_omitted(app, make_device):
 
     devices = [entry["device"] for entry in build_topology()["routing"]]
     assert "INTERNAL-RTR" not in devices
+
+
+# -- addressing ------------------------------------------------------------
+
+
+def _routed_link(a, b, network="10.0.12.0/30", ip_a="10.0.12.1", ip_b="10.0.12.2"):
+    from network_copilot.topology.model import TopologyLink
+
+    db.session.add(TopologyLink(
+        project_id=a.project_id, device_a_id=a.id, interface_a="GigabitEthernet0/1",
+        device_b_id=b.id, interface_b="GigabitEthernet0/1", link_type="routed",
+        network=network, ip_a=ip_a, ip_b=ip_b,
+    ))
+    db.session.commit()
+
+
+def _change(device, commands, status="success"):
+    from network_copilot.changes.model import ChangeRequest
+
+    db.session.add(ChangeRequest(
+        device_id=device.id, target_hostname=device.hostname,
+        target_management_ip=device.management_ip, target_device_type="cisco_ios",
+        commands=commands, status=status,
+    ))
+    db.session.commit()
+
+
+def test_addressing_exposes_routed_links_for_next_hops(app, make_device):
+    from network_copilot.ai.topology import build_addressing
+
+    r1 = make_device("VIOS1", "172.16.3.111", "core")
+    r2 = make_device("VIOS2", "172.16.3.112", "core")
+    _routed_link(r1, r2)
+
+    addressing = build_addressing(r1.project_id)
+
+    assert addressing["routed_links"] == [{
+        "network": "10.0.12.0/30",
+        "device_a": "VIOS1", "interface_a": "GigabitEthernet0/1", "ip_a": "10.0.12.1",
+        "device_b": "VIOS2", "interface_b": "GigabitEthernet0/1", "ip_b": "10.0.12.2",
+    }]
+    assert {(i["device"], i["address"]) for i in addressing["interfaces"]} == {
+        ("VIOS1", "10.0.12.1/30"), ("VIOS2", "10.0.12.2/30"),
+    }
+
+
+def test_addressing_reads_interface_addresses_from_batches(app, make_device):
+    from network_copilot.ai.topology import build_addressing
+
+    r1 = make_device("VIOS1", "172.16.3.111", "core")
+    _change(r1, [
+        "interface GigabitEthernet0/2",
+        "ip address 192.168.1.1 255.255.255.0",
+        "no shutdown",
+        "exit",
+        "interface Loopback0",
+        " ip address 1.1.1.1 255.255.255.255",
+    ])
+    _change(r1, ["interface GigabitEthernet0/3", "ip address 192.168.9.1 255.255.255.0"],
+            status="failed")
+
+    entries = build_addressing(r1.project_id)["interfaces"]
+
+    assert [(e["interface"], e["network"], e["source"]) for e in entries] == [
+        ("GigabitEthernet0/2", "192.168.1.0/24", "applied_batch"),
+        ("Loopback0", "1.1.1.1/32", "applied_batch"),
+    ]
+
+
+def test_addressing_never_reveals_a_management_network(app, make_device):
+    from network_copilot.ai.topology import build_addressing
+
+    r1 = make_device("VIOS1", ROUTER_MANAGEMENT_IP, "core")
+    r2 = make_device("VIOS2", "172.16.3.112", "core")
+    _routed_link(r1, r2, network="172.16.3.0/24", ip_a="172.16.3.1", ip_b="172.16.3.2")
+    _change(r1, ["interface GigabitEthernet0/0", "ip address 172.16.3.111 255.255.255.0"])
+
+    addressing = build_addressing(r1.project_id)
+
+    assert addressing["routed_links"] == []
+    assert addressing["interfaces"] == []
+    assert ROUTER_MANAGEMENT_IP not in str(addressing)
