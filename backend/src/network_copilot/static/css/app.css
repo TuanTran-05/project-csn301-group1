@@ -1212,6 +1212,14 @@ a:focus-visible {
   font-size: 14px;
 }
 
+.batch-result {
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+}
+
 .batch-confirmation {
   background: var(--danger-bg);
   border-left: 2px solid var(--offline);

@@ -404,6 +404,13 @@
                     <span><strong x-text="batchOutcomeCount(batch, 'failed')"></strong> failed</span>
                     <span><strong x-text="(batch.changes || []).length"></strong> total</span>
                   </div>
+                  <p
+                    class="batch-result"
+                    role="status"
+                    :class="'batch-status-' + batch.status"
+                    x-show="batchResultSummary(batch)"
+                    x-text="batchResultSummary(batch)"
+                  ></p>
 
                   <div
                     class="batch-confirmation"
@@ -425,7 +432,10 @@
 
                   <div class="batch-children">
                     <template x-for="child in batch.changes || []" :key="child.id">
-                      <details class="batch-child">
+                      <details
+                        class="batch-child"
+                        :open="['success', 'partial_success', 'failed'].includes(batch.status)"
+                      >
                         <summary>
                           <span x-text="child.device && child.device.hostname ? child.device.hostname : ('Device #' + child.device_id)"></span>
                           <code x-text="child.execution_mode || 'config'"></code>

@@ -136,3 +136,27 @@ def test_operator_cannot_act_on_another_members_suggestion(client, team, db):
     export = client.post(f"/api/chat/messages/{message.id}/config-files",
                          headers=team["operator"], json={"approved": True})
     assert export.status_code == 404
+
+
+def test_operator_can_approve_their_own_ai_suggestion(client, team, db, ssh_factory):
+    """The AI Management consent check runs on this path; it used to raise a
+    NameError and answer 500."""
+    from conftest import _create_device
+    from network_copilot.credentials.model import DeviceCredential
+
+    device = _create_device("R1", "10.20.0.1", "core", project=team["project"])
+    device.environment = "pnetlab"
+    db.session.add(DeviceCredential(device_id=device.id, username="u", password_encrypted="p"))
+    db.session.commit()
+    ssh_factory.set_client("R1", default_output="hostname R1")
+    operator_id = db.session.query(User).filter_by(username="op_owner").one().id
+    message = _assistant_message(db, team["project"], operator_id)
+
+    response = client.post(f"/api/chat/messages/{message.id}/apply-configurations",
+                           headers=team["operator"], json={"approved": True})
+
+    assert response.status_code in (200, 201), response.get_json()
+    batch = response.get_json()["batch"]
+    assert batch["chat_message_id"] == message.id
+    listed = client.get("/api/change-batches", headers=team["operator"]).get_json()["items"]
+    assert batch["id"] in [item["id"] for item in listed]
