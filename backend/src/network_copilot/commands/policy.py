@@ -111,6 +111,18 @@ def _ipv4_command(verb: str) -> Callable[[str], bool]:
 
     return matcher
 
+# One named interface: "loopback0", "gi0/0", "gigabitethernet0/0.10".
+_INTERFACE_NAME = re.compile(r"[a-z][a-z-]*\d+(/\d+)*(\.\d+)?")
+
+def _ping_from_source(command: str) -> bool:
+    """"ping <ipv4> source <ipv4|interface>": proves a route end to end."""
+    match = re.fullmatch(r"ping (\S+) source (\S+)", command)
+    if not match or not _is_ipv4(match.group(1)):
+        return False
+    source = match.group(2)
+    return _is_ipv4(source) or bool(_INTERFACE_NAME.fullmatch(source))
+
+
 def _switchport_detail(command: str) -> bool:
     from ..parsers.switchports import normalize_interface_name
     match = re.fullmatch(r"show interfaces (\S+) switchport", command, re.I)
@@ -158,6 +170,14 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
     CommandRule(
         "show ip route", _exact("show ip route"), description="IPv4 routing table"
     ),
+    *(
+        CommandRule(
+            f"show ip route {source}",
+            _exact(f"show ip route {source}"),
+            description=f"IPv4 {source} routes",
+        )
+        for source in ("static", "connected", "ospf")
+    ),
     # Cisco ASA spellings. Deliberately ungated by role or device type: the
     # policy engine's question is "is this read-only and safe", which is the
     # same answer everywhere. An IOS device asked for "show route" simply
@@ -197,6 +217,11 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
     CommandRule("show clock", _exact("show clock"), description="Device clock"),
     CommandRule(
         "ping <ipv4>", _ipv4_command("ping"), description="ICMP reachability test"
+    ),
+    CommandRule(
+        "ping <ipv4> source <ipv4|interface>",
+        _ping_from_source,
+        description="ICMP reachability test from a chosen source",
     ),
     CommandRule(
         "traceroute <ipv4>",

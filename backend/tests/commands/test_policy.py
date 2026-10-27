@@ -20,9 +20,18 @@ ALLOWED = [
     "show logging",
     "ping 10.10.10.11",
     "traceroute 10.10.10.11",
+    "show ip route static",
+    "show ip route connected",
+    "ping 192.168.2.1 source 192.168.1.1",
+    "ping 192.168.2.1 source Loopback0",
+    "ping 192.168.2.1 source gi0/0.10",
 ]
 
 BLOCKED = [
+    "show ip route vrf mgmt",
+    "ping 192.168.2.1 source",
+    "ping not-an-ip source 192.168.1.1",
+    "ping 192.168.2.1 source 192.168.1.1 repeat 100000",
     "write erase",
     "erase startup-config",
     "reload",

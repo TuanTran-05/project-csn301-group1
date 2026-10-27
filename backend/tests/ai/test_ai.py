@@ -1271,3 +1271,23 @@ def test_prompt_carries_the_acl_domain_rules(app, admin_user):
     assert "permit ip any any" in prompt
     # Blocking all icmp also blocks the reply of the allowed direction.
     assert "echo" in prompt
+
+
+def test_configure_drops_a_verification_command_off_the_allowlist(
+    app, access_switch, admin_user, ssh_factory
+):
+    action = {
+        **CONFIGURE_ACTION,
+        "operations": [{
+            **CONFIGURE_ACTION["operations"][0],
+            "verification_commands": ["show vlan brief", "show ip bgp summary"],
+        }],
+    }
+    service, _ = service_with(app, action)
+
+    result = service.handle("Tao VLAN 25 MARKETING tren ACC-SW1", admin_user.id)
+
+    assert result["batch"]["status"] == "pending_approval"
+    assert "show ip bgp summary" in result["explanation"]
+    change = db.session.query(ChangeRequest).one()
+    assert "show ip bgp summary" not in change.verification_commands

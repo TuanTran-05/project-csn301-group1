@@ -623,20 +623,30 @@ class AIService:
         self, action: AIAction, user_id: int | None, project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
-        operations = [
-            BatchOperation(
+        operations = []
+        dropped: list[str] = []
+        for operation in action.operations:
+            verification, rejected = self._allowed_verification(
+                operation.device_hostnames, operation.verification_commands, project_id
+            )
+            dropped.extend(rejected)
+            operations.append(BatchOperation(
                 device_hostnames=list(operation.device_hostnames),
                 execution_mode=operation.execution_mode,
                 commands=list(operation.commands),
-                verification_commands=list(operation.verification_commands),
+                verification_commands=verification,
                 group_id=group_id,
+            ))
+        explanation = action.explanation
+        if dropped:
+            explanation = (
+                f"{explanation} (Bỏ lệnh kiểm tra không nằm trong danh sách "
+                f"chỉ-đọc: {', '.join(dict.fromkeys(dropped))}.)"
             )
-            for operation in action.operations
-        ]
         batch = batch_service.create_batch_preview(
             user_id=user_id,
             operations=operations,
-            description=action.explanation[:255] if action.explanation else None,
+            description=explanation[:255] if explanation else None,
             source="ai",
             project_id=project_id,
         )
@@ -653,10 +663,40 @@ class AIService:
         )
         return {
             "intent": "configure",
-            "explanation": action.explanation,
+            "explanation": explanation,
             "batch": batch.to_dict(),
             "requires_approval": True,
         }
+
+    @staticmethod
+    def _allowed_verification(
+        hostnames, commands, project_id: int | None
+    ) -> tuple[list[str], list[str]]:
+        """Split model-proposed verification into allowed and dropped commands.
+
+        A verification command is optional, so one the read-only policy
+        refuses on any target is left out rather than failing the whole
+        preview; the batch then derives its own verification.
+        """
+        from ..commands.policy import default_policy
+        from ..changes.verification import is_sensitive_verification_command
+
+        query = db.session.query(Device.role)
+        if project_id is not None:
+            query = query.filter(Device.project_id == project_id)
+        if "*" not in hostnames:
+            query = query.filter(Device.hostname.in_(list(hostnames)))
+        roles = {role for (role,) in query.all()}
+
+        allowed, dropped = [], []
+        for command in commands:
+            if not is_sensitive_verification_command(command) and roles and all(
+                default_policy.evaluate(command, role).allowed for role in roles
+            ):
+                allowed.append(command)
+            else:
+                dropped.append(command)
+        return allowed, dropped
 
     # -- entry point ------------------------------------------------------
     def handle(
