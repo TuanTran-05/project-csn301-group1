@@ -458,7 +458,7 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET/POST | `/api/devices` | viewer / editor | List / create devices in the current project |
 | GET/PUT/DELETE | `/api/devices/<id>` | viewer / editor | Read / update / delete |
 | POST | `/api/devices/<id>/test-connection` | editor | SSH reachability check |
-| POST | `/api/governance/devices/<id>/baseline` | permitted Admin/Teacher | Capture a running-config baseline |
+| POST | `/api/devices/<id>/baseline` | permitted Admin/Teacher | Capture a running-config baseline |
 | GET | `/api/devices/<id>/status` | any | Latest monitoring snapshot |
 | GET | `/api/devices/<id>/snapshots` | any | Snapshot history |
 | POST | `/api/devices/<id>/refresh` | any | Poll now |

@@ -1314,7 +1314,7 @@ document.addEventListener("alpine:init", () => {
       this.deviceUndoable = false;
       this.baselineBusy[deviceId] = true;
       try {
-        await this.authFetch(`/api/governance/devices/${deviceId}/baseline`, {
+        await this.authFetch(`/api/devices/${deviceId}/baseline`, {
           method: "POST",
         });
         this.deviceNotice = "Đã lưu cấu hình nền cho thiết bị. AI Management có thể dùng nó để kiểm tra trước khi áp dụng.";
