@@ -47,7 +47,8 @@ def redact_sensitive_data(value, force=False, hide_commands=False):
                 for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact_sensitive_data(item, force, hide_commands) for item in value]
-    if force:
+    # A flag such as "has_credential" or an absent value cannot carry a secret.
+    if force and not (value is None or isinstance(value, bool)):
         return REDACTED
     if isinstance(value, str):
         return _INLINE.sub(lambda match: match.group(1) + " " + REDACTED, value)

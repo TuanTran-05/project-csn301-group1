@@ -346,6 +346,14 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
 def delete_device(device_id: int, project_id: int | None = None) -> None:
     device = get_device(device_id, project_id)
     _assert_no_active_batch(device_id)
+    # purge_devices does not remove teaching records; left behind they would
+    # hand their grants to a later device that reuses this id.
+    from ..governance.model import Assignment, Draft, Grant, Reservation
+    for model in (Grant, Reservation, Draft, Assignment):
+        if db.session.query(model).filter_by(device_id=device_id).first():
+            raise ConflictError(
+                "Device has historical or teaching records; retain it for audit."
+            )
     purge_devices([device.id])
 
 

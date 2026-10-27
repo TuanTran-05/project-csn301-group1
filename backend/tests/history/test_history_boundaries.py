@@ -47,7 +47,8 @@ def test_database_role_downgrade_overrides_stale_admin_claim(client, admin_heade
 
 def test_deleted_or_unknown_admin_identity_rejected(client):
     token = create_access_token(identity="999999", additional_claims={"role": "ADMIN"})
-    assert client.get(BASE, headers={"Authorization": "Bearer " + token}).status_code == 403
+    # An identity with no account is refused as unauthenticated.
+    assert client.get(BASE, headers={"Authorization": "Bearer " + token}).status_code == 401
 
 
 def test_empty_and_baseline_moves_are_conflicts_without_audit(client, admin_headers):
@@ -70,7 +71,7 @@ def test_preview_does_not_automatically_create_history(client, admin_headers, ac
     assert client.get(BASE + "/backup", headers=admin_headers).get_json()["audit_trail"] == []
 
 
-def test_all_history_operations_remain_user_and_topology_scoped(client, admin_headers, db):
+def test_all_history_operations_remain_user_and_topology_scoped(client, admin_headers, db, second_admin_allowed):
     other = User(username="separate-admin", role="ADMIN")
     other.set_password("SeparateHistoryTestPassword!")
     db.session.add(other)

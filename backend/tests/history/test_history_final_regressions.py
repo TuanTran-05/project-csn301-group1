@@ -351,7 +351,7 @@ def test_restore_untracked_owned_record_leaves_empty_history_untouched(client, a
                                                                     access_switch, db):
     from network_copilot.changes.service import prepare_change
     # A pre-existing draft, created directly in the suite RAM DB, has no history hook.
-    row = prepare_change(admin_user.id, access_switch, ["interface Gi0/2", "description first"], [], "first", "manual")
+    row = prepare_change(admin_user.id, access_switch, ["interface Gi0/2", "description first"], [], "first", "api")
     db.session.add(row)
     db.session.commit()
     work = workspace(admin_user.id)

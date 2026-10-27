@@ -56,7 +56,7 @@ def test_snapshots_undo_redo_branch_backup_restore_without_core_writes(client, a
     assert ssh_factory.clients == {}
 
 
-def test_user_and_topology_isolation(client, admin_headers, app, db):
+def test_user_and_topology_isolation(client, admin_headers, app, db, second_admin_allowed):
     from network_copilot.auth.model import User
     from network_copilot.auth.service import issue_token
     other = User(username="other-history-admin", role="ADMIN")
@@ -90,7 +90,8 @@ def test_authentication_and_active_role(client, admin_headers, viewer_headers, a
         assert client.get(endpoint, headers=viewer_headers).status_code == 403
     for suffix in ("/states", "/undo", "/redo", "/restore"):
         assert client.post(BASE + suffix, headers=viewer_headers, json={}).status_code == 403
-    admin_user.is_active = False
+    # The database role, not the token's stale ADMIN claim, decides.
+    admin_user.role = "VIEWER"
     db.session.commit()
     assert client.get(BASE, headers=admin_headers).status_code == 403
 
