@@ -43,7 +43,7 @@ def collect_provider_context(monkeypatch, results):
 
     response = service._handle_troubleshoot(action, operation, device, user_id=123)
 
-    readonly.assert_called_once_with(operation, device, 123)
+    readonly.assert_called_once_with(operation, device, 123, None)
     assert provider.calls == 1
     assert len(provider.prompts) == 1
     prompt = provider.prompts[0]

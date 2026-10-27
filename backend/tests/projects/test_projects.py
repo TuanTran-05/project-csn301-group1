@@ -74,13 +74,14 @@ def test_admin_sees_every_project(client, two_projects, admin_headers):
     assert {two_projects[0].id, two_projects[1].id} <= ids
 
 
-def test_share_gives_read_access_only_to_the_target(client, two_projects, alice_headers, bob_headers):
+def test_share_gives_read_access_only_to_the_target(client, two_projects, admin_headers, bob_headers):
     a, *_ = two_projects
     assert client.get(f"/api/projects/{a.id}", headers=bob_headers).status_code == 404
 
+    # Only an Admin may share with an Operator account (see the next test).
     shared = client.post(
         f"/api/projects/{a.id}/members",
-        headers=alice_headers,
+        headers=admin_headers,
         json={"username": "bob", "access": "viewer"},
     )
     assert shared.status_code == 201
@@ -91,9 +92,24 @@ def test_share_gives_read_access_only_to_the_target(client, two_projects, alice_
     assert [d["hostname"] for d in devices.get_json()["items"]] == ["R1"]
 
 
-def test_viewer_share_cannot_change_inventory(client, two_projects, alice_headers, bob_headers):
+def test_operator_can_only_share_with_viewer_accounts(client, two_projects, alice_headers):
     a, *_ = two_projects
-    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"})
+    response = client.post(
+        f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"}
+    )
+    assert response.status_code == 403
+
+    _create_user("carol", PASSWORD, "VIEWER")
+    response = client.post(
+        f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "carol"}
+    )
+    assert response.status_code == 201
+    assert response.get_json()["access"] == "viewer"
+
+
+def test_viewer_share_cannot_change_inventory(client, two_projects, admin_headers, bob_headers):
+    a, *_ = two_projects
+    client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "bob"})
     response = client.post(
         "/api/devices",
         headers=scope(bob_headers, a),
@@ -121,12 +137,12 @@ def test_operator_can_delete_device_from_own_project(client, two_projects, alice
 
 
 def test_editor_share_can_add_devices_but_not_share_or_delete(
-    client, two_projects, alice_headers, bob_headers
+    client, two_projects, admin_headers, bob_headers
 ):
     a, *_ = two_projects
     client.post(
         f"/api/projects/{a.id}/members",
-        headers=alice_headers,
+        headers=admin_headers,
         json={"username": "bob", "access": "editor"},
     )
     created = client.post(
@@ -162,22 +178,22 @@ def test_global_viewer_stays_read_only_even_with_an_editor_share(
     assert response.status_code == 403
 
 
-def test_unsharing_removes_access(client, two_projects, alice_headers, bob_headers, bob):
+def test_unsharing_removes_access(client, two_projects, admin_headers, alice_headers, bob_headers, bob):
     a, *_ = two_projects
-    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"})
+    client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "bob"})
     assert client.delete(f"/api/projects/{a.id}/members/{bob.id}", headers=alice_headers).status_code == 204
     assert client.get(f"/api/projects/{a.id}", headers=bob_headers).status_code == 404
 
 
-def test_cannot_share_with_an_unknown_user_or_the_owner(client, two_projects, alice_headers):
+def test_cannot_share_with_an_unknown_user_or_the_owner(client, two_projects, admin_headers, alice_headers):
     a, *_ = two_projects
     assert client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "ghost"}).status_code == 404
-    assert client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "alice"}).status_code == 409
+    assert client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "alice"}).status_code == 409
 
 
-def test_member_listing_is_visible_to_a_viewer(client, two_projects, alice_headers, bob_headers):
+def test_member_listing_is_visible_to_a_viewer(client, two_projects, admin_headers, bob_headers):
     a, *_ = two_projects
-    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "bob"})
+    client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "bob"})
     members = client.get(f"/api/projects/{a.id}/members", headers=bob_headers).get_json()["items"]
     assert [(m["username"], m["access"]) for m in members] == [("bob", "viewer")]
 

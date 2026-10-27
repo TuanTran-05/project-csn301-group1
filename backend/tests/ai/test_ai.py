@@ -878,12 +878,15 @@ def test_chat_endpoint_requires_a_message(client, admin_headers, app):
 def test_legacy_viewer_cannot_monitor_without_explicit_permissions(
     client, viewer_headers, app, dist_switch, ssh_factory
 ):
-    ssh_factory.set_client(dist_switch.hostname, default_output="ok")
+    """A Viewer only gets advice: the request never reaches a device."""
+    fake = ssh_factory.set_client(dist_switch.hostname, default_output="ok")
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=MONITOR_ACTION)
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "check ospf"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.get_json()["intent"] == "advice"
+    assert fake.calls == []
 
 
 def test_viewer_cannot_create_a_configuration_preview(
@@ -893,7 +896,10 @@ def test_viewer_cannot_create_a_configuration_preview(
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "tao vlan 25"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.get_json()["intent"] == "advice"
+    assert "batch" not in response.get_json()
+    assert db.session.query(ChangeRequest).count() == 0
 
 
 CHAT_ACTION = {

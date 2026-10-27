@@ -63,7 +63,17 @@ class User(db.Model):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    __table_args__ = (in_check("role", ROLES, "role_valid"),)
+    __table_args__ = (
+        in_check("role", ROLES, "role_valid"),
+        # At most one Administrator; mirrors migration 9e54c2bd3d7e.
+        db.Index(
+            "uq_single_admin",
+            "role",
+            unique=True,
+            sqlite_where=db.text("role = 'ADMIN'"),
+            postgresql_where=db.text("role = 'ADMIN'"),
+        ),
+    )
 
     teaching_groups = db.relationship(
         "Group", secondary="teacher_groups", back_populates="teachers"

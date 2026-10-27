@@ -553,14 +553,32 @@ def test_an_editor_can_propose_but_only_an_admin_can_approve(client, admin_heade
     from conftest import _auth_headers, _create_user
     from network_copilot.projects.model import ProjectMember
 
-    user = _create_user("opop2", "OperatorPass123!", "OPERATOR")
+    # The default lab is view-only for everyone but Admin; an editor share
+    # only means something on an ordinary project.
+    project.name = "Campus"
+    # Operators cannot create Preview -> Approve -> Apply changes
+    # (docs/scoped-backend.md); a Student with a config.create grant can.
+    user = _create_user("opop2", "OperatorPass123!", "STUDENT")
     db.session.add(ProjectMember(project_id=project.id, user_id=user.id, access="editor"))
+    # A non-admin change also needs a group that grants config.create on the devices.
+    from network_copilot.auth.model import User
+    from network_copilot.governance.access import issue_grant
+    from network_copilot.groups.model import Group
+
+    group = Group(name="design-lab")
+    group.students.append(user)
+    group.devices.extend(lab.values())
+    db.session.add(group)
+    db.session.commit()
+    admin = db.session.query(User).filter_by(role="ADMIN").one()
+    for action in ("device.read", "config.create"):
+        issue_grant(admin, {"user_id": user.id, "group_id": group.id, "action": action})
     db.session.commit()
     headers = _auth_headers(client, "opop2", "OperatorPass123!")
     add(client, headers, base, lab, "r1", "Gi0/1", "sw1", "Gi0/0")
 
     response = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
-    assert response.status_code == 201
+    assert response.status_code == 201, response.get_json()
     batch = response.get_json()["batch"]
     assert batch["status"] == "pending_approval" and "please review" in batch["description"]
     assert batch["requested_by_id"] == user.id

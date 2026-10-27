@@ -162,7 +162,8 @@ def test_editor_and_protected_exports_require_jwt_admin(client, admin_headers, v
     assert client.get(BASE + path).status_code == 401
     assert client.get(BASE + path, headers={"Authorization": "Bearer invalid.token"}).status_code == 401
     assert client.get(BASE + path, headers=viewer_headers).status_code == 403
-    admin_user.is_active = False
+    # The database role, not the token's stale ADMIN claim, decides.
+    admin_user.role = "VIEWER"
     db.session.commit()
     assert client.get(BASE + path, headers=admin_headers).status_code == 403
 

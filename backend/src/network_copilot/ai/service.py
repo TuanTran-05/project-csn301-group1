@@ -707,6 +707,11 @@ class AIService:
         project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
+        # The ai.use permission and the daily quota, counted before the model
+        # is called so a failing provider cannot be retried without limit.
+        from ..governance.quotas import consume_ai
+
+        consume_ai(user_id, group_id)
         action = self.interpret(
             message, user_id, session_id=session_id, project_id=project_id
         )
