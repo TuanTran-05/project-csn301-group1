@@ -170,6 +170,33 @@ def validate_execution_mode(commands: list[str], execution_mode: str) -> None:
         raise ValidationError("This command requires EXEC mode; it cannot run in config mode.")
 
 
+_TRUNK_MODE = re.compile(r"^switchport\s+mode\s+trunk$", re.I)
+_TRUNK_ENCAPSULATION = re.compile(r"^switchport\s+trunk\s+encapsulation\s+", re.I)
+_INTERFACE_BLOCK = re.compile(r"^interface\s+\S+", re.I)
+
+
+def _with_trunk_encapsulation(commands: list[str]) -> list[str]:
+    """Set dot1q before "switchport mode trunk" where the block does not.
+
+    PNETLab's Cisco switch images (IOSv-L2, IOL-L2) also speak ISL, so their
+    ports start at "negotiate" and refuse trunk mode with 'Command rejected:
+    trunk encapsulation is "Auto"' until an encapsulation is set.
+    """
+    result: list[str] = []
+    encapsulation_set = False
+    for command in commands:
+        text = command.strip()
+        if _INTERFACE_BLOCK.match(text):
+            encapsulation_set = False
+        elif _TRUNK_ENCAPSULATION.match(text):
+            encapsulation_set = True
+        elif _TRUNK_MODE.match(text) and not encapsulation_set:
+            result.append("switchport trunk encapsulation dot1q")
+            encapsulation_set = True
+        result.append(command)
+    return result
+
+
 def _wrap(commands: list[str]) -> list[str]:
     """Strip any caller-supplied wrappers and apply exactly one config block."""
     body = [command for command in commands if not _is_wrapper(command)]
@@ -366,6 +393,8 @@ def prepare_change(
     body, requires_confirmation = validate_commands(commands, device)
     if not panos:
         validate_execution_mode(body, execution_mode)
+    if device.device_type == "cisco_ios" and device.environment == "pnetlab" and execution_mode == "config":
+        body = _with_trunk_encapsulation(body)
 
     if execution_mode == "exec" and any(_is_wrapper(command) for command in body):
         raise ValidationError(

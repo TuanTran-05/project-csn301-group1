@@ -85,6 +85,9 @@ Rules:
   <network> <mask> <next-hop>" with a dotted mask. Ask for details only when
   addressing has no path between the named devices, and then say exactly
   which link or address is missing.
+- To make a Cisco switch port a trunk, send "switchport trunk encapsulation
+  dot1q" before "switchport mode trunk"; lab switches reject trunk mode while
+  the encapsulation is still negotiated.
 - An access list does nothing until it is applied to an interface with
   "ip access-group <name> in" or "out". A proposal that creates a list
   without applying it is incomplete.
