@@ -4322,3 +4322,54 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .pnet-boot pre { max-height: 220px; overflow: auto; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--bg); white-space: pre-wrap; font-size: 12px; }
 .boot-log { margin: 8px 0; font-size: 13px; }
 .boot-log pre { margin: 2px 0 6px 18px; }
+
+/* -- Configuration undo/redo steps (Pending column) -- */
+.checkpoints { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.checkpoints-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.checkpoints-heading h2 { margin: 0; font-size: 14px; }
+.checkpoints-toolbar { display: flex; gap: 6px; flex-shrink: 0; }
+.checkpoints-toolbar button,
+.checkpoint-rename button,
+.checkpoint-rename-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text);
+}
+.checkpoints-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.checkpoint-state { margin: 6px 0; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.checkpoint-state-error { color: var(--danger-text); }
+.checkpoint-state-notice { color: var(--accent); }
+.checkpoint-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.checkpoint-item { padding: 10px; border: 1px solid var(--border); border-radius: 8px; border-left-width: 3px; }
+.checkpoint-item.checkpoint-active { border-left-color: var(--accent); }
+.checkpoint-item.checkpoint-undone { border-left-color: var(--text-muted); opacity: 0.8; }
+.checkpoint-item.checkpoint-undone .checkpoint-name { text-decoration: line-through; }
+.checkpoint-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.checkpoint-name { font-size: 13px; overflow-wrap: anywhere; }
+.checkpoint-rename-btn { padding: 1px 6px; flex-shrink: 0; }
+.checkpoint-rename { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.checkpoint-rename input { flex: 1; min-width: 0; font-size: 12px; padding: 3px 6px; }
+.checkpoint-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+.checkpoint-result { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.change-sidebar-description { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.change-sidebar-warnings { margin: 4px 0; padding-left: 16px; font-size: 11px; color: var(--text-muted); }
+
+.app-shell .checkpoints { border-top-color: #e7edf3; }
+.app-shell .checkpoints-heading h2 { color: #173c5e; }
+.app-shell .checkpoints-toolbar button,
+.app-shell .checkpoint-rename button,
+.app-shell .checkpoint-rename-btn { border-color: #e3eaf1; background: #f8fafc; color: #254966; }
+.app-shell .checkpoints-toolbar button:hover:not(:disabled) { background: #fff; }
+.app-shell .checkpoint-item { border-color: #e7edf3; background: #fbfcfd; }
+.app-shell .checkpoint-item.checkpoint-active { border-left-color: #123f64; }
+.app-shell .checkpoint-item.checkpoint-undone { border-left-color: #b7c7d6; }
+.app-shell .checkpoint-state,
+.app-shell .checkpoint-meta,
+.app-shell .checkpoint-result,
+.app-shell .change-sidebar-warnings { color: #71849a; }
+.app-shell .checkpoint-state-notice { color: #123f64; }
+.app-shell .checkpoint-state-error { color: #b42318; }

@@ -555,6 +555,41 @@ Everything below `/api/devices`, `/api/commands`, `/api/changes`,
 role column above is the minimum **project access** (viewer < editor < owner);
 the change workflow keeps its global ADMIN requirement on top.
 
+### Undo / redo of applied configuration
+
+Every change that applies and verifies in configuration mode on a Cisco IOS
+device becomes a named step in **Lịch sử cấu hình thiết bị**, under the
+Pending column of the chat page (`config_checkpoints`). A step keeps the
+running-config captured just before the change (`pre_change` backup) and the
+one captured right after it (`post_change` backup); its default name is
+`<hostname>: <description>` and can be renamed (✎).
+
+* **Undo / Hoàn tác** reads the device's current running-config, computes the
+  lines that bring it back to the step's pre-change config
+  (`checkpoints/diff.py`: lines only in the current config are negated, lines
+  only in the saved one are added, sections are compared line by line) and
+  stores them as an ordinary pending change (`source: restore`). Nothing is
+  written yet: the change goes through Approve → typed hostname → Apply →
+  Verify like any other, with its own backup first. Only when it succeeds does
+  the step become `undone`.
+* **Redo / Làm lại** does the same towards the step's post-change config.
+* Per device the steps are a stack: only the newest active step can be undone,
+  only the most recently undone one redone, and a new change on the device
+  discards its redo steps. While a device has a change pending or running, no
+  undo/redo can be staged for it.
+* An undo restores the *whole* saved config, so any other edit made on the
+  device after that step is removed too (the preview says so). Secrets
+  (`username`, `enable secret`, keys), banners and certificates are never
+  emitted and are listed as left untouched. PAN-OS and ASA are not supported yet.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| GET | `/api/checkpoints` | project viewer | Steps of the current project, with `undo_next_id` / `redo_next_id` |
+| PATCH | `/api/checkpoints/<id>` | project editor | Rename (`{"name": ...}`) |
+| POST | `/api/checkpoints/<id>/undo` · `/redo` | may preview changes | Stage the restore as a pending change (10 req/min) |
+
+`CONFIG_CHECKPOINTS_ENABLED=false` turns step recording off.
+
 ### Change states
 
 `pending_approval → approved → running → success | failed`, plus `cancelled`

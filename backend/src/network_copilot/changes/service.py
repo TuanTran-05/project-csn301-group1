@@ -453,7 +453,7 @@ def prepare_change(
     return change
 
 
-def _refresh_baseline(device: Device, change: ChangeRequest, client) -> None:
+def _refresh_baseline(device: Device, change: ChangeRequest, client):
     """Store the configuration the write left behind as the device's baseline.
 
     The next preview freezes the hash of the newest backup, so without this
@@ -466,11 +466,12 @@ def _refresh_baseline(device: Device, change: ChangeRequest, client) -> None:
     from ..ssh.messages import friendly_error
 
     try:
-        capture_backup(device, change_request_id=change.id, reason="post_change", client=client)
+        return capture_backup(device, change_request_id=change.id, reason="post_change", client=client)
     except SSHError as exc:
         logger.warning(
             "Post-change backup of %s failed: %s", device.hostname, friendly_error(exc, device.hostname)
         )
+        return None
 
 
 def create_preview(
@@ -1006,7 +1007,7 @@ def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> Change
         )
 
     change.verification_output = results
-    _refresh_baseline(device, change, client)
+    post_backup = _refresh_baseline(device, change, client)
     if not passed:
         return _fail(
             change,
@@ -1022,6 +1023,9 @@ def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> Change
     db.session.commit()
     device_service.set_device_status(device, "online")
     logger.info("Change %s applied and verified on %s.", change.id, device.hostname)
+    # Undo/redo step for the Pending column. Never raises.
+    from ..checkpoints.service import on_change_applied
+    on_change_applied(change, device, client, post_backup)
     record_event(
         action="change.apply",
         result="success",

@@ -72,6 +72,10 @@ class Config:
     # parallel keeps a cycle well inside the interval as projects grow.
     MONITORING_MAX_WORKERS = int(os.environ.get("MONITORING_MAX_WORKERS", "4"))
 
+    # Every applied configuration change becomes an undo/redo step shown in
+    # the Pending column (see checkpoints/service.py).
+    CONFIG_CHECKPOINTS_ENABLED = _bool("CONFIG_CHECKPOINTS_ENABLED", True)
+
     # Server-sent events: the chat page is told when something changed instead
     # of asking every few seconds. Each open stream holds one worker thread for
     # up to REALTIME_MAX_SECONDS, so run Gunicorn with threads (gthread) or turn
@@ -118,6 +122,8 @@ class TestConfig(Config):
     SQLITE_FOREIGN_KEYS = False
     # One in-memory SQLite connection is shared by the whole test run.
     MONITORING_MAX_WORKERS = 1
+    # Existing tests assert exact SSH/DB sequences; checkpoint tests turn it on.
+    CONFIG_CHECKPOINTS_ENABLED = False
     # Console bootstrap jobs run before the request returns, and never wait.
     BOOTSTRAP_RUN_INLINE = True
     BOOTSTRAP_TYPE_DELAY = 0
