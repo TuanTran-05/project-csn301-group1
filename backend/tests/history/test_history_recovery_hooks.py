@@ -286,8 +286,7 @@ def test_core_record_fault_after_ram_push_recovers_complete_tracking(client, adm
 
 @pytest.mark.parametrize("kind", ["change", "batch"])
 def test_other_admin_cancel_keeps_actor_workspace_separate_from_owner(client, admin_headers, admin_user,
-                                                                    access_switch, dist_switch, db, kind,
-                                                                    second_admin_allowed):
+                                                                    access_switch, dist_switch, db, kind):
     record_id, children, owner_work = draft_with_redo(client, admin_headers, admin_user,
                                                      access_switch, dist_switch, kind)
     # Two administrator identities (as before and after an admin transfer):

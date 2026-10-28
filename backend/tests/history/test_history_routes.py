@@ -56,7 +56,7 @@ def test_snapshots_undo_redo_branch_backup_restore_without_core_writes(client, a
     assert ssh_factory.clients == {}
 
 
-def test_user_and_topology_isolation(client, admin_headers, app, db, second_admin_allowed):
+def test_user_and_topology_isolation(client, admin_headers, app, db):
     from network_copilot.auth.model import User
     from network_copilot.auth.service import issue_token
     from sqlalchemy import text
