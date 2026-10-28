@@ -573,3 +573,43 @@ def test_a_second_change_after_apply_needs_no_new_baseline(
         change_service.approve(change.id, admin_user.id)
         applied = change_service.apply(change.id, admin_user.id)
         assert applied.status == "success", applied.error_message
+
+
+TRUNK_COMMANDS = [
+    "interface GigabitEthernet0/1",
+    "switchport mode trunk",
+    "switchport trunk allowed vlan 10,20,30",
+]
+
+
+def test_pnetlab_switch_trunk_gets_dot1q_before_trunk_mode(app, admin_user, access_switch):
+    """IOSv-L2 refuses trunk mode while the encapsulation is "Auto"."""
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    change = change_service.create_preview(admin_user.id, access_switch.id, TRUNK_COMMANDS)
+    assert change.commands == [
+        "configure terminal",
+        "interface GigabitEthernet0/1",
+        "switchport trunk encapsulation dot1q",
+        "switchport mode trunk",
+        "switchport trunk allowed vlan 10,20,30",
+        "end",
+    ]
+    # Still recognised as a trunk change, so the trunk itself is verified.
+    assert change.operation_families == ["trunk_port"]
+    assert [item["id"] for item in change.verification_plan] == ["trunk_port:GigabitEthernet0/1"]
+
+
+def test_an_explicit_trunk_encapsulation_is_kept(app, admin_user, access_switch):
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    commands = ["interface Gi0/1", "switchport trunk encapsulation isl", "switchport mode trunk"]
+    change = change_service.create_preview(admin_user.id, access_switch.id, commands)
+    assert change.commands[1:-1] == commands
+
+
+def test_other_switches_are_left_alone(app, admin_user, access_switch):
+    """A Catalyst 2960 only speaks dot1q and answers the command with
+    "% Invalid input", which would fail the whole batch."""
+    change = change_service.create_preview(admin_user.id, access_switch.id, TRUNK_COMMANDS)
+    assert change.commands[1:-1] == TRUNK_COMMANDS

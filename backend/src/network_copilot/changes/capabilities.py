@@ -146,6 +146,10 @@ def _parse_access_port(commands: list[str]) -> OperationExpectation | None:
 
 
 def _parse_trunk_port(commands: list[str]) -> OperationExpectation | None:
+    # Switches that also speak ISL need the encapsulation set first; it is
+    # part of making the port a trunk, not a separate operation.
+    if len(commands) == 4 and _fullmatch(r"switchport\s+trunk\s+encapsulation\s+dot1q", commands[1]):
+        commands = [commands[0], *commands[2:]]
     if len(commands) != 3:
         return None
     interface = _parse_interface(commands[0])
