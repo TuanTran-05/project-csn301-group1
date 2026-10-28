@@ -44,6 +44,11 @@ if _LEGACY_HOST_KEY not in paramiko.Transport._preferred_keys:
         _LEGACY_HOST_KEY,
     )
 
+# A refused or reset connection is tried this many times in all, waiting
+# _CONNECT_RETRY_SECONDS longer before each new attempt.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_SECONDS = 2
+
 # How long to keep reading an interactive shell after the last byte arrived.
 _IDLE_SECONDS = 0.2
 _POLL_SECONDS = 0.05
@@ -95,6 +100,23 @@ class SSHClient:
 
     # -- connection --------------------------------------------------------
     def _connect(self):
+        """Open a session, retrying a refused or reset connection.
+
+        Every backup, write and verification opens its own session, and IOSv
+        sometimes refuses one that follows the previous close too closely
+        ("Error reading SSH protocol banner", connection reset). Nothing has
+        been sent yet, so trying again is safe; authentication failures and
+        timeouts are not retried.
+        """
+        for attempt in range(_CONNECT_ATTEMPTS):
+            try:
+                return self._connect_once()
+            except SSHConnectionError:
+                if attempt + 1 == _CONNECT_ATTEMPTS:
+                    raise
+                time.sleep(_CONNECT_RETRY_SECONDS * (attempt + 1))
+
+    def _connect_once(self):
         client = self._client_factory()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:

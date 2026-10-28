@@ -175,10 +175,47 @@ def test_test_connection_raises_on_auth_failure():
         client.test_connection()
 
 
-def test_test_connection_raises_on_refused_connection():
+def test_test_connection_raises_on_refused_connection(monkeypatch):
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
     client, _ = make_client(connect_error=ConnectionRefusedError("refused"))
     with pytest.raises(SSHConnectionError):
         client.test_connection()
+
+
+def test_a_reset_connection_is_tried_again(monkeypatch):
+    """IOSv sometimes refuses the write's session right after the backup's
+    closed; nothing was sent yet, so connecting again is safe."""
+    import paramiko
+
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
+    client, fake = make_client(
+        connect_error=paramiko.SSHException("Error reading SSH protocol banner")
+    )
+    attempts = []
+    original = fake.connect
+
+    def flaky_connect(**kwargs):
+        attempts.append(1)
+        if len(attempts) == 2:
+            fake.connect_error = None
+        return original(**kwargs)
+
+    fake.connect = flaky_connect
+    assert client.test_connection() is True
+    assert len(attempts) == 2
+
+
+def test_a_wrong_password_is_not_retried(monkeypatch):
+    import paramiko
+
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
+    client, fake = make_client(connect_error=paramiko.AuthenticationException("no"))
+    attempts = []
+    original = fake.connect
+    fake.connect = lambda **kwargs: attempts.append(1) or original(**kwargs)
+    with pytest.raises(SSHAuthenticationError):
+        client.test_connection()
+    assert len(attempts) == 1
 
 
 def test_connect_disables_key_auth():
