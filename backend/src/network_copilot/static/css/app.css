@@ -4370,3 +4370,10 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .app-shell .change-sidebar-warnings { color: #71849a; }
 .app-shell .checkpoint-state-notice { color: #123f64; }
 .app-shell .checkpoint-state-error { color: #b42318; }
+
+/* -- Project default SSH login (Devices tab) -- */
+.ssh-default-card .ssh-default-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ssh-default-card h4 { margin: 0 0 4px; }
+.ssh-default-card .hint { margin: 0; }
+.ssh-default-card form { margin-top: 12px; }
+td .link-btn { margin-left: 8px; font-size: 12px; }

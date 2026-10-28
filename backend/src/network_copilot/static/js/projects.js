@@ -72,6 +72,8 @@ const EMPTY_DEVICE_FORM = () => ({
   username: "",
   password: "",
   enable_secret: "",
+  // Store the project's default SSH login instead of typing one.
+  use_default: false,
 });
 
 const EMPTY_DESIGN = () => ({ vlans: [], access_ports: [], svis: [], loopbacks: [], subinterfaces: [], routes: [], ospf: [] });
@@ -162,6 +164,13 @@ document.addEventListener("alpine:init", () => {
     devices: [],
     deviceForm: EMPTY_DEVICE_FORM(),
     deviceFormOpen: false,
+    // Project-wide default SSH login: name only, the password never comes back.
+    sshDefault: null,
+    sshDefaultOpen: false,
+    sshDefaultBusy: false,
+    sshDefaultError: "",
+    sshDefaultNotice: "",
+    sshDefaultForm: { username: "", password: "", enable_secret: "" },
     deviceError: "",
     deviceNotice: "",
     deviceBusy: {},
@@ -423,6 +432,10 @@ document.addEventListener("alpine:init", () => {
 
     _clearProjectData() {
       this.devices = [];
+      this.sshDefault = null;
+      this.sshDefaultOpen = false;
+      this.sshDefaultError = "";
+      this.sshDefaultNotice = "";
       this.links = [];
       this.members = [];
       this.plan = null;
@@ -571,6 +584,128 @@ document.addEventListener("alpine:init", () => {
       // from it, so another order would make them jump around.
       if (projectId === this.currentProjectId) {
         this.devices = data.items.sort((a, b) => window.NCLayout.naturalCompare(a.hostname, b.hostname));
+        // The "devices without a login" count follows the device list.
+        if (this.canEdit) this.loadSshDefault().catch(() => {});
+      }
+    },
+
+    // ------------------------------------------------------------------
+    // project default SSH login
+    // ------------------------------------------------------------------
+
+    get hasSshDefault() {
+      return Boolean(this.sshDefault && this.sshDefault.default);
+    },
+
+    async loadSshDefault() {
+      const projectId = this.currentProjectId;
+      if (!projectId) return;
+      const data = await this.authFetch(`/api/projects/${projectId}/ssh-default`);
+      if (projectId === this.currentProjectId) this.sshDefault = data;
+    },
+
+    openSshDefault() {
+      this.sshDefaultError = "";
+      this.sshDefaultNotice = "";
+      this.sshDefaultForm = {
+        username: this.hasSshDefault ? this.sshDefault.default.username : "",
+        password: "",
+        enable_secret: "",
+      };
+      this.sshDefaultOpen = true;
+    },
+
+    async saveSshDefault() {
+      const form = this.sshDefaultForm;
+      this.sshDefaultError = "";
+      this.sshDefaultNotice = "";
+      if (!form.username.trim()) {
+        this.sshDefaultError = "Nhập tên đăng nhập SSH.";
+        return;
+      }
+      if (!this.hasSshDefault && !form.password) {
+        this.sshDefaultError = "Nhập mật khẩu SSH.";
+        return;
+      }
+      const body = { username: form.username.trim() };
+      if (form.password) body.password = form.password;
+      if (form.enable_secret) body.enable_secret = form.enable_secret;
+      this.sshDefaultBusy = true;
+      try {
+        this.sshDefault = await this.authFetch(`/api/projects/${this.currentProjectId}/ssh-default`, {
+          method: "PUT",
+          body: JSON.stringify(body),
+        });
+        this.sshDefaultOpen = false;
+        this.sshDefaultForm = { username: "", password: "", enable_secret: "" };
+        this.sshDefaultNotice = "Đã lưu SSH mặc định. Thiết bị thêm mới sẽ tự dùng tài khoản này.";
+      } catch (err) {
+        this.sshDefaultError = this.describeError(err);
+      } finally {
+        this.sshDefaultBusy = false;
+      }
+    },
+
+    async deleteSshDefault() {
+      if (!window.confirm("Xoá SSH mặc định của project? Thiết bị đã lưu SSH vẫn giữ nguyên.")) return;
+      this.sshDefaultError = "";
+      try {
+        this.sshDefault = await this.authFetch(`/api/projects/${this.currentProjectId}/ssh-default`, {
+          method: "DELETE",
+        });
+        this.sshDefaultOpen = false;
+        this.sshDefaultNotice = "Đã xoá SSH mặc định.";
+      } catch (err) {
+        this.sshDefaultError = this.describeError(err);
+      }
+    },
+
+    async applySshDefault(scope = "missing") {
+      if (!this.hasSshDefault || this.sshDefaultBusy) return;
+      if (scope === "all" && !window.confirm(
+        "Ghi đè SSH của MỌI thiết bị trong project bằng tài khoản mặc định?"
+      )) return;
+      this.sshDefaultBusy = true;
+      this.sshDefaultError = "";
+      this.sshDefaultNotice = "";
+      try {
+        const result = await this.authFetch(`/api/projects/${this.currentProjectId}/ssh-default/apply`, {
+          method: "POST",
+          body: JSON.stringify({ scope }),
+        });
+        this.sshDefault = result;
+        this.sshDefaultNotice = result.updated.length
+          ? `Đã gán SSH mặc định cho ${result.updated.length} thiết bị: ${result.updated.join(", ")}.`
+          : "Không có thiết bị nào cần gán.";
+        await this.loadDevices();
+      } catch (err) {
+        this.sshDefaultError = this.describeError(err);
+      } finally {
+        this.sshDefaultBusy = false;
+      }
+    },
+
+    async useSshDefaultFor(device) {
+      if (!this.hasSshDefault || !device) return;
+      this.deviceError = "";
+      try {
+        await this.authFetch(`/api/devices/${device.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ use_project_ssh: true }),
+        });
+        this.deviceNotice = `Đã gán SSH mặc định cho ${device.hostname}.`;
+        await this.loadDevices();
+      } catch (err) {
+        this.deviceError = this.describeError(err);
+      }
+    },
+
+    toggleDeviceDefaultSsh() {
+      const form = this.deviceForm;
+      if (form.use_default && this.hasSshDefault) {
+        form.username = this.sshDefault.default.username;
+        form.password = "";
+        form.enable_secret = "";
       }
     },
 
@@ -590,11 +725,20 @@ document.addEventListener("alpine:init", () => {
           ssh_port: device.ssh_port,
           monitoring_enabled: device.monitoring_enabled,
           description: device.description || "",
+          // A device without a login gets the project default filled in; one
+          // that has a login keeps it (blank fields) unless it is retyped.
+          username: !device.has_credential && this.hasSshDefault ? this.sshDefault.default.username : "",
+          use_default: !device.has_credential && this.hasSshDefault,
+          has_credential: Boolean(device.has_credential),
         };
       } else {
         this.deviceForm = EMPTY_DEVICE_FORM();
         if (this.project && this.project.environment !== "mixed") {
           this.deviceForm.environment = this.project.environment;
+        }
+        if (this.hasSshDefault) {
+          this.deviceForm.username = this.sshDefault.default.username;
+          this.deviceForm.use_default = true;
         }
       }
       this.deviceFormOpen = true;
@@ -621,7 +765,9 @@ document.addEventListener("alpine:init", () => {
         description: form.description || null,
       };
       // A blank password on edit means "keep the stored credential".
-      if (form.username && form.password) {
+      if (form.use_default && this.hasSshDefault && !form.password) {
+        payload.use_project_ssh = true;
+      } else if (form.username && form.password) {
         payload.credential = {
           username: form.username,
           password: form.password,

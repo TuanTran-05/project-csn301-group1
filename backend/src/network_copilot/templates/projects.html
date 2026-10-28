@@ -169,6 +169,52 @@
                 </div>
               </div>
 
+              <div class="card ssh-default-card" x-show="canEdit">
+                <div class="ssh-default-head">
+                  <div>
+                    <h4>SSH mặc định của project</h4>
+                    <p class="hint" x-show="hasSshDefault">
+                      Đang dùng <strong x-text="hasSshDefault ? sshDefault.default.username : ''"></strong> / ••••••
+                      — tự điền khi thêm, sửa, nhập từ PNETLab hoặc kéo thả thiết bị trên sơ đồ.
+                    </p>
+                    <p class="hint" x-show="!hasSshDefault">
+                      Chưa có. Lưu tài khoản SSH chung của lab một lần, các thiết bị sẽ tự dùng mà không phải gõ lại.
+                    </p>
+                  </div>
+                  <div class="row-actions" x-show="canEdit">
+                    <button type="button" class="primary-btn"
+                      x-show="hasSshDefault && sshDefault.devices_without_login > 0"
+                      :disabled="sshDefaultBusy" @click="applySshDefault('missing')"
+                      x-text="'Gán cho ' + (sshDefault ? sshDefault.devices_without_login : 0) + ' thiết bị chưa có SSH'"></button>
+                    <button type="button" x-show="!sshDefaultOpen" @click="openSshDefault()"
+                      x-text="hasSshDefault ? 'Đổi' : 'Thiết lập'"></button>
+                  </div>
+                </div>
+                <form class="form-grid" x-show="sshDefaultOpen && canEdit" x-cloak @submit.prevent="saveSshDefault()">
+                  <label>Tên đăng nhập SSH
+                    <input type="text" x-model="sshDefaultForm.username" maxlength="64" autocomplete="off" placeholder="vd. g1" />
+                  </label>
+                  <label>Mật khẩu SSH
+                    <input type="password" x-model="sshDefaultForm.password" autocomplete="new-password"
+                      :placeholder="hasSshDefault ? 'để trống = giữ nguyên' : ''" />
+                  </label>
+                  <label>Enable secret (tuỳ chọn)
+                    <input type="password" x-model="sshDefaultForm.enable_secret" autocomplete="new-password"
+                      :placeholder="hasSshDefault ? 'để trống = giữ nguyên' : ''" />
+                  </label>
+                  <div class="form-actions">
+                    <button type="submit" class="primary-btn" :disabled="sshDefaultBusy">Lưu</button>
+                    <button type="button" @click="sshDefaultOpen = false">Huỷ</button>
+                    <button type="button" class="danger-btn" x-show="hasSshDefault" @click="deleteSshDefault()">Xoá mặc định</button>
+                    <button type="button" x-show="hasSshDefault" :disabled="sshDefaultBusy"
+                      @click="applySshDefault('all')" title="Ghi đè SSH của mọi thiết bị trong project">Gán cho tất cả thiết bị</button>
+                  </div>
+                  <p class="hint">Mật khẩu được mã hoá trước khi lưu và không bao giờ được trả lại trình duyệt.</p>
+                </form>
+                <p class="error-text" x-show="sshDefaultError" x-text="sshDefaultError"></p>
+                <p class="ok-text" x-show="sshDefaultNotice" x-text="sshDefaultNotice"></p>
+              </div>
+
               <template x-if="pnet">
                 <div class="card">
                   <h4>Nhập thiết bị từ PNETLab</h4>
@@ -216,8 +262,8 @@
                     <p class="hint">Phát hiện <span x-text="pnet.links.length"></span> dây nối giữa hai node. PNETLab không biết IP quản trị của
                       thiết bị: IP gợi ý chỉ là chỗ trống trong dải của project, hãy nhập IP thật đã cấu hình trên thiết bị.</p>
                     <form class="form-grid" @submit.prevent="pnetImport()">
-                      <label>SSH mặc định (tuỳ chọn) <input type="text" x-model="pnet.form.ssh_user" placeholder="tài khoản" autocomplete="off" /></label>
-                      <label>&nbsp;<input type="password" x-model="pnet.form.ssh_pass" placeholder="mật khẩu" autocomplete="new-password" /></label>
+                      <label>SSH cho các thiết bị nhập (tuỳ chọn) <input type="text" x-model="pnet.form.ssh_user" :placeholder="hasSshDefault ? 'để trống = ' + sshDefault.default.username + ' (mặc định)' : 'tài khoản'" autocomplete="off" /></label>
+                      <label>&nbsp;<input type="password" x-model="pnet.form.ssh_pass" :placeholder="hasSshDefault ? 'để trống = mật khẩu mặc định' : 'mật khẩu'" autocomplete="new-password" /></label>
                       <div class="form-actions">
                         <button type="submit" class="primary-btn" :disabled="pnet.loading || !pnetSelectedCount">
                           Nhập <span x-text="pnetSelectedCount"></span> thiết bị
@@ -354,14 +400,21 @@
                   <input type="number" min="1" max="65535" x-model="deviceForm.ssh_port" />
                 </label>
                 <label>Tên đăng nhập SSH
-                  <input type="text" x-model="deviceForm.username" autocomplete="off" />
+                  <input type="text" x-model="deviceForm.username" autocomplete="off" :disabled="deviceForm.use_default"
+                         :placeholder="deviceForm.has_credential ? 'đã lưu — để trống = giữ nguyên' : ''" />
                 </label>
                 <label>Mật khẩu SSH
                   <input type="password" x-model="deviceForm.password" autocomplete="new-password"
-                         :placeholder="deviceForm.id ? 'để trống = giữ nguyên' : ''" />
+                         :disabled="deviceForm.use_default"
+                         :placeholder="deviceForm.use_default ? 'dùng mật khẩu mặc định' : (deviceForm.id ? 'để trống = giữ nguyên' : '')" />
                 </label>
                 <label>Enable secret (tuỳ chọn)
-                  <input type="password" x-model="deviceForm.enable_secret" autocomplete="new-password" />
+                  <input type="password" x-model="deviceForm.enable_secret" autocomplete="new-password" :disabled="deviceForm.use_default" />
+                </label>
+                <label class="check" x-show="hasSshDefault">
+                  <input type="checkbox" x-model="deviceForm.use_default" @change="toggleDeviceDefaultSsh()" />
+                  Dùng SSH mặc định của project
+                  (<span x-text="hasSshDefault ? sshDefault.default.username : ''"></span>)
                 </label>
                 <label>Mô tả
                   <input type="text" x-model="deviceForm.description" maxlength="255" />
@@ -395,7 +448,11 @@
                         <span class="status-dot" :class="'status-' + device.status"></span>
                         <span x-text="device.status"></span>
                       </td>
-                      <td x-text="device.has_credential ? 'đã lưu' : 'chưa có'"></td>
+                      <td>
+                        <span x-text="device.has_credential ? 'đã lưu' : 'chưa có'"></span>
+                        <button type="button" class="link-btn" x-show="canEdit && hasSshDefault && !device.has_credential && device.managed !== false && device.lifecycle !== 'planned'"
+                          @click="useSshDefaultFor(device)" title="Gán SSH mặc định của project">dùng mặc định</button>
+                      </td>
                       <td class="row-actions">
                         <button type="button" @click="testConnection(device)" x-show="canEdit" :disabled="deviceBusy[device.id]">Kiểm tra</button>
                         <button type="button" @click="openDeviceForm(device)" x-show="canEdit">Sửa</button>
@@ -549,7 +606,8 @@
                   </label>
                   <details class="palette-ssh">
                     <summary>SSH mặc định</summary>
-                    <p class="hint">Gán cho mọi thiết bị thêm mới. Chỉ giữ trong trang này, không lưu.</p>
+                    <p class="hint">Gán cho mọi thiết bị thêm mới. Chỉ giữ trong trang này, không lưu.
+                      <span x-show="hasSshDefault">Để trống thì dùng SSH mặc định của project (tab Thiết bị).</span></p>
                     <input type="text" x-model="defaultSsh.username" placeholder="tài khoản" autocomplete="off" />
                     <input type="password" x-model="defaultSsh.password" placeholder="mật khẩu" autocomplete="new-password" />
                   </details>
