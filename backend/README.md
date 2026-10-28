@@ -69,15 +69,69 @@ Open <http://127.0.0.1:5000/projects>.
   SSH login, kept only in the page, is stored (encrypted) on each new device.
   *Nối dây* cables two devices with two clicks and picks the free ports itself;
   `Delete` removes the selected device or link, `Esc` leaves cabling mode.
-- **Importing from PNETLab.** *Devices → Nhập từ PNETLab* reads a lab's nodes and
-  cabling through the EVE-NG compatible API (`/api/auth/login`, `/api/labs/<lab>.unl/
-  nodes|topology`; read-only, nothing in the lab is started or edited). Pick the
+- **Importing from PNETLab.** *Devices → Nhập từ PNETLab* reads a lab's nodes,
+  networks and cabling. PNETLab 4/5 only has a session-bound API (its EVE-NG paths
+  answer "Resource not found (60038)"): the backend logs in through
+  `/store/public/auth/login/login`, reuses the lab already open in that account's
+  session or opens it with `/api/labs/session/factory/create {path}`, and reads
+  `/api/labs/session/topology`; cables come from each interface's `network_id`, and a
+  cloud network (`pnet0` = Cloud0) is never taken for a cable. EVE-NG (`/api/auth/login`,
+  `/api/labs/<lab>.unl/nodes|topology|networks`) is the fallback; *Kiểu API* forces
+  either. Leave the lab path empty to use the lab open in the session. PNETLab keeps one
+  session per account and a running lab belongs to the account that opened it, so use
+  that account (its browser tab may need to log in again). No node is started or edited. Pick the
   nodes, fix the management IPs (PNETLab does not know them), and import: devices
   come with their canvas positions and the cables between them. Only private
   lab addresses are accepted as the PNETLab URL, redirects are refused, and the
   lab password is never stored or logged. vIOS/IOL/CSR nodes become routers,
   `*l2*` nodes switches, ASAv firewalls; other templates (VPCS, Linux…) are listed
   as unsupported.
+- **Bootstrapping SSH through the console.** A node freshly started in PNETLab has
+  a blank configuration, so the address and login the import stored cannot be used
+  yet. *Khởi tạo SSH qua console* (same panel) opens each running node's telnet
+  console on the PNETLab host and sets the hostname, the management IP (on the
+  port the lab cables to **Management(Cloud0)**, or one you name; an L2 switch gets
+  it on `Vlan1`), an optional gateway, the device's saved login, RSA keys, SSH v2
+  and `transport input ssh` on the VTY lines, then `write memory` and an SSH check.
+  The preview shows the exact commands (secrets masked) and opens no console.
+  Running it is limited to the project owner or an ADMIN and is audited. A device
+  that already has another login, or another address on that interface, is left
+  untouched unless *Ghi đè* is ticked; existing RSA keys are kept. Only Cisco IOS
+  PNETLab devices are handled (ASA by hand), and the lab is never edited: nodes
+  must be running and the Cloud0 cable must already exist. After that, everything
+  goes over SSH as before.
+- **Palo Alto firewalls (PAN-OS).** Device type `paloalto_panos` (palette *Firewall Palo
+  Alto*; PNETLab templates `paloalto`/`pa-vm` import as it, role `firewall`). It is reached
+  with Netmiko's `paloalto_panos` driver over SSH. Monitoring and the read-only policy use
+  `show system info`, `show interface all`, `show interface <name>` and `show routing route`
+  (parsed into facts, interfaces with zone/router/address, and routes per virtual router);
+  backups use `show config running`. A change is PAN-OS configure-mode lines (`set`,
+  `delete`, `rename`, `move`) that go through Preview → Approve → Apply: the backend enters
+  `configure`, sends the lines and runs `commit`. If a line is rejected or the commit does not
+  report success, the candidate is reverted (`revert config`), the change fails and nothing is
+  applied. Rollback suggestions turn each `set` into a `delete` (never run automatically).
+  *Khởi tạo SSH qua console* also handles a fresh PA-VM, as a **background job**: the
+  request returns `202` with a job at once and the page polls
+  `GET /api/projects/<pid>/topology/bootstrap/jobs/<id>`, so neither a reverse proxy nor
+  Gunicorn cuts the minutes a PA-VM needs to boot (`BOOTSTRAP_PANOS_BOOT_SECONDS`, 900)
+  and commit (`PANOS_COMMIT_TIMEOUT`, 600). Jobs live in the process' memory: run one
+  Gunicorn worker with threads. The job logs in as `admin` with the factory password
+  (*Mật khẩu mặc định PAN-OS*, not stored) and answers the forced first-login change with
+  the saved SSH password, which must meet PAN-OS' rules (8+ characters, upper and lower
+  case, a digit or a special character; checked in the preview). It turns on
+  `set cli scripting-mode on`, types slowly (a serial console drops a burst, which reads as
+  "Invalid syntax"), then `configure`s: **mgmt** (default when mgmt/eth0 is cabled to
+  Cloud0) is `set deviceconfig system type static` (a PA-VM's mgmt port starts as a DHCP
+  client) then `set deviceconfig system ip-address <ip> netmask <mask>` (+ `default-gateway`)
+  and nothing else; **dataplane** (optional, e.g. `ethernet1/3`) adds an `AITOOL-MGMT`
+  interface-management-profile for ssh/https/ping, the `default` virtual router and a
+  zone. *Tài khoản PAN-OS* keeps using `admin` (default; the device's SSH login becomes
+  `admin` + the saved password) or creates the saved user (password first, then
+  `permissions role-based superuser yes`). Every step is recorded in the job and the
+  service journal with passwords masked; a failed essential step (the address) or commit
+  reverts the candidate, a failed secondary step (hostname, gateway, the extra user) is
+  reported and the commit still happens. A console answering `RFB` (VNC) stops at once
+  with "Console đang là VNC, đổi sang TELNET trong PNETLab".
 - **Discovering the real cabling.** *Khám phá (CDP/LLDP)* asks every IOS device for
   `show cdp neighbors detail` (LLDP when CDP says nothing), four at a time, read-only,
   and compares the answer with the diagram: green = matches, red dashed = designed
@@ -186,6 +240,13 @@ change their own password on the same page.
 The schema is documented, with an entity diagram, in
 [`docs/database.md`](../docs/database.md): foreign keys are enforced, enumerated
 columns have CHECK constraints, and hostnames/IPs are unique per project.
+
+### Static files and browser caches
+
+Every `url_for('static', ...)` URL carries a hash of the file's content
+(`/static/js/projects.js?v=1a2b3c4d5e6f`), and pages are sent with
+`Cache-Control: no-cache`, so after a deploy the browser loads the new scripts
+instead of a cached copy.
 
 ### Live updates and monitoring load
 
@@ -428,6 +489,9 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | PUT | `/api/projects/<pid>/topology/layout` | editor | Save node positions |
 | GET | `/api/projects/<pid>/topology/templates` | viewer | Device types for the palette |
 | POST | `/api/projects/<pid>/topology/import/pnetlab/preview` · `/import/pnetlab` | editor | Read / import a PNETLab lab (10 req/min) |
+| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab/preview` | editor | Console commands that would bootstrap SSH on PNETLab nodes (10 req/min) |
+| POST | `/api/projects/<pid>/topology/bootstrap/pnetlab` | owner | Start a background job that configures management IP + SSH on the nodes through their console (`202` + job; 10 req/min) |
+| GET | `/api/projects/<pid>/topology/bootstrap/jobs/<id>` | owner | Progress of that job: current device and phase, masked step log, results |
 | POST | `/api/projects/<pid>/topology/discover` · `/discover/apply` | editor | CDP/LLDP discovery and drift; add found cables |
 | GET | `/api/projects/<pid>/topology/design` | viewer | VLANs, access ports, SVIs, loopbacks, subinterfaces, routes, OSPF |
 | POST / DELETE | `/api/projects/<pid>/topology/design/<kind>[/<id>]` | editor | `vlans`, `access-ports`, `svis` (`ip: "auto"`), `loopbacks`, `subinterfaces`, `routes`, `ospf` |
@@ -458,7 +522,7 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET/POST | `/api/devices` | viewer / editor | List / create devices in the current project |
 | GET/PUT/DELETE | `/api/devices/<id>` | viewer / editor | Read / update / delete |
 | POST | `/api/devices/<id>/test-connection` | editor | SSH reachability check |
-| POST | `/api/governance/devices/<id>/baseline` | permitted Admin/Teacher | Capture a running-config baseline |
+| POST | `/api/devices/<id>/baseline` | permitted Admin/Teacher | Capture a running-config baseline |
 | GET | `/api/devices/<id>/status` | any | Latest monitoring snapshot |
 | GET | `/api/devices/<id>/snapshots` | any | Snapshot history |
 | POST | `/api/devices/<id>/refresh` | any | Poll now |

@@ -289,6 +289,10 @@ def test_other_admin_cancel_keeps_actor_workspace_separate_from_owner(client, ad
                                                                     access_switch, dist_switch, db, kind):
     record_id, children, owner_work = draft_with_redo(client, admin_headers, admin_user,
                                                      access_switch, dist_switch, kind)
+    # Two administrator identities (as before and after an admin transfer):
+    # lift the single-admin index in this test database only.
+    from sqlalchemy import text
+    db.session.execute(text("DROP INDEX uq_single_admin"))
     actor = User(username="cancel-actor", role="ADMIN")
     actor.set_password("FakeActorPassword_ForRAMTests123!")
     db.session.add(actor)

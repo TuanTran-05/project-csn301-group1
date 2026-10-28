@@ -878,22 +878,30 @@ def test_chat_endpoint_requires_a_message(client, admin_headers, app):
 def test_legacy_viewer_cannot_monitor_without_explicit_permissions(
     client, viewer_headers, app, dist_switch, ssh_factory
 ):
-    ssh_factory.set_client(dist_switch.hostname, default_output="ok")
+    """A Viewer only gets advice: the request never reaches a device."""
+    fake = ssh_factory.set_client(dist_switch.hostname, default_output="ok")
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=MONITOR_ACTION)
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "check ospf"}
     )
-    assert response.status_code == 403
+    # A Viewer only gets advice: nothing is run on the device.
+    assert response.status_code == 200 and response.get_json()["intent"] == "advice"
+    assert ssh_factory.get(dist_switch.hostname).calls == []
 
 
 def test_viewer_cannot_create_a_configuration_preview(
     client, viewer_headers, app, access_switch
 ):
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CONFIGURE_ACTION)
+    from network_copilot.changes.model import ChangeBatch, ChangeRequest
+
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "tao vlan 25"}
     )
-    assert response.status_code == 403
+    # A Viewer only gets advice: no change is prepared for approval.
+    assert response.status_code == 200 and response.get_json()["intent"] == "advice"
+    assert db.session.query(ChangeRequest).count() == 0
+    assert db.session.query(ChangeBatch).count() == 0
 
 
 CHAT_ACTION = {
@@ -1271,3 +1279,36 @@ def test_prompt_carries_the_acl_domain_rules(app, admin_user):
     assert "permit ip any any" in prompt
     # Blocking all icmp also blocks the reply of the allowed direction.
     assert "echo" in prompt
+
+
+def test_configure_drops_a_verification_command_off_the_allowlist(
+    app, access_switch, admin_user, ssh_factory
+):
+    action = {
+        **CONFIGURE_ACTION,
+        "operations": [{
+            **CONFIGURE_ACTION["operations"][0],
+            "verification_commands": ["show vlan brief", "show ip bgp summary"],
+        }],
+    }
+    service, _ = service_with(app, action)
+
+    result = service.handle("Tao VLAN 25 MARKETING tren ACC-SW1", admin_user.id)
+
+    assert result["batch"]["status"] == "pending_approval"
+    assert "show ip bgp summary" in result["explanation"]
+    change = db.session.query(ChangeRequest).one()
+    assert "show ip bgp summary" not in change.verification_commands
+
+
+def test_a_long_lab_script_is_accepted(client, admin_headers, app):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CHAT_ACTION)
+    response = client.post("/api/ai/chat", headers=admin_headers, json={"message": "x" * 5500})
+    assert response.status_code == 200
+
+
+def test_a_too_long_message_says_so(client, admin_headers, app):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CHAT_ACTION)
+    response = client.post("/api/ai/chat", headers=admin_headers, json={"message": "x" * 8001})
+    assert response.status_code == 422
+    assert "quá dài" in response.get_json()["message"]

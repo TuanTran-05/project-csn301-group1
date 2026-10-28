@@ -211,11 +211,27 @@ document.addEventListener("alpine:init", () => {
     },
 
     chatBatchFor(message) {
+      // A configure answer carries its batch in the payload; batches from
+      // AI Management are linked back through chat_message_id instead.
+      const carried = message.payload && message.payload.batch;
+      if (carried && carried.id != null && this.batchesById[carried.id]) {
+        return this.batchesById[carried.id];
+      }
       const messageId = this.savedChatMessageId(message);
       if (!messageId) return null;
       return Object.values(this.batchesById).find(
         (batch) => batch.chat_message_id === messageId
       ) || null;
+    },
+
+    batchResultSummary(batch) {
+      const total = (batch.changes || []).length;
+      const ok = this.batchOutcomeCount(batch, "success");
+      if (batch.status === "success") return `Đã áp dụng xong: ${ok}/${total} thiết bị thành công.`;
+      if (batch.status === "partial_success") return `Áp dụng một phần: ${ok}/${total} thiết bị thành công, xem chi tiết thiết bị lỗi bên dưới.`;
+      if (batch.status === "failed") return "Áp dụng thất bại. Xem lỗi của từng thiết bị bên dưới.";
+      if (batch.status === "running") return "Đang áp dụng cấu hình…";
+      return "";
     },
 
     canApplyChatBatch(batch) {

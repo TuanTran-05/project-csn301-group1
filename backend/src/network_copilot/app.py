@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import os
 import uuid
 
 from flask import Flask, g, jsonify, render_template, request
@@ -25,6 +27,7 @@ def create_app(config_object: type | None = None) -> Flask:
     _register_extensions(app)
     _register_models()
     _register_request_hooks(app)
+    _register_static_versioning(app)
     _register_blueprints(app)
     _register_error_handlers(app)
     _start_scheduler(app)
@@ -110,6 +113,43 @@ def _register_models() -> None:
     from .topology import model as _topology_model  # noqa: F401
 
 
+def _register_static_versioning(app: Flask) -> None:
+    """Give every static URL a content hash (?v=...) so a deploy is never hidden
+    by a browser's cached copy of an older script or stylesheet.
+
+    Pages are sent with ``Cache-Control: no-cache`` for the same reason: a
+    cached page would still point at the old URLs.
+    """
+    versions: dict[str, tuple[float, str]] = {}
+
+    def version(filename: str) -> str | None:
+        path = os.path.join(app.static_folder or "", filename)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return None
+        cached = versions.get(filename)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()[:12]
+        versions[filename] = (mtime, digest)
+        return digest
+
+    @app.url_defaults
+    def add_static_version(endpoint, values):
+        if endpoint == "static" and "filename" in values and "v" not in values:
+            digest = version(values["filename"])
+            if digest:
+                values["v"] = digest
+
+    @app.after_request
+    def no_cache_pages(response):
+        if response.mimetype == "text/html":
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 def _register_request_hooks(app: Flask) -> None:
     @app.before_request
     def assign_request_id():
@@ -169,6 +209,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(ai_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(groups_bp)
     app.register_blueprint(governance_bp)
     app.register_blueprint(learning_bp)
     init_history_extension(app)

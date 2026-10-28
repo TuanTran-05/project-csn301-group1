@@ -20,6 +20,7 @@ dependencies = [
     # those, confirmed against a real device: <5 keeps the last version with a
     # working implementation, not just the algorithm's name in a list.
     "paramiko>=3.4,<5",
+    "netmiko>=4.3,<5",
     "APScheduler>=3.10",
     "pydantic>=2.6",
     "cryptography>=42.0",

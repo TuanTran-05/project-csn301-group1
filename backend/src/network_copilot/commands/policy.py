@@ -111,6 +111,33 @@ def _ipv4_command(verb: str) -> Callable[[str], bool]:
 
     return matcher
 
+# One named interface: "loopback0", "gi0/0", "gigabitethernet0/0.10".
+_INTERFACE_NAME = re.compile(r"[a-z][a-z-]*\d+(/\d+)*(\.\d+)?")
+
+def _ping_from_source(command: str) -> bool:
+    """"ping <ipv4> source <ipv4|interface>": proves a route end to end."""
+    match = re.fullmatch(r"ping (\S+) source (\S+)", command)
+    if not match or not _is_ipv4(match.group(1)):
+        return False
+    source = match.group(2)
+    return _is_ipv4(source) or bool(_INTERFACE_NAME.fullmatch(source))
+
+
+# A VRF name as IOS accepts it; matched against the lowercased command.
+_VRF_NAME = r"[a-z0-9][a-z0-9_.-]{0,31}"
+
+
+def _vrf_command(pattern: str) -> Callable[[str], bool]:
+    """Match "<verb> vrf <name> <ipv4>"-style commands with a valid address."""
+    compiled = re.compile(pattern.replace("<vrf>", _VRF_NAME).replace("<ipv4>", r"(?P<ip>\S+)"))
+
+    def matcher(command: str) -> bool:
+        match = compiled.fullmatch(command)
+        return bool(match) and ("ip" not in match.groupdict() or _is_ipv4(match.group("ip")))
+
+    return matcher
+
+
 def _switchport_detail(command: str) -> bool:
     from ..parsers.switchports import normalize_interface_name
     match = re.fullmatch(r"show interfaces (\S+) switchport", command, re.I)
@@ -119,12 +146,25 @@ def _switchport_detail(command: str) -> bool:
     except ValueError: return False
 
 
+_PANOS_INTERFACE = re.compile(
+    r"^show interface (?:ethernet\d+/\d+(?:\.\d+)?|ae\d+(?:\.\d+)?|mgmt|management|"
+    r"loopback(?:\.\d+)?|tunnel(?:\.\d+)?|vlan(?:\.\d+)?)$"
+)
+
+
+def _panos_interface(command: str) -> bool:
+    return bool(_PANOS_INTERFACE.match(command))
+
+
 @dataclass(frozen=True)
 class CommandRule:
     name: str
     matcher: Callable[[str], bool]
     allowed_roles: frozenset[str] = ALL_ROLES
     description: str = ""
+    # Send the operator's spelling instead of the lowercased form: IOS VRF
+    # names are case-sensitive, so "ping vrf pc1" misses a VRF named PC1.
+    preserve_case: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,6 +197,14 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
     ),
     CommandRule(
         "show ip route", _exact("show ip route"), description="IPv4 routing table"
+    ),
+    *(
+        CommandRule(
+            f"show ip route {source}",
+            _exact(f"show ip route {source}"),
+            description=f"IPv4 {source} routes",
+        )
+        for source in ("static", "connected", "ospf")
     ),
     # Cisco ASA spellings. Deliberately ungated by role or device type: the
     # policy engine's question is "is this read-only and safe", which is the
@@ -195,8 +243,48 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         "show version", _exact("show version"), description="Platform and image details"
     ),
     CommandRule("show clock", _exact("show clock"), description="Device clock"),
+    # Palo Alto PAN-OS operational commands (read-only).
+    CommandRule("show system info", _exact("show system info"),
+                description="PAN-OS platform, version and management address"),
+    CommandRule("show interface all", _exact("show interface all"),
+                description="PAN-OS interfaces: link state, zone, router and address"),
+    CommandRule("show interface <interface>", _panos_interface,
+                description="One PAN-OS interface in detail"),
+    CommandRule("show routing route", _exact("show routing route"),
+                description="PAN-OS routing table (every virtual router)"),
+    CommandRule(
+        "show config running",
+        _exact("show config running"),
+        description="PAN-OS running configuration, used for pre-change backups",
+    ),
     CommandRule(
         "ping <ipv4>", _ipv4_command("ping"), description="ICMP reachability test"
+    ),
+    CommandRule(
+        "ping <ipv4> source <ipv4|interface>",
+        _ping_from_source,
+        description="ICMP reachability test from a chosen source",
+    ),
+    CommandRule("show vrf", _exact("show vrf"), description="VRFs and their interfaces"),
+    CommandRule("show ip vrf", _exact("show ip vrf"), description="IPv4 VRFs and their interfaces"),
+    CommandRule("show ip ssh", _exact("show ip ssh"), description="SSH server state"),
+    CommandRule(
+        "show ip route vrf <vrf>",
+        _vrf_command(r"show ip route vrf <vrf>"),
+        description="IPv4 routing table of one VRF",
+        preserve_case=True,
+    ),
+    CommandRule(
+        "ping vrf <vrf> <ipv4>",
+        _vrf_command(r"ping vrf <vrf> <ipv4>"),
+        description="ICMP reachability test from inside a VRF",
+        preserve_case=True,
+    ),
+    CommandRule(
+        "traceroute vrf <vrf> <ipv4>",
+        _vrf_command(r"traceroute vrf <vrf> <ipv4>"),
+        description="Hop-by-hop path trace from inside a VRF",
+        preserve_case=True,
     ),
     CommandRule(
         "traceroute <ipv4>",
@@ -260,7 +348,9 @@ class CommandPolicy:
                     matched_rule=rule.name,
                 )
             return CommandDecision(
-                allowed=True, normalized_command=normalized, matched_rule=rule.name
+                allowed=True,
+                normalized_command=" ".join(command.split()) if rule.preserve_case else normalized,
+                matched_rule=rule.name,
             )
 
         return CommandDecision(
@@ -279,7 +369,7 @@ class CommandPolicy:
 
 default_policy = CommandPolicy()
 
-AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config"})
+AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config", "show config running"})
 AI_SAFE_READ_ONLY_RULES = tuple(
     rule for rule in READ_ONLY_RULES if rule.name not in AI_EXCLUDED_RULE_NAMES
 )

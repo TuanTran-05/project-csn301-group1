@@ -42,7 +42,7 @@ from .schemas import (
     configurations_schema,
     diagram_schema,
 )
-from .topology import build_topology
+from .topology import build_addressing, build_topology
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,18 @@ Rules:
   names a network ("guest", "IT", "VLAN 60"), use that entry's "subnet" and
   never "any"; use topology.routing to choose which interface and direction
   a rule belongs on.
+- For routing requests (static routes, default routes, OSPF networks), work
+  out destination networks and next hops from context.addressing before asking
+  the user anything. Each entry in "routed_links" joins two devices: the next
+  hop from one device is the other end's IP on that link. Destination networks
+  are the "network" of every entry in "interfaces" and "routed_links" that is
+  not directly connected to the router being configured. Write "ip route
+  <network> <mask> <next-hop>" with a dotted mask. Ask for details only when
+  addressing has no path between the named devices, and then say exactly
+  which link or address is missing.
+- To make a Cisco switch port a trunk, send "switchport trunk encapsulation
+  dot1q" before "switchport mode trunk"; lab switches reject trunk mode while
+  the encapsulation is still negotiated.
 - An access list does nothing until it is applied to an interface with
   "ip access-group <name> in" or "out". A proposal that creates a list
   without applying it is incomplete.
@@ -91,6 +103,12 @@ Rules:
   For those devices, replace the IOS command with its ASA spelling from
   "asa_command_equivalents" in the context. Sending the IOS form to an ASA
   returns a syntax error, not data.
+- A device whose "device_type" is "paloalto_panos" is a Palo Alto firewall. Read
+  its state with "show system info", "show interface all" or "show routing route".
+  Configure it only with PAN-OS configure-mode lines that start with "set" or
+  "delete" (for example "set network interface ethernet ethernet1/2 layer3 ip
+  10.0.0.1/24"); never IOS syntax, and never "configure" or "commit": the backend
+  enters configure mode and commits by itself.
 - Use "monitor" when the user wants to read state. Put the read-only commands in
   "commands" and leave "verification_commands" empty.
 - Use "troubleshoot" when the user reports a problem. Put read-only diagnostic
@@ -165,7 +183,10 @@ devices shown in the supplied project topology. Use names and links from that
 topology when available. Explain relevant concepts such as VLAN, access port,
 802.1Q trunk, SVI/default gateway, static routing, OSPF, and ACL in plain
 language. If the topology lacks needed devices or links, say what is missing
-and suggest what to add. Never claim connectivity has been tested or a change
+and suggest what to add. For static routes, take destination networks and
+next hops from context.addressing and context.links (the next hop is the far
+end's IP on the routed link between two routers) instead of asking the user
+for them. Never claim connectivity has been tested or a change
 has been applied. Keep commands out of the prose; put device-specific
 configuration suggestions in the structured configurations field for the user
 to review. Do not request device counts here: the project setup flow handles
@@ -254,6 +275,7 @@ class AIService:
             "configuration_templates": [public(t) for t in db.session.query(ConfigTemplate).filter_by(enabled=True)],
             "asa_command_equivalents": ASA_COMMAND_EQUIVALENTS,
             "topology": build_topology(project_id),
+            "addressing": build_addressing(project_id),
         }
 
     def advise(self, message: str, session_id: int, project_id: int) -> dict:
@@ -291,6 +313,7 @@ class AIService:
             "addressing_pool": str(ipam.pool_for(project)),
             "devices": nodes,
             "links": links,
+            "addressing": build_addressing(project_id),
             "conversation": self._recent_history(session_id, message, project_id),
         }
         schema = {
@@ -309,7 +332,7 @@ class AIService:
                 available = {
                     node["hostname"].casefold(): node["device_type"]
                     for node in nodes
-                    if node.get("hostname") and node.get("device_type") in {"cisco_ios", "cisco_asa"}
+                    if node.get("hostname") and node.get("device_type") in {"cisco_ios", "cisco_asa", "paloalto_panos"}
                 }
                 diagram_names = {
                     value.casefold()
@@ -609,20 +632,30 @@ class AIService:
         self, action: AIAction, user_id: int | None, project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
-        operations = [
-            BatchOperation(
+        operations = []
+        dropped: list[str] = []
+        for operation in action.operations:
+            verification, rejected = self._allowed_verification(
+                operation.device_hostnames, operation.verification_commands, project_id
+            )
+            dropped.extend(rejected)
+            operations.append(BatchOperation(
                 device_hostnames=list(operation.device_hostnames),
                 execution_mode=operation.execution_mode,
                 commands=list(operation.commands),
-                verification_commands=list(operation.verification_commands),
+                verification_commands=verification,
                 group_id=group_id,
+            ))
+        explanation = action.explanation
+        if dropped:
+            explanation = (
+                f"{explanation} (Bỏ lệnh kiểm tra không nằm trong danh sách "
+                f"chỉ-đọc: {', '.join(dict.fromkeys(dropped))}.)"
             )
-            for operation in action.operations
-        ]
         batch = batch_service.create_batch_preview(
             user_id=user_id,
             operations=operations,
-            description=action.explanation[:255] if action.explanation else None,
+            description=explanation[:255] if explanation else None,
             source="ai",
             project_id=project_id,
         )
@@ -639,10 +672,40 @@ class AIService:
         )
         return {
             "intent": "configure",
-            "explanation": action.explanation,
+            "explanation": explanation,
             "batch": batch.to_dict(),
             "requires_approval": True,
         }
+
+    @staticmethod
+    def _allowed_verification(
+        hostnames, commands, project_id: int | None
+    ) -> tuple[list[str], list[str]]:
+        """Split model-proposed verification into allowed and dropped commands.
+
+        A verification command is optional, so one the read-only policy
+        refuses on any target is left out rather than failing the whole
+        preview; the batch then derives its own verification.
+        """
+        from ..commands.policy import default_policy
+        from ..changes.verification import is_sensitive_verification_command
+
+        query = db.session.query(Device.role)
+        if project_id is not None:
+            query = query.filter(Device.project_id == project_id)
+        if "*" not in hostnames:
+            query = query.filter(Device.hostname.in_(list(hostnames)))
+        roles = {role for (role,) in query.all()}
+
+        allowed, dropped = [], []
+        for command in commands:
+            if not is_sensitive_verification_command(command) and roles and all(
+                default_policy.evaluate(command, role).allowed for role in roles
+            ):
+                allowed.append(command)
+            else:
+                dropped.append(command)
+        return allowed, dropped
 
     # -- entry point ------------------------------------------------------
     def handle(
@@ -653,6 +716,11 @@ class AIService:
         project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
+        if user_id is not None:
+            # Needs the ai.use permission and counts against the daily quota.
+            from ..governance.quotas import consume_ai
+
+            consume_ai(user_id, group_id)
         action = self.interpret(
             message, user_id, session_id=session_id, project_id=project_id
         )

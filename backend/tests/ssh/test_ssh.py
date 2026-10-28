@@ -175,10 +175,47 @@ def test_test_connection_raises_on_auth_failure():
         client.test_connection()
 
 
-def test_test_connection_raises_on_refused_connection():
+def test_test_connection_raises_on_refused_connection(monkeypatch):
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
     client, _ = make_client(connect_error=ConnectionRefusedError("refused"))
     with pytest.raises(SSHConnectionError):
         client.test_connection()
+
+
+def test_a_reset_connection_is_tried_again(monkeypatch):
+    """IOSv sometimes refuses the write's session right after the backup's
+    closed; nothing was sent yet, so connecting again is safe."""
+    import paramiko
+
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
+    client, fake = make_client(
+        connect_error=paramiko.SSHException("Error reading SSH protocol banner")
+    )
+    attempts = []
+    original = fake.connect
+
+    def flaky_connect(**kwargs):
+        attempts.append(1)
+        if len(attempts) == 2:
+            fake.connect_error = None
+        return original(**kwargs)
+
+    fake.connect = flaky_connect
+    assert client.test_connection() is True
+    assert len(attempts) == 2
+
+
+def test_a_wrong_password_is_not_retried(monkeypatch):
+    import paramiko
+
+    monkeypatch.setattr("network_copilot.ssh.client._CONNECT_RETRY_SECONDS", 0)
+    client, fake = make_client(connect_error=paramiko.AuthenticationException("no"))
+    attempts = []
+    original = fake.connect
+    fake.connect = lambda **kwargs: attempts.append(1) or original(**kwargs)
+    with pytest.raises(SSHAuthenticationError):
+        client.test_connection()
+    assert len(attempts) == 1
 
 
 def test_connect_disables_key_auth():
@@ -524,3 +561,54 @@ def test_test_connection_response_never_leaks_credentials(
         f"/api/devices/{device.id}/test-connection", headers=admin_headers
     ).get_data(as_text=True)
     assert "Secret123!" not in body
+
+
+def test_a_silent_device_gets_one_empty_line_and_a_second_budget():
+    """Seen on IOSv-L2 in PNETLab: after 'vlan 10' the switch sent nothing at
+    all within command_timeout and the batch failed with an empty prompt.
+    One empty line, a no-op in config mode, brings the prompt back."""
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    client.command_timeout = 0.2
+    responses = iter(["SW#", "configure terminal\r\nSW(config)#"])
+
+    def drain(_shell):
+        if shell.sent and shell.sent[-1] == "\n":
+            return "\r\nSW(config-vlan)#"
+        if len(shell.sent) <= 1:
+            return next(responses)
+        return ""  # 'vlan 10': silence
+
+    client._drain = drain
+
+    client.run_config(["configure terminal", "vlan 10"])
+
+    assert shell.sent == ["configure terminal\n", "vlan 10\n", "\n"]
+
+
+def test_a_device_that_stays_silent_after_the_empty_line_still_fails():
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    client.command_timeout = 0.2
+    client._drain = lambda _shell: "SW#" if not shell.sent else ""
+
+    with pytest.raises(SSHCommandError, match="Unsupported interactive prompt"):
+        client.run_config(["vlan 10"])
+    assert shell.sent == ["vlan 10\n", "\n"]
+
+
+def test_a_session_closed_partway_is_reported_as_such():
+    """IOS cut the session after "hostname" disabled SSH; paramiko raised
+    OSError("Socket is closed"), which surfaced as an unexpected error."""
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    sent = shell.send
+
+    def send(data):
+        if data.startswith("hostname"):
+            raise OSError("Socket is closed")
+        return sent(data)
+
+    shell.send = send
+    with pytest.raises(SSHCommandError, match="đóng phiên SSH giữa chừng"):
+        client.run_config(["hostname EIU-R1"])

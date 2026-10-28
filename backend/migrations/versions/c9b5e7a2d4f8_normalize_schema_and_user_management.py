@@ -153,6 +153,8 @@ def downgrade():
         batch_op.drop_column("created_by_id")
         batch_op.drop_column("password_changed_at")
         batch_op.drop_column("last_login_at")
-        batch_op.drop_column("token_version")
+        # Shared with the governance branch; it drops the column once it goes.
+        if "permission_grants" not in sa.inspect(op.get_bind()).get_table_names():
+            batch_op.drop_column("token_version")
         batch_op.drop_column("email")
         batch_op.drop_column("full_name")

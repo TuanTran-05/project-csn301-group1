@@ -116,10 +116,13 @@ def test_apply_runs_backup_then_config_then_verification(
     change_service.apply(pending_change.id, admin_user.id)
 
     kinds = [call[0] for call in applying_client.calls]
-    assert kinds == ["run_show", "run_config", "run_show"]
+    # Backup, write, verify, then the post-change backup that becomes the
+    # baseline for the next preview.
+    assert kinds == ["run_show", "run_config", "run_show", "run_show"]
     assert applying_client.calls[0][1] == "show running-config"
     assert applying_client.calls[1][1] == VLAN_COMMANDS
     assert applying_client.calls[2][1] == "show vlan brief"
+    assert applying_client.calls[3][1] == "show running-config"
 
 
 def test_apply_stores_a_backup_before_the_change(
@@ -516,7 +519,8 @@ def test_backups_endpoint_lists_device_backups(
         f"/api/devices/{access_switch.id}/backups", headers=admin_headers
     )
     assert response.status_code == 200
-    assert len(response.get_json()["items"]) == 1
+    # The pre-change backup and the post-change one that refreshes the baseline.
+    assert sorted(item["reason"] for item in response.get_json()["items"]) == ["post_change", "pre_change"]
 
 
 # -- EXEC mode apply --------------------------------------------------------
@@ -539,3 +543,135 @@ def test_apply_exec_change_calls_run_exec_without_wrappers(
     change_service.apply(change.id, admin_user.id, confirm_hostname="ACC-SW1")
     assert ("run_exec", ["write memory"]) in fake.calls
     assert fake.config_batches == []
+
+
+
+def test_a_second_change_after_apply_needs_no_new_baseline(
+    app, admin_user, access_switch, applying_client
+):
+    """The post-change backup becomes the next preview's baseline, so a second
+    change applies without re-capturing the baseline by hand."""
+    from network_copilot.backups.service import capture_backup
+
+    access_switch.environment = "pnetlab"
+    access_switch.isolated = False
+    db.session.commit()
+    write = applying_client.run_config
+
+    def write_and_change_running_config(commands, **kwargs):
+        # Every write leaves a different running-config behind.
+        applying_client.responses["show running-config"] += "! " + " ".join(commands) + "\n"
+        return write(commands, **kwargs)
+
+    applying_client.run_config = write_and_change_running_config
+    capture_backup(access_switch, reason="approval_baseline")
+
+    for _ in range(2):
+        change = change_service.create_preview(
+            admin_user.id, access_switch.id, VLAN_COMMANDS, ["show vlan brief"]
+        )
+        change_service.approve(change.id, admin_user.id)
+        applied = change_service.apply(change.id, admin_user.id)
+        assert applied.status == "success", applied.error_message
+
+
+TRUNK_COMMANDS = [
+    "interface GigabitEthernet0/1",
+    "switchport mode trunk",
+    "switchport trunk allowed vlan 10,20,30",
+]
+
+
+def test_pnetlab_switch_trunk_gets_dot1q_before_trunk_mode(app, admin_user, access_switch):
+    """IOSv-L2 refuses trunk mode while the encapsulation is "Auto"."""
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    change = change_service.create_preview(admin_user.id, access_switch.id, TRUNK_COMMANDS)
+    assert change.commands == [
+        "configure terminal",
+        "interface GigabitEthernet0/1",
+        "switchport trunk encapsulation dot1q",
+        "switchport mode trunk",
+        "switchport trunk allowed vlan 10,20,30",
+        "end",
+    ]
+    # Still recognised as a trunk change, so the trunk itself is verified.
+    assert change.operation_families == ["trunk_port"]
+    assert [item["id"] for item in change.verification_plan] == ["trunk_port:GigabitEthernet0/1"]
+
+
+def test_an_explicit_trunk_encapsulation_is_kept(app, admin_user, access_switch):
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    commands = ["interface Gi0/1", "switchport trunk encapsulation isl", "switchport mode trunk"]
+    change = change_service.create_preview(admin_user.id, access_switch.id, commands)
+    assert change.commands[1:-1] == commands
+
+
+def test_other_switches_are_left_alone(app, admin_user, access_switch):
+    """A Catalyst 2960 only speaks dot1q and answers the command with
+    "% Invalid input", which would fail the whole batch."""
+    change = change_service.create_preview(admin_user.id, access_switch.id, TRUNK_COMMANDS)
+    assert change.commands[1:-1] == TRUNK_COMMANDS
+
+
+def test_renaming_a_pnetlab_device_pins_ssh_to_a_named_key_first(app, admin_user, access_switch):
+    """An unlabelled RSA key is named hostname.domain; IOS turns SSH off when
+    either changes, cutting the session the rename runs over."""
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    change = change_service.create_preview(
+        admin_user.id, access_switch.id, ["hostname EIU-S1", "ip domain-name lab.eiu.local"]
+    )
+    assert change.commands[1:3] == [
+        "crypto key generate rsa general-keys label NETAI-SSH modulus 2048",
+        "ip ssh rsa keypair-name NETAI-SSH",
+    ]
+    assert change.commands[3:5] == ["hostname EIU-S1", "ip domain-name lab.eiu.local"]
+
+
+def test_a_device_already_pinned_to_a_key_is_renamed_as_asked(app, admin_user, access_switch):
+    access_switch.environment = "pnetlab"
+    db.session.add(ConfigBackup(
+        device_id=access_switch.id, reason="approval_baseline",
+        running_config="hostname ACC-SW1\nip ssh rsa keypair-name NETAI-SSH\n",
+    ))
+    db.session.commit()
+    change = change_service.create_preview(admin_user.id, access_switch.id, ["hostname EIU-S1"])
+    assert change.commands == ["configure terminal", "hostname EIU-S1", "end"]
+
+
+def test_verification_is_read_again_while_a_trunk_comes_up(
+    app, admin_user, pending_change, applying_client
+):
+    """Right after "switchport mode trunk" the trunk table is still empty; a
+    second look a few seconds later finds it."""
+    app.config.update(VERIFICATION_RETRIES=2, VERIFICATION_RETRY_SECONDS=0)
+    applying_client.responses["show vlan brief"] = ""
+    reads = []
+    show = applying_client.run_show
+
+    def settling_show(command):
+        if command == "show vlan brief":
+            reads.append(command)
+            if len(reads) == 2:
+                applying_client.responses["show vlan brief"] = VLAN_AFTER
+        return show(command)
+
+    applying_client.run_show = settling_show
+    change_service.approve(pending_change.id, admin_user.id)
+    result = change_service.apply(pending_change.id, admin_user.id)
+
+    assert result.status == "success", result.error_message
+    assert len(reads) == 2
+
+
+def test_a_change_that_never_verifies_still_fails_after_the_retries(
+    app, admin_user, pending_change, applying_client
+):
+    app.config.update(VERIFICATION_RETRIES=2, VERIFICATION_RETRY_SECONDS=0)
+    applying_client.responses["show vlan brief"] = ""
+    change_service.approve(pending_change.id, admin_user.id)
+    result = change_service.apply(pending_change.id, admin_user.id)
+    assert result.status == "failed"
+    assert applying_client.show_commands.count("show vlan brief") == 3

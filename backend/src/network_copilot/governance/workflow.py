@@ -7,6 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from ..audit.model import AuditLog
+from ..auth.model import User
 from ..changes.model import ChangeRequest
 from ..devices.model import Device
 from ..errors import ConflictError, ForbiddenError, InvalidStateError, NotFoundError, PolicyViolationError, ValidationError

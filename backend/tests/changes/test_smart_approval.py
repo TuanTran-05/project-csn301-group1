@@ -6,6 +6,7 @@ from network_copilot.errors import ForbiddenError
 from network_copilot.extensions import db
 from network_copilot.groups.model import Group
 from network_copilot.governance.access import issue_grant
+from network_copilot.projects.model import Project, ProjectMember
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +48,16 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
 ):
     student = _user("student", Role.STUDENT)
     _group_with_student_and_device(student, access_switch, auto_approve=True)
+    # The default lab is view-only for everyone but Admin, so the exercise
+    # runs in a classroom project the student can edit.
+    classroom = Project(name="Classroom", management_network="172.16.3.0/24",
+                        environment="pnetlab")
+    db.session.add(classroom)
+    db.session.flush()
+    access_switch.project_id = classroom.id
+    db.session.add(ProjectMember(project_id=classroom.id, user_id=student.id,
+                                 access="editor"))
+    db.session.commit()
     ssh_factory.set_client(
         access_switch.hostname,
         responses={
@@ -56,6 +67,7 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
         config_output="",
     )
     headers = {
+        "X-Project-Id": str(classroom.id),
         "Authorization": "Bearer "
         + client.post(
             "/api/auth/login",
@@ -72,7 +84,7 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
             "verification_commands": ["show clock"],
         },
     )
-    assert preview.status_code == 201
+    assert preview.status_code == 201, preview.get_json()
     change_id = preview.get_json()["id"]
 
     response = client.post(f"/api/changes/{change_id}/apply", headers=headers)
@@ -83,6 +95,7 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
     assert [call[0] for call in ssh_factory.get(access_switch.hostname).calls] == [
         "run_show",
         "run_config",
+        "run_show",
         "run_show",
     ]
 
@@ -173,5 +186,5 @@ def test_teacher_can_toggle_auto_approval_for_managed_group(
         json={"is_auto_approve": True},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     assert response.get_json()["is_auto_approve"] is True

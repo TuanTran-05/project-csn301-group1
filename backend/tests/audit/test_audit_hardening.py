@@ -66,7 +66,15 @@ def test_core_redaction_masks_encoded_quoted_and_vendor_secrets(template):
 
 def test_core_preview_audit_masks_unknown_commands(client, admin_headers, access_switch, db):
     fake = "FakeCommandCredential_NotForUse123"
-    created = preview(client, admin_headers, access_switch, fake)
+    # The secret sits only in the command; the free-text description is an
+    # operator-chosen label that the audit trail keeps on purpose.
+    response = client.post("/api/changes/preview", headers=admin_headers, json={
+        "device_id": access_switch.id,
+        "commands": ["interface Gi0/2", "description " + fake],
+        "description": "audit masking check",
+    })
+    assert response.status_code == 201, response.get_json()
+    created = response.get_json()
     events = db.session.query(AuditLog).filter_by(action="change.preview").all()
     assert events
     assert all(fake not in json.dumps(event.to_dict()) for event in events)

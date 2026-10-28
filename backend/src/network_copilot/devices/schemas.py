@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 HOSTNAME_PATTERN = re.compile(r"^[A-Z0-9-]+$")
 
-DeviceType = Literal["cisco_ios", "cisco_asa", "generic"]
+DeviceType = Literal["cisco_ios", "cisco_asa", "paloalto_panos", "generic"]
 DeviceRole = Literal[
     "isp", "firewall", "core", "distribution", "access", "dmz", "management",
     "host", "server", "internet", "wireless", "segment",

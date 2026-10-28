@@ -931,13 +931,15 @@ document.addEventListener("alpine:init", () => {
 
     openPnet() {
       this.pnet = {
-        form: { url: "", username: "", password: "", lab: "", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        form: { url: "", username: "", password: "", lab: "", api_mode: "auto", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        api: null,
         nodes: [],
         links: [],
         loading: false,
         loaded: false,
         error: "",
         result: null,
+        boot: { gateway: "", overwrite: false, default_password: "admin", panos_account: "admin", devices: [], loaded: false, loading: false, error: "", result: null, job: null },
       };
     },
 
@@ -947,7 +949,10 @@ document.addEventListener("alpine:init", () => {
 
     _pnetSource() {
       const f = this.pnet.form;
-      return { url: f.url, username: f.username, password: f.password, lab: f.lab, verify_tls: !!f.verify_tls };
+      return {
+        url: f.url, username: f.username, password: f.password, lab: f.lab,
+        api_mode: f.api_mode || "auto", verify_tls: !!f.verify_tls,
+      };
     },
 
     async pnetPreview() {
@@ -962,6 +967,7 @@ document.addEventListener("alpine:init", () => {
         });
         pnet.nodes = data.nodes.map((n) => ({ ...n, selected: n.supported && !n.exists }));
         pnet.links = data.links;
+        pnet.api = data.api || null;
         pnet.loaded = true;
       } catch (err) {
         pnet.error = this.describeError(err);
@@ -998,6 +1004,83 @@ document.addEventListener("alpine:init", () => {
         pnet.error = this.describeError(err);
       } finally {
         pnet.loading = false;
+      }
+    },
+
+    // Console bootstrap: put the management IP and SSH from the database onto
+    // freshly started PNETLab nodes, through the console PNETLab serves.
+    _pnetBootBody() {
+      const boot = this.pnet.boot;
+      const body = { ...this._pnetSource(), overwrite: !!boot.overwrite };
+      if (boot.gateway.trim()) body.gateway = boot.gateway.trim();
+      if (boot.default_password) body.default_password = boot.default_password;
+      body.panos_account = boot.panos_account || "admin";
+      if (boot.loaded) {
+        body.devices = boot.devices
+          .filter((d) => d.selected)
+          .map((d) => ({ device_id: d.device_id, interface: d.interface || null }));
+      }
+      return body;
+    },
+
+    async pnetBootPreview() {
+      const boot = this.pnet.boot;
+      boot.error = "";
+      boot.result = null;
+      boot.loading = true;
+      try {
+        const body = this._pnetBootBody();
+        delete body.devices;
+        const data = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab/preview"), {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        boot.devices = data.devices.map((d) => ({ ...d, selected: d.ready, open: false }));
+        boot.loaded = true;
+      } catch (err) {
+        boot.error = this.describeError(err);
+      } finally {
+        boot.loading = false;
+      }
+    },
+
+    get pnetBootSelectedCount() {
+      return this.pnet && this.pnet.boot.loaded ? this.pnet.boot.devices.filter((d) => d.selected).length : 0;
+    },
+
+    async pnetBootRun() {
+      const boot = this.pnet.boot;
+      const count = this.pnetBootSelectedCount;
+      if (!count) return;
+      if (!window.confirm(`Cấu hình IP quản trị, tài khoản và SSH trên ${count} thiết bị qua console PNETLab? Cấu hình được ghi thẳng lên thiết bị (write memory với Cisco, commit với PAN-OS).`)) return;
+      boot.error = "";
+      boot.loading = true;
+      boot.result = null;
+      boot.job = null;
+      // The work runs as a background job on the server (a PA-VM boots and
+      // commits for minutes); the page only polls its progress, so no request
+      // lives long enough for a proxy to cut it.
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      try {
+        const started = await this.authFetch(this.topologyUrl("/bootstrap/pnetlab"), {
+          method: "POST",
+          body: JSON.stringify(this._pnetBootBody()),
+        });
+        let job = started.job;
+        boot.job = job;
+        while (job.status === "queued" || job.status === "running") {
+          await sleep(2000);
+          if (!this.pnet || this.pnet.boot !== boot) return; // panel closed
+          job = (await this.authFetch(this.topologyUrl(`/bootstrap/jobs/${job.id}`))).job;
+          boot.job = job;
+        }
+        if (job.status === "error") boot.error = job.message || "Job khởi tạo bị lỗi.";
+        boot.result = { devices: job.devices };
+        await this.loadTopology();
+      } catch (err) {
+        boot.error = this.describeError(err);
+      } finally {
+        boot.loading = false;
       }
     },
 
@@ -1314,7 +1397,7 @@ document.addEventListener("alpine:init", () => {
       this.deviceUndoable = false;
       this.baselineBusy[deviceId] = true;
       try {
-        await this.authFetch(`/api/governance/devices/${deviceId}/baseline`, {
+        await this.authFetch(`/api/devices/${deviceId}/baseline`, {
           method: "POST",
         });
         this.deviceNotice = "Đã lưu cấu hình nền cho thiết bị. AI Management có thể dùng nó để kiểm tra trước khi áp dụng.";

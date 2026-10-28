@@ -91,7 +91,7 @@ class NetworkDiagram(BaseModel):
 
 class DeviceConfiguration(BaseModel):
     hostname: str = Field(min_length=1, max_length=64)
-    device_type: Literal["cisco_ios", "cisco_asa"]
+    device_type: Literal["cisco_ios", "cisco_asa", "paloalto_panos"]
     commands: list[str] = Field(min_length=1, max_length=120)
 
     @model_validator(mode="after")
@@ -184,7 +184,7 @@ def configurations_schema() -> dict:
             "required": ["hostname", "device_type", "commands"],
             "properties": {
                 "hostname": {"type": "string"},
-                "device_type": {"type": "string", "enum": ["cisco_ios", "cisco_asa"]},
+                "device_type": {"type": "string", "enum": ["cisco_ios", "cisco_asa", "paloalto_panos"]},
                 "commands": {"type": "array", "items": {"type": "string"}},
             },
         },
@@ -294,10 +294,14 @@ def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
     }
 
 
+# Long enough for a whole lab script pasted as one request.
+MAX_CHAT_MESSAGE_LENGTH = 8000
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
     session_id: int | None = None
     group_id: int | None = None
     # "design": answer with a whole L2/L3 design for the project to apply.

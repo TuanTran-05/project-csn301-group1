@@ -172,13 +172,22 @@
               <template x-if="pnet">
                 <div class="card">
                   <h4>Nhập thiết bị từ PNETLab</h4>
-                  <p class="hint">Đọc danh sách node và dây nối của một lab (API tương thích EVE-NG). Chỉ đọc: không bật/tắt hay sửa lab.
-                    Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.</p>
+                  <p class="hint">Đọc danh sách node, mạng và dây nối của một lab qua API phiên của PNETLab (hoặc API kiểu EVE-NG).
+                    Không bật/tắt hay sửa node. Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.
+                    PNETLab chỉ giữ một phiên cho mỗi tài khoản và lab đang chạy thuộc tài khoản đã mở nó: dùng đúng tài khoản đó;
+                    tab PNETLab của tài khoản này có thể bị đăng xuất, khi đó chỉ cần đăng nhập lại.</p>
                   <form class="form-grid" @submit.prevent="pnetPreview()">
                     <label>URL PNETLab <input type="text" x-model="pnet.form.url" required placeholder="http://172.16.0.5" /></label>
                     <label>Tài khoản <input type="text" x-model="pnet.form.username" required autocomplete="off" /></label>
                     <label>Mật khẩu <input type="password" x-model="pnet.form.password" required autocomplete="new-password" /></label>
-                    <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" required placeholder="/Course/Lab1.unl" /></label>
+                    <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" placeholder="để trống: lab đang mở trong phiên" /></label>
+                    <label>Kiểu API
+                      <select x-model="pnet.form.api_mode">
+                        <option value="auto">Tự động (phiên PNETLab, rồi EVE-NG)</option>
+                        <option value="session">PNETLab – API phiên</option>
+                        <option value="eveng">EVE-NG – API theo đường dẫn</option>
+                      </select>
+                    </label>
                     <label class="check"><input type="checkbox" x-model="pnet.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
                     <div class="form-actions">
                       <button type="submit" class="primary-btn" :disabled="pnet.loading">Tải danh sách node</button>
@@ -203,6 +212,7 @@
                         </template>
                       </tbody>
                     </table>
+                    <p class="hint" x-show="pnet.api">Đọc qua: <strong x-text="pnet.api === 'session' ? 'API phiên PNETLab' : 'API EVE-NG'"></strong></p>
                     <p class="hint">Phát hiện <span x-text="pnet.links.length"></span> dây nối giữa hai node. PNETLab không biết IP quản trị của
                       thiết bị: IP gợi ý chỉ là chỗ trống trong dải của project, hãy nhập IP thật đã cấu hình trên thiết bị.</p>
                     <form class="form-grid" @submit.prevent="pnetImport()">
@@ -225,6 +235,85 @@
                       </p>
                     </div>
                   </div>
+
+                  <div class="pnet-boot" x-show="pnet.form.url">
+                    <h4>Khởi tạo SSH qua console</h4>
+                    <p class="hint">Với firewall Palo Alto: hệ thống chạy job nền, chờ PAN-OS khởi động (tới 15 phút), đăng nhập admin/mật khẩu mặc định,
+                      đổi mật khẩu lần đầu thành mật khẩu SSH đã lưu (≥ 8 ký tự, có chữ hoa, chữ thường, số hoặc ký tự đặc biệt), đặt IP trên cổng
+                      mgmt (mặc định khi mgmt nối Cloud0) hoặc cổng dataplane (vd. ethernet1/3, kèm interface-management-profile) rồi commit.
+                      Bước phụ lỗi (hostname, gateway, tạo user) được ghi lại và vẫn commit; console phải là TELNET, không phải VNC.</p>
+                    <p class="hint">Node mới trong PNETLab chưa có IP quản trị và SSH. Bước này mở console telnet của từng node
+                      (đang chạy) qua máy PNETLab, đặt IP quản trị và tài khoản SSH đã lưu cho thiết bị, bật SSH rồi kiểm tra lại bằng SSH.
+                      Cổng quản trị là cổng nối vào mạng <strong>Management(Cloud0)</strong> trong lab, hoặc cổng bạn nhập.</p>
+                    <form class="form-grid" @submit.prevent="pnetBootPreview()">
+                      <label>Gateway (tuỳ chọn) <input type="text" x-model="pnet.boot.gateway" :placeholder="'trong ' + project.management_network" /></label>
+                      <label class="check"><input type="checkbox" x-model="pnet.boot.overwrite" /> Ghi đè thiết bị đã có tài khoản/IP khác</label>
+                      <label>Mật khẩu mặc định PAN-OS <input type="password" x-model="pnet.boot.default_password" autocomplete="new-password" title="Dùng một lần để đăng nhập firewall mới (admin/admin); không được lưu" /></label>
+                      <label>Tài khoản PAN-OS
+                        <select x-model="pnet.boot.panos_account">
+                          <option value="admin">Dùng admin (mật khẩu = mật khẩu SSH đã lưu)</option>
+                          <option value="create">Tạo user SSH đã lưu (superuser)</option>
+                        </select>
+                      </label>
+                      <div class="form-actions">
+                        <button type="submit" :disabled="pnet.boot.loading">Xem lệnh khởi tạo</button>
+                      </div>
+                    </form>
+                    <p class="error-text" x-show="pnet.boot.error" x-text="pnet.boot.error"></p>
+                    <div x-show="pnet.boot.loaded">
+                      <table class="data-table">
+                        <thead><tr><th></th><th>Thiết bị</th><th>IP quản trị</th><th>Cổng quản trị</th><th>Console</th><th></th></tr></thead>
+                        <tbody>
+                          <template x-for="d in pnet.boot.devices" :key="d.device_id">
+                            <tr :class="{ muted: !d.ready }">
+                              <td><input type="checkbox" x-model="d.selected" :disabled="!d.ready" /></td>
+                              <td x-text="d.hostname || d.device_id"></td>
+                              <td x-text="d.management_ip || ''"></td>
+                              <td><input type="text" x-model="d.interface" :disabled="!d.ready" placeholder="e0/3" maxlength="64" /></td>
+                              <td x-text="d.console || ''"></td>
+                              <td>
+                                <span class="hint" x-show="!d.ready" x-text="d.message"></span>
+                                <button type="button" class="link-btn" x-show="d.ready" @click="d.open = !d.open" x-text="d.open ? 'Ẩn lệnh' : 'Xem lệnh'"></button>
+                                <pre x-show="d.open" x-text="(d.commands || []).join('\n')"></pre>
+                              </td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                      <p class="hint" x-show="!isOwner">Chỉ chủ project hoặc ADMIN được chạy khởi tạo.</p>
+                      <div class="form-actions" x-show="isOwner">
+                        <button type="button" class="primary-btn" @click="pnetBootRun()" :disabled="pnet.boot.loading || !pnetBootSelectedCount">
+                          <span x-text="pnet.boot.loading ? 'Đang chạy job khởi tạo…' : 'Khởi tạo ' + pnetBootSelectedCount + ' thiết bị'"></span>
+                        </button>
+                      </div>
+                      <div x-show="pnet.boot.job && pnet.boot.loading">
+                        <p class="hint" x-show="pnet.boot.job && pnet.boot.job.current">
+                          <strong x-text="pnet.boot.job && pnet.boot.job.current ? pnet.boot.job.current.hostname : ''"></strong>:
+                          <span x-text="pnet.boot.job && pnet.boot.job.current ? (pnet.boot.job.current.message || pnet.boot.job.current.phase || '') : ''"></span>
+                        </p>
+                      </div>
+                      <details x-show="pnet.boot.job && pnet.boot.job.log && pnet.boot.job.log.length" class="boot-log">
+                        <summary>Nhật ký từng bước (<span x-text="pnet.boot.job ? pnet.boot.job.log.length : 0"></span>)</summary>
+                        <template x-for="(s, i) in (pnet.boot.job ? pnet.boot.job.log : [])" :key="i">
+                          <div :class="s.ok ? 'ok-text' : 'error-text'">
+                            <span x-text="(s.ok ? '✓ ' : '✗ ') + (s.hostname ? s.hostname + ': ' : '') + s.command + (s.note ? ' (' + s.note + ')' : '')"></span>
+                            <pre x-show="!s.ok && s.output" x-text="s.output"></pre>
+                          </div>
+                        </template>
+                      </details>
+                      <div x-show="pnet.boot.result">
+                        <template x-for="item in (pnet.boot.result ? pnet.boot.result.devices : [])" :key="item.device_id">
+                          <p :class="item.status === 'ok' ? 'ok-text' : 'hint'">
+                            <strong x-text="item.hostname || item.device_id"></strong>: <span x-text="item.status"></span>
+                            <span x-text="item.message ? '— ' + item.message : ''"></span>
+                            <span x-text="item.errors ? ' (' + item.errors.join('; ') + ')' : ''"></span>
+                            <span x-text="item.warnings ? ' — bước phụ lỗi: ' + item.warnings.join('; ') : ''"></span>
+                            <span x-text="item.credential_user ? ' — SSH từ nay dùng tài khoản ' + item.credential_user : ''"></span>
+                          </p>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </template>
               <p class="error-text" x-show="deviceError" x-text="deviceError"></p>
@@ -245,6 +334,7 @@
                   <select x-model="deviceForm.device_type">
                     <option value="cisco_ios">Cisco IOS</option>
                     <option value="cisco_asa">Cisco ASA</option>
+                    <option value="paloalto_panos">Palo Alto PAN-OS</option>
                   </select>
                 </label>
                 <label>Vai trò

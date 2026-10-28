@@ -44,6 +44,11 @@ if _LEGACY_HOST_KEY not in paramiko.Transport._preferred_keys:
         _LEGACY_HOST_KEY,
     )
 
+# A refused or reset connection is tried this many times in all, waiting
+# _CONNECT_RETRY_SECONDS longer before each new attempt.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_SECONDS = 2
+
 # How long to keep reading an interactive shell after the last byte arrived.
 _IDLE_SECONDS = 0.2
 _POLL_SECONDS = 0.05
@@ -95,6 +100,23 @@ class SSHClient:
 
     # -- connection --------------------------------------------------------
     def _connect(self):
+        """Open a session, retrying a refused or reset connection.
+
+        Every backup, write and verification opens its own session, and IOSv
+        sometimes refuses one that follows the previous close too closely
+        ("Error reading SSH protocol banner", connection reset). Nothing has
+        been sent yet, so trying again is safe; authentication failures and
+        timeouts are not retried.
+        """
+        for attempt in range(_CONNECT_ATTEMPTS):
+            try:
+                return self._connect_once()
+            except SSHConnectionError:
+                if attempt + 1 == _CONNECT_ATTEMPTS:
+                    raise
+                time.sleep(_CONNECT_RETRY_SECONDS * (attempt + 1))
+
+    def _connect_once(self):
         client = self._client_factory()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -172,6 +194,15 @@ class SSHClient:
             raise SSHCommandError(
                 f"Command failed on {self.target.host}."
             ) from exc
+        except OSError as exc:
+            # "Socket is closed": the device dropped the session partway, e.g.
+            # IOS disabling SSH when the hostname its key is named after
+            # changes. Commands sent before that point were applied.
+            raise SSHCommandError(
+                "thiết bị đã đóng phiên SSH giữa chừng; các lệnh gửi trước đó đã được áp dụng. "
+                "Nếu batch đổi hostname hoặc ip domain-name, SSH có thể đã bị tắt: "
+                "vào console để kiểm tra."
+            ) from exc
         finally:
             if shell is not None:
                 self._safe_close(shell)
@@ -238,6 +269,15 @@ class SSHClient:
             raise SSHCommandError(
                 f"Command failed on {self.target.host}."
             ) from exc
+        except OSError as exc:
+            # "Socket is closed": the device dropped the session partway, e.g.
+            # IOS disabling SSH when the hostname its key is named after
+            # changes. Commands sent before that point were applied.
+            raise SSHCommandError(
+                "thiết bị đã đóng phiên SSH giữa chừng; các lệnh gửi trước đó đã được áp dụng. "
+                "Nếu batch đổi hostname hoặc ip domain-name, SSH có thể đã bị tắt: "
+                "vào console để kiểm tra."
+            ) from exc
         finally:
             if shell is not None:
                 self._safe_close(shell)
@@ -269,6 +309,7 @@ class SSHClient:
         segment = self._drain(shell)
         normalized = " ".join(command.split()).lower()
         deadline = time.monotonic() + self.command_timeout
+        nudged = False
 
         while not _READY_PROMPT.search(segment.rstrip()):
             tail = segment.rstrip()
@@ -296,7 +337,16 @@ class SSHClient:
                 segment += self._drain(shell)
                 continue
 
-            if time.monotonic() >= deadline:
+            expired = time.monotonic() >= deadline
+            if expired and not segment and not nudged:
+                # Not one byte back, not even the echo: the device is still
+                # busy (IOSv-L2 writing vlan.dat for a first VLAN) or its
+                # prompt was lost. An empty line is a no-op in every mode and
+                # brings the prompt back; give it one more full budget.
+                shell.send("\n")
+                nudged = True
+                deadline = time.monotonic() + self.command_timeout
+            elif expired:
                 raise SSHCommandError(
                     f"Unsupported interactive prompt from {self.target.host} "
                     f"after '{command}': {tail!r}"
@@ -377,6 +427,19 @@ def build_client_for_device(device):
         enable_secret=credential.enable_secret,
         device_type=device.device_type,
     )
+    if device.device_type == "paloalto_panos":
+        from .panos import PanosClient
+
+        return PanosClient(
+            target,
+            connect_timeout=current_app.config.get(
+                "SSH_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT
+            ),
+            command_timeout=current_app.config.get(
+                "SSH_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT
+            ),
+            commit_timeout=current_app.config.get("PANOS_COMMIT_TIMEOUT", 600),
+        )
     return SSHClient(
         target,
         connect_timeout=current_app.config.get(

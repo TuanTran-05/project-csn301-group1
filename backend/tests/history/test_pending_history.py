@@ -222,6 +222,10 @@ def test_permissions_owner_and_default_topology(client, admin_headers, viewer_he
     created = preview(client, admin_headers, access_switch)
     from network_copilot.auth.model import User
     from network_copilot.auth.service import issue_token
+    # Two administrator identities (as before and after an admin transfer):
+    # lift the single-admin index in this test database only.
+    from sqlalchemy import text
+    db.session.execute(text("DROP INDEX uq_single_admin"))
     other = User(username="other-pending", role="ADMIN")
     other.set_password("OtherPendingTestPassword!")
     db.session.add(other)

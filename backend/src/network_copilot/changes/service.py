@@ -170,6 +170,69 @@ def validate_execution_mode(commands: list[str], execution_mode: str) -> None:
         raise ValidationError("This command requires EXEC mode; it cannot run in config mode.")
 
 
+_TRUNK_MODE = re.compile(r"^switchport\s+mode\s+trunk$", re.I)
+_TRUNK_ENCAPSULATION = re.compile(r"^switchport\s+trunk\s+encapsulation\s+", re.I)
+_INTERFACE_BLOCK = re.compile(r"^interface\s+\S+", re.I)
+
+
+def _with_trunk_encapsulation(commands: list[str]) -> list[str]:
+    """Set dot1q before "switchport mode trunk" where the block does not.
+
+    PNETLab's Cisco switch images (IOSv-L2, IOL-L2) also speak ISL, so their
+    ports start at "negotiate" and refuse trunk mode with 'Command rejected:
+    trunk encapsulation is "Auto"' until an encapsulation is set.
+    """
+    result: list[str] = []
+    encapsulation_set = False
+    for command in commands:
+        text = command.strip()
+        if _INTERFACE_BLOCK.match(text):
+            encapsulation_set = False
+        elif _TRUNK_ENCAPSULATION.match(text):
+            encapsulation_set = True
+        elif _TRUNK_MODE.match(text) and not encapsulation_set:
+            result.append("switchport trunk encapsulation dot1q")
+            encapsulation_set = True
+        result.append(command)
+    return result
+
+
+_IDENTITY_CHANGE = re.compile(r"^(?:hostname|ip\s+domain[-\s]name)\s+\S+", re.I)
+_SSH_KEYPAIR_PINNED = re.compile(r"(?m)^ip ssh rsa keypair-name\s+\S+")
+
+
+def _with_pinned_ssh_key(device: Device, commands: list[str]) -> list[str]:
+    """Keep SSH alive across a hostname or domain-name change.
+
+    An RSA key generated without a label is named hostname.domain, and IOS
+    disables SSH the moment either changes; the session the change runs over
+    is cut ("Socket is closed") and the device is unreachable until someone
+    fixes it on the console. When the device's newest backup shows SSH is not
+    yet pinned to a named key, generate one under the bootstrap's label and
+    pin SSH to it before anything is renamed.
+    """
+    if not any(_IDENTITY_CHANGE.match(command.strip()) for command in commands):
+        return commands
+    if any(command.strip().lower().startswith("ip ssh rsa keypair-name") for command in commands):
+        return commands
+    from ..backups.model import ConfigBackup
+    from ..topology.bootstrap import SSH_KEY_LABEL
+
+    backup = (
+        db.session.query(ConfigBackup)
+        .filter_by(device_id=device.id)
+        .order_by(ConfigBackup.id.desc())
+        .first()
+    )
+    if backup is not None and _SSH_KEYPAIR_PINNED.search(backup.running_config or ""):
+        return commands
+    return [
+        f"crypto key generate rsa general-keys label {SSH_KEY_LABEL} modulus 2048",
+        f"ip ssh rsa keypair-name {SSH_KEY_LABEL}",
+        *commands,
+    ]
+
+
 def _wrap(commands: list[str]) -> list[str]:
     """Strip any caller-supplied wrappers and apply exactly one config block."""
     body = [command for command in commands if not _is_wrapper(command)]
@@ -247,6 +310,46 @@ def derive_rollback_commands(commands: list[str]) -> list[str]:
     return rollback
 
 
+# -- Palo Alto PAN-OS ------------------------------------------------------
+
+PANOS_CONFIG_ENTER = "configure"
+PANOS_COMMIT = "commit"
+_PANOS_LINE = re.compile(r"^(?:set|delete|rename|move)\s+\S", re.I)
+
+
+def _panos_body(commands: list[str]) -> list[str]:
+    from ..ssh.panos import panos_body
+
+    body = panos_body(commands)
+    if not body:
+        raise ValidationError("The change contains no PAN-OS configuration lines.")
+    bad = next((line for line in body if not _PANOS_LINE.match(line)), None)
+    if bad is not None:
+        raise ValidationError(
+            "PAN-OS changes are configure-mode lines starting with set, delete, "
+            "rename or move; configure and commit are added by the backend.",
+            {"command": bad},
+        )
+    return body
+
+
+def derive_panos_rollback(body: list[str]) -> list[str]:
+    """Best-effort inverse for PAN-OS: a set is undone by deleting that path.
+
+    A delete cannot be inverted from the command alone; the pre-change backup
+    (``show config running``) holds what was there.
+    """
+    rollback = [PANOS_CONFIG_ENTER]
+    for line in body:
+        verb, _, rest = line.partition(" ")
+        if verb.lower() == "set":
+            rollback.append(f"delete {rest}")
+        else:
+            rollback.append(f"# restore what '{line}' removed or moved from the pre-change backup")
+    rollback.append(PANOS_COMMIT)
+    return rollback
+
+
 def classify_risk(
     commands: list[str], device: Device, requires_confirmation: bool = False
 ) -> str:
@@ -263,6 +366,12 @@ def build_warnings(
     commands: list[str], device: Device, requires_confirmation: bool = False
 ) -> list[str]:
     warnings: list[str] = []
+    if device.device_type == "paloalto_panos":
+        warnings.append(
+            "PAN-OS: the lines are entered in configure mode and made live by commit. "
+            "If a line is rejected or the commit fails, the candidate configuration "
+            "is reverted and nothing is applied."
+        )
     if requires_confirmation:
         warnings.append(
             "This change contains a command flagged as dangerous. Applying it "
@@ -309,8 +418,22 @@ def prepare_change(
 ) -> ChangeRequest:
     """Validate and build a ChangeRequest. Does not add/commit it or audit."""
     device_service.ensure_deployable(device)
+    panos = device.device_type == "paloalto_panos"
+    if panos:
+        if execution_mode != "config":
+            raise ValidationError(
+                "PAN-OS changes run in configure mode and end with commit; "
+                "EXEC mode is not supported."
+            )
+        commands = _panos_body(commands)
     body, requires_confirmation = validate_commands(commands, device)
-    validate_execution_mode(body, execution_mode)
+    if not panos:
+        validate_execution_mode(body, execution_mode)
+    if device.device_type == "cisco_ios" and device.environment == "pnetlab" and execution_mode == "config":
+        body = _with_trunk_encapsulation(body)
+        # PNETLab nodes got their SSH key from the console bootstrap, which
+        # before SSH_KEY_LABEL generated it unlabelled.
+        body = _with_pinned_ssh_key(device, body)
 
     if execution_mode == "exec" and any(_is_wrapper(command) for command in body):
         raise ValidationError(
@@ -318,7 +441,10 @@ def prepare_change(
             "'configure terminal' are not permitted."
         )
 
-    canonical = _wrap(body) if execution_mode == "config" else body
+    if panos:
+        canonical = [PANOS_CONFIG_ENTER, *body, PANOS_COMMIT]
+    else:
+        canonical = _wrap(body) if execution_mode == "config" else body
     assessment = assess_change(body, execution_mode, device.device_type)
 
     backend_save = execution_mode == "exec" and canonical in _EXEC_WRITE_COMMANDS
@@ -342,7 +468,7 @@ def prepare_change(
         target_ssh_port=device.ssh_port,
         target_device_type=device.device_type,
         verification_commands=verification,
-        rollback_commands=derive_rollback_commands(canonical),
+        rollback_commands=derive_panos_rollback(body) if panos else derive_rollback_commands(canonical),
         warnings=build_warnings(canonical, device, requires_confirmation),
         capability_tier=assessment.capability_tier,
         verification_level=assessment.verification_level,
@@ -364,6 +490,26 @@ def prepare_change(
     change.assignment_id = assignment_id
     workflow.bind(change, user_id, device, group_id)
     return change
+
+
+def _refresh_baseline(device: Device, change: ChangeRequest, client) -> None:
+    """Store the configuration the write left behind as the device's baseline.
+
+    The next preview freezes the hash of the newest backup, so without this
+    it would hold the pre-change config and its apply would refuse with
+    "Running configuration changed since preview". A failed read only costs
+    that convenience; the change itself already happened.
+    """
+    from ..backups.service import capture_backup
+    from ..ssh.exceptions import SSHError
+    from ..ssh.messages import friendly_error
+
+    try:
+        capture_backup(device, change_request_id=change.id, reason="post_change", client=client)
+    except SSHError as exc:
+        logger.warning(
+            "Post-change backup of %s failed: %s", device.hostname, friendly_error(exc, device.hostname)
+        )
 
 
 def create_preview(
@@ -417,7 +563,9 @@ def create_preview(
         result="success",
         user_id=user_id,
         device_id=device.id,
-        message=description,
+        # The description is free text and may quote a secret; it stays on the
+        # access-controlled change record that change_id points to.
+        message="Change previewed.",
         details={
             "change_id": change.id,
             "commands": change.commands,
@@ -897,6 +1045,7 @@ def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> Change
         )
 
     change.verification_output = results
+    _refresh_baseline(device, change, client)
     if not passed:
         return _fail(
             change,

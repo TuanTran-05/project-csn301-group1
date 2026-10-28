@@ -19,7 +19,7 @@ from ..projects import service as project_service
 from ..projects.model import Project
 from ..audit.service import record_event
 from . import design_assistant
-from .schemas import ChatRequest
+from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
 from .service import AIService
 
 bp = Blueprint("ai", __name__, url_prefix="/api/ai")
@@ -105,6 +105,12 @@ def chat():
         for error in exc.errors():
             field = ".".join(str(part) for part in error["loc"]) or "_root"
             details.setdefault(field, []).append(error["msg"])
+        if any(error["type"] == "string_too_long" for error in exc.errors()):
+            raise ValidationError(
+                f"Tin nhắn quá dài: tối đa {MAX_CHAT_MESSAGE_LENGTH} ký tự. "
+                "Hãy chia yêu cầu thành nhiều bước.",
+                details,
+            ) from exc
         raise ValidationError("A non-empty 'message' is required.", details) from exc
 
     user = current_user()

@@ -56,6 +56,19 @@ def current_project(need: str = "viewer") -> Project:
     return project
 
 
+def change_project() -> Project:
+    """The current project, for previewing, approving or applying a change.
+
+    Teachers and Students are authorised per device by their group grants
+    (config.create / config.approve / config.deploy, checked by the change
+    workflow itself), so the project only scopes the request for them. Every
+    other role needs edit rights on the project.
+    """
+    user = current_user()
+    scoped_by_group = user is not None and user.role in ("TEACHER", "STUDENT")
+    return current_project(need="viewer" if scoped_by_group else "editor")
+
+
 def write_project() -> Project:
     """The current project, for a route that changes inventory or design.
 

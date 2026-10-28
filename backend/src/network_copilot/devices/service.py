@@ -343,9 +343,23 @@ def purge_devices(device_ids: list[int], commit: bool = True) -> None:
         db.session.commit()
 
 
+def _assert_no_teaching_records(device_id: int) -> None:
+    """Grants, assignments, drafts and reservations are kept for audit.
+
+    They point at the device without a cascade, so deleting it would either
+    fail or leave a grant aimed at whichever device later reuses the id.
+    """
+    from ..governance.model import Assignment, Draft, Grant, Reservation
+
+    for model in (Grant, Assignment, Draft, Reservation):
+        if db.session.query(model.id).filter(model.device_id == device_id).first():
+            raise ConflictError("Device has permission or teaching records; retain it for audit.")
+
+
 def delete_device(device_id: int, project_id: int | None = None) -> None:
     device = get_device(device_id, project_id)
     _assert_no_active_batch(device_id)
+    _assert_no_teaching_records(device_id)
     purge_devices([device.id])
 
 
