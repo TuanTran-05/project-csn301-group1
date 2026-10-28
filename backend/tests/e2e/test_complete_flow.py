@@ -172,7 +172,8 @@ def test_complete_demo_flow(client, app, lab, access_switch, admin_user):
     assert lab.config_batches == [
         ["configure terminal", "vlan 25", "name MARKETING", "end"]
     ]
-    assert lab.show_commands[-1] == "show vlan brief"
+    # Verification, then the post-change backup that is the next baseline.
+    assert lab.show_commands[-2:] == ["show vlan brief", "show running-config"]
 
     backup = db.session.get(ConfigBackup, result["backup_id"])
     assert "hostname ACC-SW1" in backup.running_config
