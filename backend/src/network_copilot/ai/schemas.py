@@ -294,10 +294,14 @@ def build_ai_action_schema(device_hostnames: Iterable[str]) -> dict:
     }
 
 
+# Long enough for a whole lab script pasted as one request.
+MAX_CHAT_MESSAGE_LENGTH = 8000
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
     session_id: int | None = None
     group_id: int | None = None
     # "design": answer with a whole L2/L3 design for the project to apply.

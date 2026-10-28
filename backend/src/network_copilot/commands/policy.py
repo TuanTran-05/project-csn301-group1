@@ -123,6 +123,21 @@ def _ping_from_source(command: str) -> bool:
     return _is_ipv4(source) or bool(_INTERFACE_NAME.fullmatch(source))
 
 
+# A VRF name as IOS accepts it; matched against the lowercased command.
+_VRF_NAME = r"[a-z0-9][a-z0-9_.-]{0,31}"
+
+
+def _vrf_command(pattern: str) -> Callable[[str], bool]:
+    """Match "<verb> vrf <name> <ipv4>"-style commands with a valid address."""
+    compiled = re.compile(pattern.replace("<vrf>", _VRF_NAME).replace("<ipv4>", r"(?P<ip>\S+)"))
+
+    def matcher(command: str) -> bool:
+        match = compiled.fullmatch(command)
+        return bool(match) and ("ip" not in match.groupdict() or _is_ipv4(match.group("ip")))
+
+    return matcher
+
+
 def _switchport_detail(command: str) -> bool:
     from ..parsers.switchports import normalize_interface_name
     match = re.fullmatch(r"show interfaces (\S+) switchport", command, re.I)
@@ -147,6 +162,9 @@ class CommandRule:
     matcher: Callable[[str], bool]
     allowed_roles: frozenset[str] = ALL_ROLES
     description: str = ""
+    # Send the operator's spelling instead of the lowercased form: IOS VRF
+    # names are case-sensitive, so "ping vrf pc1" misses a VRF named PC1.
+    preserve_case: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,6 +265,27 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         _ping_from_source,
         description="ICMP reachability test from a chosen source",
     ),
+    CommandRule("show vrf", _exact("show vrf"), description="VRFs and their interfaces"),
+    CommandRule("show ip vrf", _exact("show ip vrf"), description="IPv4 VRFs and their interfaces"),
+    CommandRule("show ip ssh", _exact("show ip ssh"), description="SSH server state"),
+    CommandRule(
+        "show ip route vrf <vrf>",
+        _vrf_command(r"show ip route vrf <vrf>"),
+        description="IPv4 routing table of one VRF",
+        preserve_case=True,
+    ),
+    CommandRule(
+        "ping vrf <vrf> <ipv4>",
+        _vrf_command(r"ping vrf <vrf> <ipv4>"),
+        description="ICMP reachability test from inside a VRF",
+        preserve_case=True,
+    ),
+    CommandRule(
+        "traceroute vrf <vrf> <ipv4>",
+        _vrf_command(r"traceroute vrf <vrf> <ipv4>"),
+        description="Hop-by-hop path trace from inside a VRF",
+        preserve_case=True,
+    ),
     CommandRule(
         "traceroute <ipv4>",
         _ipv4_command("traceroute"),
@@ -309,7 +348,9 @@ class CommandPolicy:
                     matched_rule=rule.name,
                 )
             return CommandDecision(
-                allowed=True, normalized_command=normalized, matched_rule=rule.name
+                allowed=True,
+                normalized_command=" ".join(command.split()) if rule.preserve_case else normalized,
+                matched_rule=rule.name,
             )
 
         return CommandDecision(
