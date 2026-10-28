@@ -25,10 +25,19 @@ ALLOWED = [
     "ping 192.168.2.1 source 192.168.1.1",
     "ping 192.168.2.1 source Loopback0",
     "ping 192.168.2.1 source gi0/0.10",
+    "show vrf",
+    "show ip vrf",
+    "show ip ssh",
+    "show ip route vrf PC1",
+    "ping vrf PC1 172.20.5.162",
+    "traceroute vrf PC3 172.20.5.3",
 ]
 
 BLOCKED = [
-    "show ip route vrf mgmt",
+    "ping vrf PC1 not-an-ip",
+    "ping vrf PC1 172.20.5.162 repeat 100000",
+    "ssh -vrf PC1 -l admin 172.20.5.161",
+    "show run | i ip routing",
     "ping 192.168.2.1 source",
     "ping not-an-ip source 192.168.1.1",
     "ping 192.168.2.1 source 192.168.1.1 repeat 100000",
@@ -124,7 +133,7 @@ def test_startup_config_is_never_ai_safe():
 def test_every_ai_advertised_rule_is_ai_executable():
     for rule in ai_policy.rules:
         assert ai_policy.evaluate(rule.name, "core").allowed or (
-            "<ipv4>" in rule.name or "<interface>" in rule.name
+            "<ipv4>" in rule.name or "<interface>" in rule.name or "<vrf>" in rule.name
         )
 
 
@@ -188,3 +197,11 @@ def test_asa_read_commands_are_allowed_on_any_role(command, role):
     are deliberately ungated."""
     decision = default_policy.evaluate(command, role)
     assert decision.allowed is True
+
+
+def test_vrf_names_keep_their_case_when_sent_to_the_device():
+    """IOS VRF names are case-sensitive: "ping vrf pc1" misses VRF PC1."""
+    decision = policy.evaluate("ping  vrf PC1   172.20.5.162", "access")
+    assert decision.allowed
+    assert decision.normalized_command == "ping vrf PC1 172.20.5.162"
+    assert policy.evaluate("SHOW IP ROUTE", "core").normalized_command == "show ip route"
