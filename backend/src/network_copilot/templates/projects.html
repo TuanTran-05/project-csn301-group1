@@ -219,13 +219,16 @@
                 <div class="card">
                   <h4>Nhập thiết bị từ PNETLab</h4>
                   <p class="hint">Đọc danh sách node, mạng và dây nối của một lab qua API phiên của PNETLab (hoặc API kiểu EVE-NG).
-                    Không bật/tắt hay sửa node. Địa chỉ PNETLab phải là mạng nội bộ. Tài khoản PNETLab không được lưu.
+                    Không bật/tắt hay sửa node. Địa chỉ PNETLab phải là mạng nội bộ. Có thể ghi nhớ tài khoản PNETLab cho project (mật khẩu được mã hoá, không bao giờ hiện lại).
                     PNETLab chỉ giữ một phiên cho mỗi tài khoản và lab đang chạy thuộc tài khoản đã mở nó: dùng đúng tài khoản đó;
                     tab PNETLab của tài khoản này có thể bị đăng xuất, khi đó chỉ cần đăng nhập lại.</p>
                   <form class="form-grid" @submit.prevent="pnetPreview()">
                     <label>URL PNETLab <input type="text" x-model="pnet.form.url" required placeholder="http://172.16.0.5" /></label>
                     <label>Tài khoản <input type="text" x-model="pnet.form.username" required autocomplete="off" /></label>
-                    <label>Mật khẩu <input type="password" x-model="pnet.form.password" required autocomplete="new-password" /></label>
+                    <label>Mật khẩu <input type="password" x-model="pnet.form.password" :required="!pnetUsesSavedPassword" autocomplete="new-password"
+                      :class="{ 'saved-secret': pnetUsesSavedPassword }"
+                      :placeholder="pnetUsesSavedPassword ? '•••••••• (đã lưu)' : ''"
+                      :title="pnetUsesSavedPassword ? 'Đang dùng mật khẩu đã lưu. Gõ mật khẩu khác để thay.' : ''" /></label>
                     <label>Đường dẫn lab <input type="text" x-model="pnet.form.lab" placeholder="để trống: lab đang mở trong phiên" /></label>
                     <label>Kiểu API
                       <select x-model="pnet.form.api_mode">
@@ -235,6 +238,14 @@
                       </select>
                     </label>
                     <label class="check"><input type="checkbox" x-model="pnet.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
+                    <label class="check" title="Lưu URL, tài khoản, mật khẩu (mã hoá) và đường dẫn lab cho project này sau khi tải node thành công">
+                      <input type="checkbox" x-model="pnet.form.remember" /> Ghi nhớ đăng nhập PNETLab cho project này
+                    </label>
+                    <p class="hint" x-show="pnet.saved" x-cloak>
+                      🔒 Đã lưu <strong x-text="pnet.saved ? pnet.saved.username + ' @ ' + pnet.saved.url : ''"></strong> kèm mật khẩu
+                      — bấm "Tải danh sách node" là dùng, không cần gõ lại.
+                      <button type="button" class="link-btn" @click="forgetPnetLogin()">Quên thông tin đã lưu</button>
+                    </p>
                     <div class="form-actions">
                       <button type="submit" class="primary-btn" :disabled="pnet.loading">Tải danh sách node</button>
                       <button type="button" @click="closePnet()">Đóng</button>

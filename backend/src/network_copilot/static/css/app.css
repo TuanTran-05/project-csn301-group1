@@ -4377,3 +4377,7 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .ssh-default-card .hint { margin: 0; }
 .ssh-default-card form { margin-top: 12px; }
 td .link-btn { margin-left: 8px; font-size: 12px; }
+
+/* A saved password: the field stays empty (the secret never comes back), so the
+   placeholder looks like a filled-in password. */
+input.saved-secret::placeholder { color: inherit; opacity: 0.85; letter-spacing: 0.08em; }

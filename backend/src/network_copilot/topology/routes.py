@@ -385,16 +385,28 @@ def _config_request():
 @jwt_required()
 @limiter.limit("10 per minute")
 def pnetlab_preview(project_id: int):
+    from ..integrations import saved_login
+
     project = _project(project_id, "editor")
-    return jsonify(pnetlab_import.preview(project, request.get_json(silent=True) or {})), 200
+    payload, remember = saved_login.fill_payload(project, request.get_json(silent=True) or {})
+    result = pnetlab_import.preview(project, payload)
+    # Only a login that just worked is remembered.
+    if remember:
+        saved_login.remember(project, payload, current_user().id)
+        record_event(action="topology.pnetlab_login.save", result="success",
+                     user_id=current_user().id, project_id=project.id,
+                     details={"url": payload.get("url"), "username": payload.get("username")})
+    return jsonify(result), 200
 
 
 @bp.post("/import/pnetlab")
 @jwt_required()
 @limiter.limit("10 per minute")
 def pnetlab_import_route(project_id: int):
+    from ..integrations import saved_login
+
     project = _project(project_id, "editor")
-    payload = request.get_json(silent=True) or {}
+    payload, _ = saved_login.fill_payload(project, request.get_json(silent=True) or {})
     result = pnetlab_import.import_lab(project, payload)
     created = [d["hostname"] for d in result["devices"] if d["status"] == "created"]
     record_event(
@@ -416,8 +428,11 @@ def pnetlab_import_route(project_id: int):
 @limiter.limit("10 per minute")
 def bootstrap_preview(project_id: int):
     """The console commands that would give each device its management IP and SSH."""
+    from ..integrations import saved_login
+
     project = _project(project_id, "editor")
-    return jsonify(bootstrap.preview(project, request.get_json(silent=True) or {})), 200
+    payload, _ = saved_login.fill_payload(project, request.get_json(silent=True) or {})
+    return jsonify(bootstrap.preview(project, payload)), 200
 
 
 @bp.post("/bootstrap/pnetlab")
@@ -433,13 +448,38 @@ def bootstrap_run(project_id: int):
     """
     from flask import current_app
 
+    from ..integrations import saved_login
+
     project = _project(project_id, "owner")
-    payload = request.get_json(silent=True) or {}
+    payload, _ = saved_login.fill_payload(project, request.get_json(silent=True) or {})
     bootstrap.validate_request(payload)  # a bad request fails now, not in the job
     job = bootstrap_jobs.start(
         current_app._get_current_object(), project.id, current_user().id, payload, bootstrap.run
     )
     return jsonify({"job": job}), 202
+
+
+@bp.get("/pnetlab-login")
+@jwt_required()
+def get_pnetlab_login(project_id: int):
+    """The remembered PNETLab address and account (never the password)."""
+    from ..integrations import saved_login
+
+    project = _project(project_id, "editor")
+    record = saved_login.get_saved(project.id)
+    return jsonify({"saved": record.to_dict() if record else None}), 200
+
+
+@bp.delete("/pnetlab-login")
+@jwt_required()
+def delete_pnetlab_login(project_id: int):
+    from ..integrations import saved_login
+
+    project = _project(project_id, "editor")
+    saved_login.forget(project)
+    record_event(action="topology.pnetlab_login.delete", result="success",
+                 user_id=current_user().id, project_id=project.id)
+    return jsonify({"saved": None}), 200
 
 
 @bp.get("/bootstrap/jobs/<job_id>")

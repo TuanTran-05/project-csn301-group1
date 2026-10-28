@@ -93,7 +93,11 @@ Open <http://127.0.0.1:5000/projects>.
   nodes, fix the management IPs (PNETLab does not know them), and import: devices
   come with their canvas positions and the cables between them. Only private
   lab addresses are accepted as the PNETLab URL, redirects are refused, and the
-  lab password is never stored or logged. vIOS/IOL/CSR nodes become routers,
+  lab password is never logged. *Ghi nhớ đăng nhập PNETLab* saves the address,
+  account, lab path and the password (encrypted, `project_pnetlab_logins`) after a
+  preview that worked; later imports and console bootstraps of that project leave the
+  password empty and the saved one is used, only for that same address and account.
+  It is never returned (`GET/DELETE /api/projects/<pid>/topology/pnetlab-login`). vIOS/IOL/CSR nodes become routers,
   `*l2*` nodes switches, ASAv firewalls; other templates (VPCS, Linux…) are listed
   as unsupported.
 - **Bootstrapping SSH through the console.** A node freshly started in PNETLab has

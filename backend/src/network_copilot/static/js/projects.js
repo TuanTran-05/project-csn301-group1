@@ -1077,7 +1077,9 @@ document.addEventListener("alpine:init", () => {
 
     openPnet() {
       this.pnet = {
-        form: { url: "", username: "", password: "", lab: "", api_mode: "auto", verify_tls: true, ssh_user: "", ssh_pass: "" },
+        form: { url: "", username: "", password: "", lab: "", api_mode: "auto", verify_tls: true, ssh_user: "", ssh_pass: "", remember: true },
+        // The project's remembered PNETLab login (no password), or null.
+        saved: null,
         api: null,
         nodes: [],
         links: [],
@@ -1087,6 +1089,42 @@ document.addEventListener("alpine:init", () => {
         result: null,
         boot: { gateway: "", overwrite: false, default_password: "admin", panos_account: "admin", devices: [], loaded: false, loading: false, error: "", result: null, job: null },
       };
+      this.loadPnetLogin().catch(() => {});
+    },
+
+    async loadPnetLogin() {
+      const pnet = this.pnet;
+      if (!pnet) return;
+      const data = await this.authFetch(this.topologyUrl("/pnetlab-login"));
+      if (this.pnet !== pnet || !data.saved) return;
+      pnet.saved = data.saved;
+      const form = pnet.form;
+      // Fill only what the user has not typed yet.
+      if (!form.url) form.url = data.saved.url;
+      if (!form.username) form.username = data.saved.username;
+      if (!form.lab) form.lab = data.saved.lab;
+      form.api_mode = data.saved.api_mode;
+      form.verify_tls = data.saved.verify_tls;
+    },
+
+    // The saved password applies only to the address and account it was saved with.
+    get pnetUsesSavedPassword() {
+      const pnet = this.pnet;
+      if (!pnet || !pnet.saved || pnet.form.password) return false;
+      const trim = (value) => (value || "").trim().replace(/\/+$/, "");
+      return trim(pnet.form.url) === trim(pnet.saved.url) && trim(pnet.form.username) === pnet.saved.username;
+    },
+
+    async forgetPnetLogin() {
+      const pnet = this.pnet;
+      if (!pnet || !window.confirm("Xoá thông tin đăng nhập PNETLab đã lưu của project này?")) return;
+      try {
+        await this.authFetch(this.topologyUrl("/pnetlab-login"), { method: "DELETE" });
+        pnet.saved = null;
+        pnet.form.password = "";
+      } catch (err) {
+        pnet.error = this.describeError(err);
+      }
     },
 
     closePnet() {
@@ -1109,8 +1147,10 @@ document.addEventListener("alpine:init", () => {
       try {
         const data = await this.authFetch(this.topologyUrl("/import/pnetlab/preview"), {
           method: "POST",
-          body: JSON.stringify(this._pnetSource()),
+          body: JSON.stringify({ ...this._pnetSource(), remember: !!pnet.form.remember }),
         });
+        // A login that worked and was remembered: show it as saved from now on.
+        if (pnet.form.remember) this.loadPnetLogin().catch(() => {});
         pnet.nodes = data.nodes.map((n) => ({ ...n, selected: n.supported && !n.exists }));
         pnet.links = data.links;
         pnet.api = data.api || null;
