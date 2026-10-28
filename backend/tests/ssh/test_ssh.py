@@ -595,3 +595,20 @@ def test_a_device_that_stays_silent_after_the_empty_line_still_fails():
     with pytest.raises(SSHCommandError, match="Unsupported interactive prompt"):
         client.run_config(["vlan 10"])
     assert shell.sent == ["vlan 10\n", "\n"]
+
+
+def test_a_session_closed_partway_is_reported_as_such():
+    """IOS cut the session after "hostname" disabled SSH; paramiko raised
+    OSError("Socket is closed"), which surfaced as an unexpected error."""
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    sent = shell.send
+
+    def send(data):
+        if data.startswith("hostname"):
+            raise OSError("Socket is closed")
+        return sent(data)
+
+    shell.send = send
+    with pytest.raises(SSHCommandError, match="đóng phiên SSH giữa chừng"):
+        client.run_config(["hostname EIU-R1"])

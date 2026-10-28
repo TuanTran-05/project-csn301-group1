@@ -197,6 +197,42 @@ def _with_trunk_encapsulation(commands: list[str]) -> list[str]:
     return result
 
 
+_IDENTITY_CHANGE = re.compile(r"^(?:hostname|ip\s+domain[-\s]name)\s+\S+", re.I)
+_SSH_KEYPAIR_PINNED = re.compile(r"(?m)^ip ssh rsa keypair-name\s+\S+")
+
+
+def _with_pinned_ssh_key(device: Device, commands: list[str]) -> list[str]:
+    """Keep SSH alive across a hostname or domain-name change.
+
+    An RSA key generated without a label is named hostname.domain, and IOS
+    disables SSH the moment either changes; the session the change runs over
+    is cut ("Socket is closed") and the device is unreachable until someone
+    fixes it on the console. When the device's newest backup shows SSH is not
+    yet pinned to a named key, generate one under the bootstrap's label and
+    pin SSH to it before anything is renamed.
+    """
+    if not any(_IDENTITY_CHANGE.match(command.strip()) for command in commands):
+        return commands
+    if any(command.strip().lower().startswith("ip ssh rsa keypair-name") for command in commands):
+        return commands
+    from ..backups.model import ConfigBackup
+    from ..topology.bootstrap import SSH_KEY_LABEL
+
+    backup = (
+        db.session.query(ConfigBackup)
+        .filter_by(device_id=device.id)
+        .order_by(ConfigBackup.id.desc())
+        .first()
+    )
+    if backup is not None and _SSH_KEYPAIR_PINNED.search(backup.running_config or ""):
+        return commands
+    return [
+        f"crypto key generate rsa general-keys label {SSH_KEY_LABEL} modulus 2048",
+        f"ip ssh rsa keypair-name {SSH_KEY_LABEL}",
+        *commands,
+    ]
+
+
 def _wrap(commands: list[str]) -> list[str]:
     """Strip any caller-supplied wrappers and apply exactly one config block."""
     body = [command for command in commands if not _is_wrapper(command)]
@@ -395,6 +431,9 @@ def prepare_change(
         validate_execution_mode(body, execution_mode)
     if device.device_type == "cisco_ios" and device.environment == "pnetlab" and execution_mode == "config":
         body = _with_trunk_encapsulation(body)
+        # PNETLab nodes got their SSH key from the console bootstrap, which
+        # before SSH_KEY_LABEL generated it unlabelled.
+        body = _with_pinned_ssh_key(device, body)
 
     if execution_mode == "exec" and any(_is_wrapper(command) for command in body):
         raise ValidationError(

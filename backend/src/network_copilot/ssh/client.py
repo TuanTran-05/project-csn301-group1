@@ -194,6 +194,15 @@ class SSHClient:
             raise SSHCommandError(
                 f"Command failed on {self.target.host}."
             ) from exc
+        except OSError as exc:
+            # "Socket is closed": the device dropped the session partway, e.g.
+            # IOS disabling SSH when the hostname its key is named after
+            # changes. Commands sent before that point were applied.
+            raise SSHCommandError(
+                "thiết bị đã đóng phiên SSH giữa chừng; các lệnh gửi trước đó đã được áp dụng. "
+                "Nếu batch đổi hostname hoặc ip domain-name, SSH có thể đã bị tắt: "
+                "vào console để kiểm tra."
+            ) from exc
         finally:
             if shell is not None:
                 self._safe_close(shell)
@@ -259,6 +268,15 @@ class SSHClient:
         except paramiko.SSHException as exc:
             raise SSHCommandError(
                 f"Command failed on {self.target.host}."
+            ) from exc
+        except OSError as exc:
+            # "Socket is closed": the device dropped the session partway, e.g.
+            # IOS disabling SSH when the hostname its key is named after
+            # changes. Commands sent before that point were applied.
+            raise SSHCommandError(
+                "thiết bị đã đóng phiên SSH giữa chừng; các lệnh gửi trước đó đã được áp dụng. "
+                "Nếu batch đổi hostname hoặc ip domain-name, SSH có thể đã bị tắt: "
+                "vào console để kiểm tra."
             ) from exc
         finally:
             if shell is not None:
