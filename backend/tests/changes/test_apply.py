@@ -613,3 +613,29 @@ def test_other_switches_are_left_alone(app, admin_user, access_switch):
     "% Invalid input", which would fail the whole batch."""
     change = change_service.create_preview(admin_user.id, access_switch.id, TRUNK_COMMANDS)
     assert change.commands[1:-1] == TRUNK_COMMANDS
+
+
+def test_renaming_a_pnetlab_device_pins_ssh_to_a_named_key_first(app, admin_user, access_switch):
+    """An unlabelled RSA key is named hostname.domain; IOS turns SSH off when
+    either changes, cutting the session the rename runs over."""
+    access_switch.environment = "pnetlab"
+    db.session.commit()
+    change = change_service.create_preview(
+        admin_user.id, access_switch.id, ["hostname EIU-S1", "ip domain-name lab.eiu.local"]
+    )
+    assert change.commands[1:3] == [
+        "crypto key generate rsa general-keys label NETAI-SSH modulus 2048",
+        "ip ssh rsa keypair-name NETAI-SSH",
+    ]
+    assert change.commands[3:5] == ["hostname EIU-S1", "ip domain-name lab.eiu.local"]
+
+
+def test_a_device_already_pinned_to_a_key_is_renamed_as_asked(app, admin_user, access_switch):
+    access_switch.environment = "pnetlab"
+    db.session.add(ConfigBackup(
+        device_id=access_switch.id, reason="approval_baseline",
+        running_config="hostname ACC-SW1\nip ssh rsa keypair-name NETAI-SSH\n",
+    ))
+    db.session.commit()
+    change = change_service.create_preview(admin_user.id, access_switch.id, ["hostname EIU-S1"])
+    assert change.commands == ["configure terminal", "hostname EIU-S1", "end"]

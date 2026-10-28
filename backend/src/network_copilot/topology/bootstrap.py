@@ -42,6 +42,10 @@ from .pnetlab_import import LabSource, hostname_for
 
 MAX_DEVICES = 50
 DOMAIN_NAME = "netai.lab"
+# The SSH key carries a fixed label and SSH is pinned to it. An unlabelled key
+# is named after hostname.domain, and IOS turns SSH off as soon as either
+# changes, cutting the session a later "hostname" change runs over.
+SSH_KEY_LABEL = "NETAI-SSH"
 SECRET_MASK = "******"
 
 # -- request ---------------------------------------------------------------------
@@ -155,7 +159,8 @@ def build_commands(device, interface: str, project, gateway: str | None, credent
     if credential.enable_secret:
         commands.append(f"enable secret {SECRET_MASK if redact else credential.enable_secret}")
     commands += [
-        "crypto key generate rsa modulus 2048",
+        f"crypto key generate rsa general-keys label {SSH_KEY_LABEL} modulus 2048",
+        f"ip ssh rsa keypair-name {SSH_KEY_LABEL}",
         "ip ssh version 2",
         "line vty 0 4", "login local", "transport input ssh", "exit",
     ]

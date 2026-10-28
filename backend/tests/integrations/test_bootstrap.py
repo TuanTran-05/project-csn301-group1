@@ -256,6 +256,9 @@ def test_preview_shows_commands_without_the_password(client, admin_headers, base
     assert r1["ready"] and r1["interface"] == "Ethernet0/3" and r1["console"] == "172.16.0.5:32769"
     assert "ip address 172.16.3.111 255.255.255.0" in r1["commands"]
     assert "transport input ssh" in r1["commands"]
+    # A labelled key SSH is pinned to survives a later hostname change.
+    assert "crypto key generate rsa general-keys label NETAI-SSH modulus 2048" in r1["commands"]
+    assert "ip ssh rsa keypair-name NETAI-SSH" in r1["commands"]
     assert "username netops privilege 15 secret ******" in r1["commands"]
     # an L2 switch keeps its address on Vlan1 and its cloud port in VLAN 1
     assert sw1["commands"][sw1["commands"].index("interface Vlan1") + 1] == "ip address 172.16.3.121 255.255.255.0"
