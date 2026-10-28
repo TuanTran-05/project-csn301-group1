@@ -524,3 +524,37 @@ def test_test_connection_response_never_leaks_credentials(
         f"/api/devices/{device.id}/test-connection", headers=admin_headers
     ).get_data(as_text=True)
     assert "Secret123!" not in body
+
+
+def test_a_silent_device_gets_one_empty_line_and_a_second_budget():
+    """Seen on IOSv-L2 in PNETLab: after 'vlan 10' the switch sent nothing at
+    all within command_timeout and the batch failed with an empty prompt.
+    One empty line, a no-op in config mode, brings the prompt back."""
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    client.command_timeout = 0.2
+    responses = iter(["SW#", "configure terminal\r\nSW(config)#"])
+
+    def drain(_shell):
+        if shell.sent and shell.sent[-1] == "\n":
+            return "\r\nSW(config-vlan)#"
+        if len(shell.sent) <= 1:
+            return next(responses)
+        return ""  # 'vlan 10': silence
+
+    client._drain = drain
+
+    client.run_config(["configure terminal", "vlan 10"])
+
+    assert shell.sent == ["configure terminal\n", "vlan 10\n", "\n"]
+
+
+def test_a_device_that_stays_silent_after_the_empty_line_still_fails():
+    shell = FakeShell()
+    client, _ = make_client(shell=shell)
+    client.command_timeout = 0.2
+    client._drain = lambda _shell: "SW#" if not shell.sent else ""
+
+    with pytest.raises(SSHCommandError, match="Unsupported interactive prompt"):
+        client.run_config(["vlan 10"])
+    assert shell.sent == ["vlan 10\n", "\n"]
