@@ -53,6 +53,16 @@ Open <http://127.0.0.1:5000/projects>.
   port and its SSH login — from the page or `POST /api/devices`. The password is
   encrypted before it is stored and is never returned. There is no seed list to
   edit.
+- **Default SSH login.** *Thiết bị → SSH mặc định của project* stores one login
+  (encrypted, `project_ssh_defaults`) for the whole lab. A new managed device that
+  is created without a login takes it — from the form, *Nhập từ PNETLab*, CSV,
+  drag-and-drop on the canvas, a restored version, or when a planned device is
+  provisioned. The device form fills it in and offers *Dùng SSH mặc định của
+  project*; *Gán cho N thiết bị chưa có SSH* (or *dùng mặc định* on a row) gives
+  it to existing devices. Like device logins, the password is never returned and
+  the name is only shown to editors: `GET/PUT/DELETE /api/projects/<pid>/ssh-default`,
+  `POST .../ssh-default/apply {"scope": "missing" | "all"}`, and
+  `"use_project_ssh": true` on `POST/PUT /api/devices`.
 - **Sharing.** The owner shares a project with a username as `viewer` (read) or
   `editor` (devices and diagram). Sharing never grants more than the user's
   global role: a `VIEWER` account stays read-only everywhere. An ADMIN can see

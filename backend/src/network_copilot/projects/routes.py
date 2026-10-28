@@ -6,7 +6,7 @@ from flask_jwt_extended import jwt_required
 from ..audit.service import record_event
 from ..auth.service import current_user
 from ..errors import ValidationError
-from ..extensions import limiter
+from ..extensions import db, limiter
 from . import exchange, service
 
 bp = Blueprint("projects", __name__, url_prefix="/api/projects")
@@ -233,3 +233,115 @@ def import_devices_csv(project_id: int):
         details={"count": len(created), "devices": [d.hostname for d in created]},
     )
     return jsonify({"created": [d.to_dict() for d in created]}), 201
+
+
+# -- default SSH login ----------------------------------------------------------
+
+
+def _ssh_default_view(project) -> dict:
+    from ..credentials.service import get_project_ssh_default
+    from ..devices.model import Device
+
+    record = get_project_ssh_default(project.id)
+    missing = (
+        db.session.query(Device)
+        .filter(Device.project_id == project.id, Device.managed.is_(True),
+                Device.lifecycle == "provisioned", ~Device.credential.has())
+        .count()
+    )
+    return {"default": record.to_dict() if record else None, "devices_without_login": missing}
+
+
+@bp.get("/<int:project_id>/ssh-default")
+@jwt_required()
+def get_ssh_default(project_id: int):
+    """The default login's name (never its password) and how many devices lack one.
+
+    Like device logins, the name is only shown to people who may edit devices.
+    """
+    user = current_user()
+    project = service.require_project(user, project_id, "editor")
+    return jsonify(_ssh_default_view(project)), 200
+
+
+@bp.put("/<int:project_id>/ssh-default")
+@jwt_required()
+def put_ssh_default(project_id: int):
+    from ..credentials.service import store_project_ssh_default
+    from ..devices.service import _require_cipher
+
+    user = current_user()
+    project = service.require_project(user, project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username") or "").strip()
+    password = payload.get("password") or None
+    if not username or len(username) > 64 or any(c.isspace() for c in username):
+        raise ValidationError("username is required (1-64 characters, no spaces).",
+                              {"username": ["Required."]})
+    if password is not None and (not isinstance(password, str) or len(password) > 256):
+        raise ValidationError("password must be a string of at most 256 characters.")
+    enable_secret = payload.get("enable_secret") if "enable_secret" in payload else None
+    if enable_secret is not None and (not isinstance(enable_secret, str) or len(enable_secret) > 256):
+        raise ValidationError("enable_secret must be a string of at most 256 characters.")
+    _require_cipher()
+    try:
+        store_project_ssh_default(
+            project.id, username, password, enable_secret or None,
+            keep_enable_secret="enable_secret" not in payload, user_id=user.id,
+        )
+    except ValueError as exc:
+        raise ValidationError("A password is required the first time.",
+                              {"password": ["Required."]}) from exc
+    record_event(action="project.ssh_default.update", result="success", user_id=user.id,
+                 project_id=project.id, details={"username": username})
+    return jsonify(_ssh_default_view(project)), 200
+
+
+@bp.delete("/<int:project_id>/ssh-default")
+@jwt_required()
+def delete_ssh_default(project_id: int):
+    from ..credentials.service import delete_project_ssh_default
+
+    user = current_user()
+    project = service.require_project(user, project_id, "editor")
+    delete_project_ssh_default(project.id)
+    record_event(action="project.ssh_default.delete", result="success", user_id=user.id,
+                 project_id=project.id)
+    return jsonify(_ssh_default_view(project)), 200
+
+
+@bp.post("/<int:project_id>/ssh-default/apply")
+@jwt_required()
+@limiter.limit("10 per minute")
+def apply_ssh_default(project_id: int):
+    """Store the default login on the project's devices.
+
+    ``{"scope": "missing"}`` (default) only fills devices without a login;
+    ``{"scope": "all"}`` overwrites every managed device's login too.
+    """
+    from ..credentials.service import store_device_credential
+    from ..devices.model import Device
+    from ..devices.service import _project_default, _require_cipher
+
+    user = current_user()
+    project = service.require_project(user, project_id, "editor")
+    payload = request.get_json(silent=True) or {}
+    scope = payload.get("scope", "missing")
+    if scope not in ("missing", "all"):
+        raise ValidationError("scope must be 'missing' or 'all'.")
+    _require_cipher()
+    credential = _project_default(project, required=True)
+    query = db.session.query(Device).filter(
+        Device.project_id == project.id, Device.managed.is_(True), Device.lifecycle == "provisioned"
+    )
+    if scope == "missing":
+        query = query.filter(~Device.credential.has())
+    devices = query.all()
+    for device in devices:
+        store_device_credential(device.id, credential.username, credential.password,
+                                credential.enable_secret, commit=False)
+    db.session.commit()
+    record_event(action="project.ssh_default.apply", result="success", user_id=user.id,
+                 project_id=project.id,
+                 details={"scope": scope, "devices": [d.hostname for d in devices]})
+    return jsonify({**_ssh_default_view(project), "updated": [d.hostname for d in devices]}), 200

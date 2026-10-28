@@ -146,9 +146,12 @@ def create_device(payload: dict, project) -> Device:
     _assert_unique(project.id, data.hostname, data.management_ip)
     _assert_quota(project)
 
-    fields = data.model_dump(exclude={"credential"})
+    fields = data.model_dump(exclude={"credential", "use_project_ssh"})
     fields["managed"] = data.device_type != "generic"
     credential = data.credential
+    if credential is None and fields["managed"] and data.lifecycle == "provisioned":
+        # Type the lab login once per project, not once per device.
+        credential = _project_default(project, required=data.use_project_ssh)
     if credential is not None:
         _require_cipher()
 
@@ -165,7 +168,7 @@ def create_device(payload: dict, project) -> Device:
 def update_device(device_id: int, payload: dict, project) -> Device:
     device = get_device(device_id, project.id)
     data = _validate(DeviceUpdateSchema, payload, project)
-    changes = data.model_dump(exclude_unset=True, exclude={"credential"})
+    changes = data.model_dump(exclude_unset=True, exclude={"credential", "use_project_ssh"})
 
     _assert_unique(
         project.id,
@@ -174,14 +177,17 @@ def update_device(device_id: int, payload: dict, project) -> Device:
         exclude_id=device_id,
     )
 
-    if data.credential is not None:
+    credential = data.credential
+    if credential is None and data.use_project_ssh:
+        credential = _project_default(project, required=True)
+    if credential is not None:
         _require_cipher()
-    _check_update_allowed(device, changes, data.credential)
+    _check_update_allowed(device, changes, credential)
 
     for field, value in changes.items():
         setattr(device, field, value)
-    if data.credential is not None:
-        _store_credential(device, data.credential)
+    if credential is not None:
+        _store_credential(device, credential)
     db.session.commit()
     return device
 
@@ -216,20 +222,24 @@ def provision_device(device_id: int, payload: dict, project) -> Device:
     if device.lifecycle == "provisioned":
         raise ConflictError(f"{device.hostname} is already provisioned.")
     data = _validate(DeviceUpdateSchema, {
-        k: payload[k] for k in ("management_ip", "ssh_port", "credential") if k in payload
+        k: payload[k] for k in ("management_ip", "ssh_port", "credential", "use_project_ssh")
+        if k in payload
     }, project)
     if not data.management_ip:
         raise ValidationError("management_ip is required to provision a device.",
                               {"management_ip": ["Required."]})
     _assert_unique(project.id, None, data.management_ip, exclude_id=device.id)
-    if data.credential is not None:
+    credential = data.credential
+    if credential is None and getattr(device, "credential", None) is None:
+        credential = _project_default(project, required=data.use_project_ssh)
+    if credential is not None:
         _require_cipher()
     device.management_ip = data.management_ip
     if data.ssh_port:
         device.ssh_port = data.ssh_port
     device.lifecycle = "provisioned"
-    if data.credential is not None:
-        _store_credential(device, data.credential)
+    if credential is not None:
+        _store_credential(device, credential)
     db.session.commit()
     return device
 
@@ -244,6 +254,24 @@ def _require_cipher() -> None:
             "Device credentials cannot be stored: the server has no valid "
             "CREDENTIAL_ENCRYPTION_KEY."
         ) from exc
+
+
+def _project_default(project, required: bool = False):
+    """The project's default SSH login (decrypted, in-process only), or None."""
+    from ..credentials.service import project_default_plain
+
+    try:
+        credential = project_default_plain(project.id)
+    except ValueError as exc:
+        raise ValidationError(
+            "The project's default SSH login cannot be read: the server's "
+            "CREDENTIAL_ENCRYPTION_KEY changed. Save it again."
+        ) from exc
+    if credential is None and required:
+        raise ValidationError(
+            "This project has no default SSH login yet; save one in the Devices tab first."
+        )
+    return credential
 
 
 def _store_credential(device: Device, credential) -> None:
