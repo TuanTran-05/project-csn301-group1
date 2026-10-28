@@ -96,6 +96,7 @@ def test_student_low_risk_change_is_auto_approved_and_applied(
         "run_show",
         "run_config",
         "run_show",
+        "run_show",
     ]
 
 

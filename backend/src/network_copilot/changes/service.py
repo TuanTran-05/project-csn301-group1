@@ -424,6 +424,26 @@ def prepare_change(
     return change
 
 
+def _refresh_baseline(device: Device, change: ChangeRequest, client) -> None:
+    """Store the configuration the write left behind as the device's baseline.
+
+    The next preview freezes the hash of the newest backup, so without this
+    it would hold the pre-change config and its apply would refuse with
+    "Running configuration changed since preview". A failed read only costs
+    that convenience; the change itself already happened.
+    """
+    from ..backups.service import capture_backup
+    from ..ssh.exceptions import SSHError
+    from ..ssh.messages import friendly_error
+
+    try:
+        capture_backup(device, change_request_id=change.id, reason="post_change", client=client)
+    except SSHError as exc:
+        logger.warning(
+            "Post-change backup of %s failed: %s", device.hostname, friendly_error(exc, device.hostname)
+        )
+
+
 def create_preview(
     user_id: int | None,
     device_id: int,
@@ -957,6 +977,7 @@ def _execute_locked_change(change: ChangeRequest, user_id: int | None) -> Change
         )
 
     change.verification_output = results
+    _refresh_baseline(device, change, client)
     if not passed:
         return _fail(
             change,
