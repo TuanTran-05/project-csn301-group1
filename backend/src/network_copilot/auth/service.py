@@ -162,7 +162,7 @@ def create_user(payload: dict, actor: User | None = None) -> User:
         raise ConflictError(f"A user named {username} already exists.")
     _assert_email_free(email)
     if role == "ADMIN":
-        _assert_admin_slot_free()
+        _assert_no_admin()
 
     user = User(
         username=username,
@@ -177,13 +177,15 @@ def create_user(payload: dict, actor: User | None = None) -> User:
     return user
 
 
-def _assert_admin_slot_free(exclude_id: int | None = None) -> None:
-    """The schema allows one Administrator (index uq_single_admin)."""
+def _assert_no_admin(exclude_id: int | None = None) -> None:
+    """There is a single Administrator; the role moves with /api/admin/transfer."""
     query = db.session.query(User.id).filter(User.role == "ADMIN")
     if exclude_id is not None:
         query = query.filter(User.id != exclude_id)
     if query.first() is not None:
-        raise ConflictError("Only one Administrator account is allowed.")
+        raise ConflictError(
+            "There is already an Administrator; use the admin transfer to hand the role over."
+        )
 
 
 def _other_active_admins(user: User) -> int:
@@ -242,10 +244,10 @@ def update_user(user: User, payload: dict, actor: User) -> User:
     if user.id == actor.id and new_active is False:
         raise ConflictError("You cannot deactivate your own account.")
 
+    if new_role == "ADMIN" and user.role != "ADMIN":
+        _assert_no_admin(exclude_id=user.id)
     if "email" in changes:
         _assert_email_free(changes["email"], exclude_id=user.id)
-    if new_role == "ADMIN" and user.role != "ADMIN":
-        _assert_admin_slot_free(exclude_id=user.id)
 
     # Anything that changes what the account may do logs it out everywhere.
     if new_role != user.role or new_active != user.is_active:

@@ -11,8 +11,8 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-# Keep the application's loggers: migrations also run inside a live app
-# (and its tests), whose monitoring and audit logs must keep working.
+# Keep the application's loggers: migrations may run inside the app's process
+# (tests, setup scripts), and the default would silence them for good.
 fileConfig(config.config_file_name, disable_existing_loggers=False)
 logger = logging.getLogger('alembic.env')
 

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from ..extensions import db, in_check
 
 # "generic" is a device the backend never logs into (a PC, server, cloud, AP...).
-DEVICE_TYPES = ("cisco_ios", "cisco_asa", "generic")
+DEVICE_TYPES = ("cisco_ios", "cisco_asa", "paloalto_panos", "generic")
 DEVICE_ROLES = (
     "isp",
     "firewall",

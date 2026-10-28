@@ -109,21 +109,34 @@ def test_reservations_exclude_overlaps_and_maintenance_blocks_admin(client, admi
 
 
 def test_ai_quota_and_chat_scope(app, client, admin_user, classroom):
+    from fakes.fake_ai_provider import FakeAIProvider
+    from network_copilot.chat.model import ChatMessage
+    from network_copilot.projects.model import Project
+
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider({"intent": "chat", "operations": [], "explanation": "Hi"})
+
     teacher, student, outsider, group, device = classroom
     issue_grant(admin_user, {"user_id": student.id, "action": "ai.use"})
     db.session.add(Policy(id=1, ai_daily_limit=1))
-    foreign = ChatSession(created_by_id=outsider.id, project_id=default_project_id())
+    elsewhere = Project(name="Outsider lab", management_network="10.77.0.0/24", environment="pnetlab",
+                        owner_id=outsider.id)
+    db.session.add(elsewhere)
+    db.session.flush()
+    foreign = ChatSession(created_by_id=outsider.id, project_id=elsewhere.id)
     db.session.add(foreign)
+    db.session.flush()
+    db.session.add(ChatMessage(session_id=foreign.id, role="user", content="outsider secret question"))
     db.session.commit()
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(
         {"intent": "chat", "operations": [], "explanation": "Hello"}
     )
     token = headers(student)
-    # Someone else's session is never read: the caller gets their own instead.
-    assert client.get(f"/api/chat/messages?session_id={foreign.id}", headers=token).json["items"] == []
-    first = client.post("/api/ai/chat", headers=token, json={"message": "Hi", "session_id": foreign.id})
-    assert first.status_code == 200
-    assert db.session.query(ChatMessage).filter_by(session_id=foreign.id).count() == 0
+    # Someone else's session id never opens it: the caller gets their own session.
+    read = client.get(f"/api/chat/messages?session_id={foreign.id}", headers=token)
+    assert "outsider secret question" not in read.get_data(as_text=True)
+    assert all(item["id"] != foreign.id for item in client.get("/api/chat/sessions", headers=token).json["items"])
+    client.post("/api/ai/chat", headers=token, json={"message": "Hi", "session_id": foreign.id})
+    assert db.session.query(ChatMessage).filter_by(session_id=foreign.id).count() == 1
     second = client.post("/api/ai/chat", headers=token, json={"message": "Hi"})
     assert second.status_code == 429
 

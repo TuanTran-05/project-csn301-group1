@@ -884,22 +884,24 @@ def test_legacy_viewer_cannot_monitor_without_explicit_permissions(
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "check ospf"}
     )
-    assert response.status_code == 200
-    assert response.get_json()["intent"] == "advice"
-    assert fake.calls == []
+    # A Viewer only gets advice: nothing is run on the device.
+    assert response.status_code == 200 and response.get_json()["intent"] == "advice"
+    assert ssh_factory.get(dist_switch.hostname).calls == []
 
 
 def test_viewer_cannot_create_a_configuration_preview(
     client, viewer_headers, app, access_switch
 ):
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CONFIGURE_ACTION)
+    from network_copilot.changes.model import ChangeBatch, ChangeRequest
+
     response = client.post(
         "/api/ai/chat", headers=viewer_headers, json={"message": "tao vlan 25"}
     )
-    assert response.status_code == 200
-    assert response.get_json()["intent"] == "advice"
-    assert "batch" not in response.get_json()
+    # A Viewer only gets advice: no change is prepared for approval.
+    assert response.status_code == 200 and response.get_json()["intent"] == "advice"
     assert db.session.query(ChangeRequest).count() == 0
+    assert db.session.query(ChangeBatch).count() == 0
 
 
 CHAT_ACTION = {

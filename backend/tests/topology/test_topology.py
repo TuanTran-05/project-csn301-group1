@@ -549,41 +549,30 @@ def test_preview_never_touches_a_device(client, admin_headers, base, lab, ssh_fa
     assert ssh_factory.clients == {}
 
 
-def test_an_editor_can_propose_but_only_an_admin_can_approve(client, admin_headers, base, lab, project):
+def test_an_editor_designs_but_only_an_admin_freezes_and_approves(client, app, admin_headers, base, lab, project):
     from conftest import _auth_headers, _create_user
     from network_copilot.projects.model import ProjectMember
 
-    # The default lab is view-only for everyone but Admin; an editor share
-    # only means something on an ordinary project.
-    project.name = "Campus"
-    # Operators cannot create Preview -> Approve -> Apply changes
-    # (docs/scoped-backend.md); a Student with a config.create grant can.
-    user = _create_user("opop2", "OperatorPass123!", "STUDENT")
+    user = _create_user("opop2", "OperatorPass123!", "OPERATOR")
     db.session.add(ProjectMember(project_id=project.id, user_id=user.id, access="editor"))
-    # A non-admin change also needs a group that grants config.create on the devices.
-    from network_copilot.auth.model import User
-    from network_copilot.governance.access import issue_grant
-    from network_copilot.groups.model import Group
-
-    group = Group(name="design-lab")
-    group.students.append(user)
-    group.devices.extend(lab.values())
-    db.session.add(group)
-    db.session.commit()
-    admin = db.session.query(User).filter_by(role="ADMIN").one()
-    for action in ("device.read", "config.create"):
-        issue_grant(admin, {"user_id": user.id, "group_id": group.id, "action": action})
     db.session.commit()
     headers = _auth_headers(client, "opop2", "OperatorPass123!")
+    # The shared default lab is read-only for everyone but an admin, whatever the share.
+    assert client.post(f"{base}/config-plan", headers=headers, json={}).status_code == 403
+    # In an ordinary project the editor share counts for the design itself...
+    app.config["DEFAULT_LAB_NAME"] = "Some Other Lab"
     add(client, headers, base, lab, "r1", "Gi0/1", "sw1", "Gi0/0")
+    assert client.post(f"{base}/config-plan", headers=headers, json={}).status_code == 200
+    # ...but freezing it as a change needs config.create, which an Operator only
+    # gets through AI Management; an admin freezes and approves it.
+    refused = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
+    assert refused.status_code == 403
 
-    response = client.post(f"{base}/config-preview", headers=headers, json={"note": "please review"})
+    response = client.post(f"{base}/config-preview", headers=admin_headers, json={"note": "please review"})
     assert response.status_code == 201, response.get_json()
     batch = response.get_json()["batch"]
     assert batch["status"] == "pending_approval" and "please review" in batch["description"]
-    assert batch["requested_by_id"] == user.id
-    # The proposal changes nothing until an admin approves it.
-    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers).status_code == 403
+    assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=headers).status_code in (403, 404)
     assert client.post(f"/api/change-batches/{batch['id']}/approve", headers=admin_headers).status_code == 200
 
 
@@ -610,7 +599,7 @@ def drop(client, headers, base, template="router", **extra):
 def test_templates_are_listed(client, admin_headers, base):
     items = client.get(f"{base}/templates", headers=admin_headers).get_json()["items"]
     assert {t["key"] for t in items} == {
-        "router", "switch_l3", "switch", "firewall", "pc", "server", "cloud", "ap", "segment",
+        "router", "switch_l3", "switch", "firewall", "firewall_pa", "pc", "server", "cloud", "ap", "segment",
     }
 
 

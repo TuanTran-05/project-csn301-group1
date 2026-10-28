@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required
 from ..auth.service import current_user, roles_required
 from ..errors import ValidationError
 from ..extensions import limiter
-from ..projects.scope import current_project
+from ..projects.scope import change_project, current_project
 from . import batch_service
 
 bp = Blueprint("change_batches", __name__, url_prefix="/api/change-batches")
@@ -31,7 +31,7 @@ def get_batch(batch_id: int):
 @bp.post("/<int:batch_id>/approve")
 @roles_required("ADMIN", "TEACHER")
 def approve(batch_id: int):
-    project = current_project(need="editor")
+    project = change_project()
     batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
     user = current_user()
     batch = batch_service.approve_batch(batch_id, user.id if user else None)
@@ -42,7 +42,7 @@ def approve(batch_id: int):
 @roles_required("ADMIN", "TEACHER", "STUDENT")
 @limiter.limit("10 per minute")
 def apply(batch_id: int):
-    project = current_project(need="editor")
+    project = change_project()
     batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
     user = current_user()
     payload = request.get_json(silent=True)

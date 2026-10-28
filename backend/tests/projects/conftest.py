@@ -32,6 +32,17 @@ def bob(app):
 
 
 @pytest.fixture
+def vera(app):
+    """A read-only account: the only kind an Operator may add to a project."""
+    return _create_user("vera", PASSWORD, "VIEWER")
+
+
+@pytest.fixture
+def vera_headers(client, vera):
+    return _auth_headers(client, "vera", PASSWORD)
+
+
+@pytest.fixture
 def alice_headers(client, alice):
     return _auth_headers(client, "alice", PASSWORD)
 

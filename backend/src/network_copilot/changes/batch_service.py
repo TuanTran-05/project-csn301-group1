@@ -170,6 +170,9 @@ def list_batches(limit: int = 100, project_id: int | None = None) -> list[Change
     if project_id is not None:
         query = query.filter(ChangeBatch.project_id == project_id)
     from ..governance.visibility import batches as visible_batches
+
+    # The same rule as get_batch: a batch is listed only when every change in
+    # it is readable by the caller.
     return visible_batches(
         query.order_by(ChangeBatch.created_at.desc(), ChangeBatch.id.desc())
         .limit(min(max(limit, 1), 500))

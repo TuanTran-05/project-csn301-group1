@@ -2,7 +2,6 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from ..audit.service import record_event
-from ..errors import ForbiddenError
 from ..extensions import limiter
 from .service import (
     authenticate,
@@ -105,18 +104,20 @@ def list_users():
 
 
 @users_bp.post("")
-@jwt_required()
+@roles_required("ADMIN", "TEACHER")
 def create_user_route():
+    """ADMIN creates any account; a Teacher creates Student accounts only."""
     actor = current_user()
-    if actor is not None and actor.role == "TEACHER":
-        # This rule shadows the governance one at the same URL, which is
-        # where a Teacher creates Student accounts.
-        from ..governance.routes import create_user as create_classroom_user
+    payload = request.get_json(silent=True) or {}
+    if actor.role == "TEACHER":
+        from ..errors import ForbiddenError
+        from ..governance.access import require
 
-        return create_classroom_user()
-    if actor is None or actor.role != "ADMIN":
-        raise ForbiddenError("Only an Administrator can create accounts.")
-    user = create_user(request.get_json(silent=True) or {}, actor)
+        if payload.get("role", "STUDENT") != "STUDENT":
+            raise ForbiddenError("Teachers may only create Students.")
+        require(actor, "student.create")
+        payload = {**payload, "role": "STUDENT"}
+    user = create_user(payload, actor)
     record_event(
         action="user.create",
         result="success",

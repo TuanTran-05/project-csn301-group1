@@ -259,6 +259,11 @@ def upgrade():
 
 
 def downgrade():
+    # devices.environment and users.token_version are shared with the project
+    # branch (a7d3c1f09e42 / c9b5e7a2d4f8); leave them while it is applied.
+    connection = op.get_bind()
+    tables = set(sa.inspect(connection).get_table_names())
+    user_columns = {column['name'] for column in sa.inspect(connection).get_columns('users')}
     with op.batch_alter_table('command_executions', schema=None) as batch_op:
         batch_op.drop_constraint('fk_command_executions_group_id', type_='foreignkey')
         batch_op.drop_column('group_id')
@@ -271,20 +276,17 @@ def downgrade():
         batch_op.drop_column('mfa_pending_secret')
         batch_op.drop_column('mfa_secret')
         batch_op.drop_column('display_name')
-        batch_op.drop_column('token_version')
+        if 'full_name' not in user_columns:
+            batch_op.drop_column('token_version')
 
     with op.batch_alter_table('groups', schema=None) as batch_op:
         batch_op.drop_column('archived')
 
-    # The project branch (a7d3c1f09e42) also adds devices.environment, and a
-    # CHECK constraint on it; while that branch is applied the column is its
-    # to drop, so only remove it here when it was this revision's.
-    project_branch_applied = 'projects' in sa.inspect(op.get_bind()).get_table_names()
     with op.batch_alter_table('devices', schema=None) as batch_op:
         batch_op.drop_column('recovery_instructions')
         batch_op.drop_column('baseline_revision')
         batch_op.drop_column('isolated')
-        if not project_branch_applied:
+        if 'projects' not in tables:
             batch_op.drop_column('environment')
 
     with op.batch_alter_table('change_requests', schema=None) as batch_op:

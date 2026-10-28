@@ -62,7 +62,12 @@ def check_change(change):
 
 def batches(records):
     user = request_user()
-    return records if user is None else [b for b in records if all(can_read_change(user, c) for c in b.changes)]
+    if user is None or role(user) == "ADMIN":
+        return records
+    # all() of no changes is True: an empty batch is only its requester's.
+    return [b for b in records
+            if (all(can_read_change(user, c) for c in b.changes) if b.changes
+                else b.requested_by_id == user.id)]
 
 
 def events(records):

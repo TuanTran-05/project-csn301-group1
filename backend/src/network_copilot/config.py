@@ -118,6 +118,12 @@ class TestConfig(Config):
     SQLITE_FOREIGN_KEYS = False
     # One in-memory SQLite connection is shared by the whole test run.
     MONITORING_MAX_WORKERS = 1
+    # Console bootstrap jobs run before the request returns, and never wait.
+    BOOTSTRAP_RUN_INLINE = True
+    BOOTSTRAP_TYPE_DELAY = 0
+    BOOTSTRAP_SSH_RETRY_SECONDS = 0
+    BOOTSTRAP_PANOS_SSH_RETRY_SECONDS = 0
+    BOOTSTRAP_PANOS_RETRY_SECONDS = 0
 
 
 class ForeignKeyTestConfig(TestConfig):

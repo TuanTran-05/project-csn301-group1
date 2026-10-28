@@ -215,14 +215,17 @@ def test_identity_change_and_partial_batch_backup_are_rejected(client, admin_hea
         "description": "changed", "changes": [{"id": c.id, "description": "changed"} for c in batch.changes]}).status_code == 409
 
 
-def test_permissions_owner_and_default_topology(client, admin_headers, viewer_headers, access_switch, db,
-                                               second_admin_allowed):
+def test_permissions_owner_and_default_topology(client, admin_headers, viewer_headers, access_switch, db):
     assert client.get(BASE).status_code == 401
     assert client.get(BASE, headers=viewer_headers).status_code == 403
     assert client.get(BASE + "?topology_id=second", headers=admin_headers).status_code == 422
     created = preview(client, admin_headers, access_switch)
     from network_copilot.auth.model import User
     from network_copilot.auth.service import issue_token
+    # Two administrator identities (as before and after an admin transfer):
+    # lift the single-admin index in this test database only.
+    from sqlalchemy import text
+    db.session.execute(text("DROP INDEX uq_single_admin"))
     other = User(username="other-pending", role="ADMIN")
     other.set_password("OtherPendingTestPassword!")
     db.session.add(other)

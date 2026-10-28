@@ -197,7 +197,9 @@ def downgrade():
         batch_op.drop_constraint("fk_devices_project_id", type_="foreignkey")
         batch_op.drop_column("pos_y")
         batch_op.drop_column("pos_x")
-        batch_op.drop_column("environment")
+        # Shared with the governance branch; it drops the column once it goes.
+        if "permission_grants" not in sa.inspect(op.get_bind()).get_table_names():
+            batch_op.drop_column("environment")
         batch_op.drop_column("project_id")
 
     op.drop_index("ix_topology_links_project_id", table_name="topology_links")

@@ -60,17 +60,14 @@ def test_unknown_or_invalid_fields_are_rejected(client, admin_headers):
 
 
 def test_demoting_a_user_revokes_their_existing_token(client, admin_headers):
-    user_id = make(client, admin_headers, username="frank", role="OPERATOR").get_json()["id"]
+    user_id = make(client, admin_headers, username="frank", role="TEACHER").get_json()["id"]
     frank = _auth_headers(client, "frank", "A-long-password-1")
-    assert client.get("/api/projects", headers=frank).status_code == 200
+    assert client.get("/api/auth/me", headers=frank).get_json()["role"] == "TEACHER"
 
     client.put(f"/api/users/{user_id}", headers=admin_headers, json={"role": "VIEWER"})
-    assert client.get("/api/projects", headers=frank).status_code == 401  # token revoked
+    assert client.get("/api/auth/me", headers=frank).status_code == 401  # token revoked
     fresh = _auth_headers(client, "frank", "A-long-password-1")
-    # And the role really changed: a Viewer cannot create a project.
-    assert client.post("/api/projects", headers=fresh, json={
-        "name": "Campus", "management_network": "192.168.50.0/24", "environment": "physical",
-    }).status_code == 403
+    assert client.get("/api/auth/me", headers=fresh).get_json()["role"] == "VIEWER"  # and the role really changed
 
 
 def test_role_is_read_from_the_database_not_the_token(client, admin_headers, app):
@@ -110,11 +107,12 @@ def test_an_admin_cannot_demote_or_disable_themselves(client, admin_headers, adm
     assert client.put(f"/api/users/{admin_user.id}", headers=admin_headers, json={"is_active": False}).status_code == 409
 
 
-def test_a_second_administrator_is_refused(client, admin_headers):
-    """The schema allows one Administrator; the API says so instead of failing."""
-    assert make(client, admin_headers, username="second", role="ADMIN").status_code == 409
-    other = make(client, admin_headers, username="third").get_json()["id"]
-    assert client.put(f"/api/users/{other}", headers=admin_headers, json={"role": "ADMIN"}).status_code == 409
+def test_there_is_only_ever_one_admin(client, admin_headers):
+    created = make(client, admin_headers, username="second", role="ADMIN")
+    assert created.status_code == 409 and "transfer" in created.get_json()["message"]
+    other = make(client, admin_headers, username="second", role="TEACHER").get_json()["id"]
+    promoted = client.put(f"/api/users/{other}", headers=admin_headers, json={"role": "ADMIN"})
+    assert promoted.status_code == 409
 
 
 def test_admin_resets_a_password_and_old_sessions_end(client, admin_headers):

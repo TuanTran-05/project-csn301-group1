@@ -185,5 +185,5 @@ def test_teacher_can_toggle_auto_approval_for_managed_group(
         json={"is_auto_approve": True},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     assert response.get_json()["is_auto_approve"] is True
