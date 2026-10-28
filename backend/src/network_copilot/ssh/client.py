@@ -269,6 +269,7 @@ class SSHClient:
         segment = self._drain(shell)
         normalized = " ".join(command.split()).lower()
         deadline = time.monotonic() + self.command_timeout
+        nudged = False
 
         while not _READY_PROMPT.search(segment.rstrip()):
             tail = segment.rstrip()
@@ -296,7 +297,16 @@ class SSHClient:
                 segment += self._drain(shell)
                 continue
 
-            if time.monotonic() >= deadline:
+            expired = time.monotonic() >= deadline
+            if expired and not segment and not nudged:
+                # Not one byte back, not even the echo: the device is still
+                # busy (IOSv-L2 writing vlan.dat for a first VLAN) or its
+                # prompt was lost. An empty line is a no-op in every mode and
+                # brings the prompt back; give it one more full budget.
+                shell.send("\n")
+                nudged = True
+                deadline = time.monotonic() + self.command_timeout
+            elif expired:
                 raise SSHCommandError(
                     f"Unsupported interactive prompt from {self.target.host} "
                     f"after '{command}': {tail!r}"
