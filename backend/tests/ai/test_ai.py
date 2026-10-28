@@ -1299,3 +1299,16 @@ def test_configure_drops_a_verification_command_off_the_allowlist(
     assert "show ip bgp summary" in result["explanation"]
     change = db.session.query(ChangeRequest).one()
     assert "show ip bgp summary" not in change.verification_commands
+
+
+def test_a_long_lab_script_is_accepted(client, admin_headers, app):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CHAT_ACTION)
+    response = client.post("/api/ai/chat", headers=admin_headers, json={"message": "x" * 5500})
+    assert response.status_code == 200
+
+
+def test_a_too_long_message_says_so(client, admin_headers, app):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=CHAT_ACTION)
+    response = client.post("/api/ai/chat", headers=admin_headers, json={"message": "x" * 8001})
+    assert response.status_code == 422
+    assert "quá dài" in response.get_json()["message"]
