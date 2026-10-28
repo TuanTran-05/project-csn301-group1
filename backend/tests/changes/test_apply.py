@@ -639,3 +639,39 @@ def test_a_device_already_pinned_to_a_key_is_renamed_as_asked(app, admin_user, a
     db.session.commit()
     change = change_service.create_preview(admin_user.id, access_switch.id, ["hostname EIU-S1"])
     assert change.commands == ["configure terminal", "hostname EIU-S1", "end"]
+
+
+def test_verification_is_read_again_while_a_trunk_comes_up(
+    app, admin_user, pending_change, applying_client
+):
+    """Right after "switchport mode trunk" the trunk table is still empty; a
+    second look a few seconds later finds it."""
+    app.config.update(VERIFICATION_RETRIES=2, VERIFICATION_RETRY_SECONDS=0)
+    applying_client.responses["show vlan brief"] = ""
+    reads = []
+    show = applying_client.run_show
+
+    def settling_show(command):
+        if command == "show vlan brief":
+            reads.append(command)
+            if len(reads) == 2:
+                applying_client.responses["show vlan brief"] = VLAN_AFTER
+        return show(command)
+
+    applying_client.run_show = settling_show
+    change_service.approve(pending_change.id, admin_user.id)
+    result = change_service.apply(pending_change.id, admin_user.id)
+
+    assert result.status == "success", result.error_message
+    assert len(reads) == 2
+
+
+def test_a_change_that_never_verifies_still_fails_after_the_retries(
+    app, admin_user, pending_change, applying_client
+):
+    app.config.update(VERIFICATION_RETRIES=2, VERIFICATION_RETRY_SECONDS=0)
+    applying_client.responses["show vlan brief"] = ""
+    change_service.approve(pending_change.id, admin_user.id)
+    result = change_service.apply(pending_change.id, admin_user.id)
+    assert result.status == "failed"
+    assert applying_client.show_commands.count("show vlan brief") == 3

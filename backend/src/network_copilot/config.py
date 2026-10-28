@@ -63,6 +63,10 @@ class Config:
 
     SSH_CONNECT_TIMEOUT = int(os.environ.get("SSH_CONNECT_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT = int(os.environ.get("SSH_COMMAND_TIMEOUT", "30"))
+    # A failed post-change verification is re-read this many more times,
+    # this many seconds apart: links and trunks take a moment to come up.
+    VERIFICATION_RETRIES = int(os.environ.get("VERIFICATION_RETRIES", "2"))
+    VERIFICATION_RETRY_SECONDS = float(os.environ.get("VERIFICATION_RETRY_SECONDS", "5"))
 
     MONITORING_ENABLED = _bool("MONITORING_ENABLED", False)
     MONITORING_INTERVAL_SECONDS = int(
@@ -108,6 +112,8 @@ class TestConfig(Config):
     CREDENTIAL_ENCRYPTION_KEY = "MsXBQh03EB9ifk_rNUsDK_F2FVJCYCz6BtuVTEYt9Hg="
     MONITORING_ENABLED = False
     RATELIMIT_ENABLED = False
+    # A failed verification is final at once; retries are tested explicitly.
+    VERIFICATION_RETRIES = 0
     # The fixtures' shared project is the default lab. Tests that never create
     # it run without one, instead of a seeded lab showing up in every listing.
     DEFAULT_LAB_NAME = "Default Lab"

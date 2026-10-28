@@ -76,6 +76,32 @@ def serialize_verification_evidence(plan, legacy_commands, evidence):
 
 
 def run_verification(change, client):
+    """Verify, giving a device that is still settling a few more looks.
+
+    A port just made a trunk, an interface just brought up or a route just
+    added can take seconds to show: right after "switchport mode trunk",
+    "show interfaces trunk" is still empty. A failed verification is
+    therefore re-read after VERIFICATION_RETRY_SECONDS, up to
+    VERIFICATION_RETRIES more times; a passing one returns at once.
+    """
+    import time
+
+    from flask import current_app, has_app_context
+
+    # Outside an app (a direct call), one look is all there is.
+    config = current_app.config if has_app_context() else {"VERIFICATION_RETRIES": 0}
+    retries = int(config.get("VERIFICATION_RETRIES", 2))
+    delay = float(config.get("VERIFICATION_RETRY_SECONDS", 5))
+    passed, results = _verify_once(change, client)
+    for _ in range(max(retries, 0)):
+        if passed:
+            break
+        time.sleep(delay)
+        passed, results = _verify_once(change, client)
+    return passed, results
+
+
+def _verify_once(change, client):
     plan = change.verification_plan or [{"id": c, "label": c, "strategy": "generic", "commands": [c], "required": True, "sensitive": is_sensitive_verification_command(c)} for c in (change.verification_commands or [])]
     cache = {}
     results = {}
