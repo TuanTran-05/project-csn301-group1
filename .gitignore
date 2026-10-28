@@ -12,3 +12,6 @@ htmlcov/
 instance/
 .superpowers/
 backend/artifacts/
+
+# Reports of backend/scripts/probe_pnetlab_write.py
+pnetlab_probe_*.json
