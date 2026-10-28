@@ -116,10 +116,13 @@ def test_apply_runs_backup_then_config_then_verification(
     change_service.apply(pending_change.id, admin_user.id)
 
     kinds = [call[0] for call in applying_client.calls]
-    assert kinds == ["run_show", "run_config", "run_show"]
+    # Backup, write, verify, then the post-change backup that becomes the
+    # baseline for the next preview.
+    assert kinds == ["run_show", "run_config", "run_show", "run_show"]
     assert applying_client.calls[0][1] == "show running-config"
     assert applying_client.calls[1][1] == VLAN_COMMANDS
     assert applying_client.calls[2][1] == "show vlan brief"
+    assert applying_client.calls[3][1] == "show running-config"
 
 
 def test_apply_stores_a_backup_before_the_change(
@@ -516,7 +519,8 @@ def test_backups_endpoint_lists_device_backups(
         f"/api/devices/{access_switch.id}/backups", headers=admin_headers
     )
     assert response.status_code == 200
-    assert len(response.get_json()["items"]) == 1
+    # The pre-change backup and the post-change one that refreshes the baseline.
+    assert sorted(item["reason"] for item in response.get_json()["items"]) == ["post_change", "pre_change"]
 
 
 # -- EXEC mode apply --------------------------------------------------------
@@ -539,3 +543,33 @@ def test_apply_exec_change_calls_run_exec_without_wrappers(
     change_service.apply(change.id, admin_user.id, confirm_hostname="ACC-SW1")
     assert ("run_exec", ["write memory"]) in fake.calls
     assert fake.config_batches == []
+
+
+
+def test_a_second_change_after_apply_needs_no_new_baseline(
+    app, admin_user, access_switch, applying_client
+):
+    """The post-change backup becomes the next preview's baseline, so a second
+    change applies without re-capturing the baseline by hand."""
+    from network_copilot.backups.service import capture_backup
+
+    access_switch.environment = "pnetlab"
+    access_switch.isolated = False
+    db.session.commit()
+    write = applying_client.run_config
+
+    def write_and_change_running_config(commands, **kwargs):
+        # Every write leaves a different running-config behind.
+        applying_client.responses["show running-config"] += "! " + " ".join(commands) + "\n"
+        return write(commands, **kwargs)
+
+    applying_client.run_config = write_and_change_running_config
+    capture_backup(access_switch, reason="approval_baseline")
+
+    for _ in range(2):
+        change = change_service.create_preview(
+            admin_user.id, access_switch.id, VLAN_COMMANDS, ["show vlan brief"]
+        )
+        change_service.approve(change.id, admin_user.id)
+        applied = change_service.apply(change.id, admin_user.id)
+        assert applied.status == "success", applied.error_message
