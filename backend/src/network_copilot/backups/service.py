@@ -10,6 +10,12 @@ from .model import ConfigBackup
 logger = logging.getLogger(__name__)
 
 BACKUP_COMMAND = "show running-config"
+# PAN-OS spells it differently; the output is the XML-style config tree.
+PANOS_BACKUP_COMMAND = "show config running"
+
+
+def backup_command_for(device: Device) -> str:
+    return PANOS_BACKUP_COMMAND if device.device_type == "paloalto_panos" else BACKUP_COMMAND
 
 
 def capture_backup(
@@ -24,7 +30,7 @@ def capture_backup(
     a change must never be applied without a backup.
     """
     client = client or build_client_for_device(device)
-    result = client.run_show(BACKUP_COMMAND)
+    result = client.run_show(backup_command_for(device))
 
     backup = ConfigBackup(
         device_id=device.id,

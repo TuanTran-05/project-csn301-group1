@@ -100,6 +100,12 @@ Rules:
   For those devices, replace the IOS command with its ASA spelling from
   "asa_command_equivalents" in the context. Sending the IOS form to an ASA
   returns a syntax error, not data.
+- A device whose "device_type" is "paloalto_panos" is a Palo Alto firewall. Read
+  its state with "show system info", "show interface all" or "show routing route".
+  Configure it only with PAN-OS configure-mode lines that start with "set" or
+  "delete" (for example "set network interface ethernet ethernet1/2 layer3 ip
+  10.0.0.1/24"); never IOS syntax, and never "configure" or "commit": the backend
+  enters configure mode and commits by itself.
 - Use "monitor" when the user wants to read state. Put the read-only commands in
   "commands" and leave "verification_commands" empty.
 - Use "troubleshoot" when the user reports a problem. Put read-only diagnostic
@@ -323,7 +329,7 @@ class AIService:
                 available = {
                     node["hostname"].casefold(): node["device_type"]
                     for node in nodes
-                    if node.get("hostname") and node.get("device_type") in {"cisco_ios", "cisco_asa"}
+                    if node.get("hostname") and node.get("device_type") in {"cisco_ios", "cisco_asa", "paloalto_panos"}
                 }
                 diagram_names = {
                     value.casefold()
@@ -707,11 +713,11 @@ class AIService:
         project_id: int | None = None,
         group_id: int | None = None,
     ) -> dict:
-        # The ai.use permission and the daily quota, counted before the model
-        # is called so a failing provider cannot be retried without limit.
-        from ..governance.quotas import consume_ai
+        if user_id is not None:
+            # Needs the ai.use permission and counts against the daily quota.
+            from ..governance.quotas import consume_ai
 
-        consume_ai(user_id, group_id)
+            consume_ai(user_id, group_id)
         action = self.interpret(
             message, user_id, session_id=session_id, project_id=project_id
         )

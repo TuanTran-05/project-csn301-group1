@@ -9,6 +9,7 @@ from .switchports import normalize_interface_name, normalize_vlan_set, parse_swi
 from .config import extract_interface_stanza, normalize_ios_config
 from .acls import parse_access_lists
 from .dhcp import parse_ip_dhcp_pool
+from .panos import parse_panos_interfaces, parse_panos_routes, parse_panos_system_info
 
 # Maps a normalised command to the parser that understands its output.
 # "show interface ip brief" is the ASA spelling; its output format was
@@ -24,6 +25,10 @@ PARSERS = {
     "show interfaces trunk": parse_interfaces_trunk,
     "show access-lists": parse_access_lists,
     "show ip dhcp pool": parse_ip_dhcp_pool,
+    # Palo Alto PAN-OS
+    "show system info": parse_panos_system_info,
+    "show interface all": parse_panos_interfaces,
+    "show routing route": parse_panos_routes,
 }
 
 PARAMETERIZED_PARSERS = ((re.compile(r"^show interfaces [A-Za-z][A-Za-z-]*\d[\d/.:]* switchport$", re.I), parse_switchport_detail),)
@@ -66,4 +71,7 @@ __all__ = [
     "normalize_ios_config",
     "parse_access_lists",
     "parse_ip_dhcp_pool",
+    "parse_panos_interfaces",
+    "parse_panos_routes",
+    "parse_panos_system_info",
 ]

@@ -9,7 +9,7 @@ from ..errors import AppError
 from ..extensions import db, limiter
 from ..projects import service as project_service
 from ..projects.model import Project
-from . import blueprints, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
+from . import blueprints, bootstrap, bootstrap_jobs, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
 from . import chat_import
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
@@ -411,6 +411,44 @@ def pnetlab_import_route(project_id: int):
     return jsonify(result), 200
 
 
+@bp.post("/bootstrap/pnetlab/preview")
+@jwt_required()
+@limiter.limit("10 per minute")
+def bootstrap_preview(project_id: int):
+    """The console commands that would give each device its management IP and SSH."""
+    project = _project(project_id, "editor")
+    return jsonify(bootstrap.preview(project, request.get_json(silent=True) or {})), 200
+
+
+@bp.post("/bootstrap/pnetlab")
+@jwt_required()
+@limiter.limit("10 per minute")
+def bootstrap_run(project_id: int):
+    """Start configuring management IP and SSH on PNETLab nodes through their console.
+
+    This writes to devices without the change workflow (they cannot be reached
+    over SSH yet), so only the project owner or an ADMIN may run it. A PA-VM
+    takes minutes to boot and commit, so the work runs as a background job:
+    the answer is the job, and the page polls ``/bootstrap/jobs/<id>``.
+    """
+    from flask import current_app
+
+    project = _project(project_id, "owner")
+    payload = request.get_json(silent=True) or {}
+    bootstrap.validate_request(payload)  # a bad request fails now, not in the job
+    job = bootstrap_jobs.start(
+        current_app._get_current_object(), project.id, current_user().id, payload, bootstrap.run
+    )
+    return jsonify({"job": job}), 202
+
+
+@bp.get("/bootstrap/jobs/<job_id>")
+@jwt_required()
+def bootstrap_job(project_id: int, job_id: str):
+    project = _project(project_id, "owner")
+    return jsonify({"job": bootstrap_jobs.get(job_id, project.id)}), 200
+
+
 @bp.get("/design")
 @jwt_required()
 def get_design(project_id: int):
@@ -496,8 +534,9 @@ def config_plan(project_id: int):
 def config_preview(project_id: int):
     """Freeze the design's configuration as a change batch awaiting approval.
 
-    Any editor may do this: a preview is only a proposal. Approving and applying
-    it stays an ADMIN action.
+    Needs editor access to the project and, like any change, a config.create
+    permission (an ADMIN, or a scoped group grant). Approving and applying it
+    stays an ADMIN action.
     """
     project = _project(project_id, "editor")
     data = _config_request()

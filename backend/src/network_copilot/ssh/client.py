@@ -377,6 +377,19 @@ def build_client_for_device(device):
         enable_secret=credential.enable_secret,
         device_type=device.device_type,
     )
+    if device.device_type == "paloalto_panos":
+        from .panos import PanosClient
+
+        return PanosClient(
+            target,
+            connect_timeout=current_app.config.get(
+                "SSH_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT
+            ),
+            command_timeout=current_app.config.get(
+                "SSH_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT
+            ),
+            commit_timeout=current_app.config.get("PANOS_COMMIT_TIMEOUT", 600),
+        )
     return SSHClient(
         target,
         connect_timeout=current_app.config.get(

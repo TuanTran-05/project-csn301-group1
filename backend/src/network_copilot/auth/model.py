@@ -65,14 +65,9 @@ class User(db.Model):
 
     __table_args__ = (
         in_check("role", ROLES, "role_valid"),
-        # At most one Administrator; mirrors migration 9e54c2bd3d7e.
-        db.Index(
-            "uq_single_admin",
-            "role",
-            unique=True,
-            sqlite_where=db.text("role = 'ADMIN'"),
-            postgresql_where=db.text("role = 'ADMIN'"),
-        ),
+        # At most one ADMIN account (the same partial index the migration creates).
+        Index("uq_single_admin", "role", unique=True,
+              sqlite_where=text("role = 'ADMIN'"), postgresql_where=text("role = 'ADMIN'")),
     )
 
     teaching_groups = db.relationship(

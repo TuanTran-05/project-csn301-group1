@@ -2,7 +2,9 @@
 
 import re
 
-SENSITIVE_CONFIG_READ = re.compile(r"^show\s+(?:running|startup)-config(?:\s|$)", re.I)
+SENSITIVE_CONFIG_READ = re.compile(
+    r"^show\s+(?:(?:running|startup)-config|config\s+(?:running|candidate|saved))(?:\s|$)", re.I
+)
 
 
 def is_sensitive_verification_command(command: str) -> bool:
@@ -47,7 +49,8 @@ def build_verification_plan(assessment, requested_commands, device):
                 {"id":"ospf-neighbors:"+process,"label":"OSPF neighbors","strategy":"generic","commands":["show ip ospf neighbor"],"required":False,"sensitive":False,"expectation":item.to_dict()},
                 {"id":"ospf-routes:"+process,"label":"OSPF routes","strategy":"generic","commands":["show ip route"],"required":False,"sensitive":False,"expectation":item.to_dict()},
             ]
-    commands = requested or ["show running-config"]
+    default = "show config running" if getattr(device, "device_type", None) == "paloalto_panos" else "show running-config"
+    commands = requested or [default]
     return [{"id": "generic:" + command.casefold().replace(" ", "-"), "label": command, "strategy": "generic", "commands": [command], "required": True, "sensitive": is_sensitive_verification_command(command)} for command in commands]
 
 
