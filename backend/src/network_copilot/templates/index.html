@@ -687,15 +687,6 @@
         <section class="checkpoints" aria-labelledby="checkpoints-heading">
           <div class="checkpoints-heading">
             <h2 id="checkpoints-heading">Lịch sử cấu hình thiết bị</h2>
-            <div class="checkpoints-toolbar" role="group" aria-label="Hoàn tác / làm lại cấu hình thiết bị"
-                 x-show="canRestoreCheckpoints">
-              <button type="button" :disabled="checkpointBusy || !checkpointUndoId"
-                @click="restoreCheckpoint(checkpointUndoId, 'undo')"
-                title="Hoàn tác bước mới nhất (đưa thiết bị về trạng thái trước bước đó)">↶ Undo</button>
-              <button type="button" :disabled="checkpointBusy || !checkpointRedoId"
-                @click="restoreCheckpoint(checkpointRedoId, 'redo')"
-                title="Làm lại bước vừa hoàn tác">↷ Redo</button>
-            </div>
           </div>
           <p class="checkpoint-state" x-show="checkpointBusy" x-cloak>Đang đọc cấu hình thiết bị…</p>
           <p class="checkpoint-state checkpoint-state-error" role="alert" x-show="checkpointError" x-text="checkpointError" x-cloak></p>

@@ -2655,12 +2655,14 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .app-shell .changes-panel { padding: 22px 14px 16px; }
 .app-shell .changes-panel h2 { margin: 0; color: #173c5e; font-size: 14px; letter-spacing: 0.015em; }
 .app-shell .changes-panel .nc-history-heading { margin-bottom: 18px; }
-.app-shell .nc-history-toolbar button {
+.app-shell .nc-history-toolbar button,
+.app-shell .nc-device-toolbar button {
   border-color: #e3eaf1;
   background: #f8fafc;
   color: #254966;
 }
-.app-shell .nc-history-toolbar button:hover:not(:disabled) { background: #fff; }
+.app-shell .nc-history-toolbar button:hover:not(:disabled),
+.app-shell .nc-device-toolbar button:hover:not(:disabled) { background: #fff; }
 .app-shell .changes-panel .sidebar-state {
   color: #71849a;
   font-size: 13px;
@@ -4327,8 +4329,6 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .checkpoints { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .checkpoints-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .checkpoints-heading h2 { margin: 0; font-size: 14px; }
-.checkpoints-toolbar { display: flex; gap: 6px; flex-shrink: 0; }
-.checkpoints-toolbar button,
 .checkpoint-rename button,
 .checkpoint-rename-btn {
   border: 1px solid var(--border);
@@ -4339,7 +4339,6 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   background: var(--surface);
   color: var(--text);
 }
-.checkpoints-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
 .checkpoint-state { margin: 6px 0; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 .checkpoint-state-error { color: var(--danger-text); }
 .checkpoint-state-notice { color: var(--accent); }
@@ -4360,10 +4359,8 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 
 .app-shell .checkpoints { border-top-color: #e7edf3; }
 .app-shell .checkpoints-heading h2 { color: #173c5e; }
-.app-shell .checkpoints-toolbar button,
 .app-shell .checkpoint-rename button,
 .app-shell .checkpoint-rename-btn { border-color: #e3eaf1; background: #f8fafc; color: #254966; }
-.app-shell .checkpoints-toolbar button:hover:not(:disabled) { background: #fff; }
 .app-shell .checkpoint-item { border-color: #e7edf3; background: #fbfcfd; }
 .app-shell .checkpoint-item.checkpoint-active { border-left-color: #123f64; }
 .app-shell .checkpoint-item.checkpoint-undone { border-left-color: #b7c7d6; }
