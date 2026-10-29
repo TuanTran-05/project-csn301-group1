@@ -52,6 +52,11 @@ def create_app(config_object: type | None = None) -> Flask:
     def dashboard_page():
         return render_template("dashboard.html")
 
+    @app.get("/favicon.ico")
+    def favicon():
+        # Browsers ask for /favicon.ico on their own (e.g. for a JSON page).
+        return app.send_static_file("img/favicon.ico")
+
     return app
 
 
