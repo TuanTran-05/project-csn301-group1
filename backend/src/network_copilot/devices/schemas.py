@@ -108,6 +108,9 @@ class DeviceCreateSchema(BaseModel):
     isolated: bool = False
     description: str | None = Field(default=None, max_length=255)
     credential: CredentialSchema | None = None
+    # Store the project's default SSH login on this device. A new managed
+    # device takes it anyway when no credential is given.
+    use_project_ssh: bool = False
     pos_x: float | None = Field(default=None, ge=-100000, le=100000)
     pos_y: float | None = Field(default=None, ge=-100000, le=100000)
 
@@ -126,7 +129,7 @@ class DeviceCreateSchema(BaseModel):
         if unmanaged:
             if self.management_ip:
                 raise ValueError("an unmanaged device has no management_ip")
-            if self.credential is not None:
+            if self.credential is not None or self.use_project_ssh:
                 raise ValueError("an unmanaged device has no SSH credential")
             if self.kind is not None and self.kind not in _UNMANAGED_DEFAULTS:
                 raise ValueError(f"kind {self.kind} needs a Cisco device_type")
@@ -155,6 +158,7 @@ class DeviceUpdateSchema(BaseModel):
     isolated: bool | None = None
     description: str | None = Field(default=None, max_length=255)
     credential: CredentialSchema | None = None
+    use_project_ssh: bool = False
     kind: DeviceKind | None = None
     data_ip: str | None = None
     data_gateway: str | None = None

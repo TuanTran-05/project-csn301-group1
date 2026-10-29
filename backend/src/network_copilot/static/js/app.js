@@ -63,6 +63,17 @@ document.addEventListener("alpine:init", () => {
     batchesLoading: false,
     batchesError: "",
 
+    // -- configuration undo/redo steps (Pending column) --
+    checkpoints: [],
+    checkpointUndoId: null,
+    checkpointRedoId: null,
+    checkpointBusy: false,
+    checkpointError: "",
+    checkpointNotice: "",
+    checkpointRenameId: null,
+    checkpointRenameText: "",
+    _checkpointsGeneration: 0,
+
     // -- chat --
     messages: [],
     messagesLoading: false,
@@ -523,9 +534,12 @@ document.addEventListener("alpine:init", () => {
       return this.projects.find((p) => p.id === this.currentProjectId) || null;
     },
 
+    // Standalone changes waiting for a decision: approve, or (once approved)
+    // apply. Undo/Redo steps land here too, so both stages stay visible.
     get pendingChanges() {
       return Object.values(this.changesById).filter(
-        (change) => change.status === "pending_approval"
+        (change) =>
+          change.status === "pending_approval" || change.status === "approved"
       );
     },
 
@@ -647,6 +661,7 @@ document.addEventListener("alpine:init", () => {
       this.batchActionErrors = {};
       this.batchesLoading = false;
       this.batchesError = "";
+      this._clearCheckpoints();
       this.messages = [];
       this.messagesLoading = false;
       this.hasOlderMessages = false;
@@ -709,6 +724,7 @@ document.addEventListener("alpine:init", () => {
       this.batchActionErrors = {};
       this.batchesLoading = false;
       this.batchesError = "";
+      this._clearCheckpoints();
       this.messages = [];
       this.messagesLoading = false;
       this.hasOlderMessages = false;
@@ -912,6 +928,8 @@ document.addEventListener("alpine:init", () => {
           this.changesById = Object.fromEntries(
             data.items.map((change) => [change.id, change])
           );
+          // A step moves when its restore change does; refresh alongside.
+          this.refreshCheckpoints().catch(() => {});
         }
       } catch (err) {
         if (generation === this._changesRefreshGeneration) {
@@ -1132,6 +1150,109 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    // ---- configuration undo/redo steps ----
+
+    _clearCheckpoints() {
+      this._checkpointsGeneration += 1;
+      this.checkpoints = [];
+      this.checkpointUndoId = null;
+      this.checkpointRedoId = null;
+      this.checkpointBusy = false;
+      this.checkpointError = "";
+      this.checkpointNotice = "";
+      this.checkpointRenameId = null;
+      this.checkpointRenameText = "";
+    },
+
+    get canRestoreCheckpoints() {
+      return Boolean(
+        this.currentUser && ["ADMIN", "TEACHER"].includes(this.currentUser.role)
+      );
+    },
+
+    async refreshCheckpoints() {
+      if (!this.currentProjectId) return;
+      const generation = this._checkpointsGeneration;
+      const data = await this.authFetch("/api/checkpoints?limit=50");
+      if (generation !== this._checkpointsGeneration) return;
+      this.checkpoints = data.items || [];
+      this.checkpointUndoId = data.undo_next_id || null;
+      this.checkpointRedoId = data.redo_next_id || null;
+      // The "approve then apply" hint is only useful while a restore waits.
+      if (!this.checkpoints.some((item) => item.pending_action)) this.checkpointNotice = "";
+    },
+
+    checkpointStateLabel(step) {
+      if (step.pending_action === "undo") return "Chờ hoàn tác";
+      if (step.pending_action === "redo") return "Chờ làm lại";
+      return step.state === "undone" ? "Đã hoàn tác" : "Đang áp dụng";
+    },
+
+    checkpointTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? ""
+        : date.toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+    },
+
+    async restoreCheckpoint(id, action) {
+      if (!id || this.checkpointBusy || !this.canRestoreCheckpoints) return;
+      const step = this.checkpoints.find((item) => item.id === id);
+      const verb = action === "undo" ? "Hoàn tác" : "Làm lại";
+      const name = step ? step.name : `#${id}`;
+      if (
+        !window.confirm(
+          `${verb} "${name}"?\n\nHệ thống đọc cấu hình hiện tại của thiết bị và tạo một ` +
+            "thay đổi chờ duyệt ở cột này. Thiết bị chỉ thay đổi khi bạn Approve rồi Apply."
+        )
+      ) return;
+      const generation = this._checkpointsGeneration;
+      this.checkpointBusy = true;
+      this.checkpointError = "";
+      this.checkpointNotice = "";
+      try {
+        const result = await this.authFetch(`/api/checkpoints/${id}/${action}`, {
+          method: "POST",
+        });
+        if (generation !== this._checkpointsGeneration) return;
+        if (result.change) this.changesById[result.change.id] = result.change;
+        this.checkpointNotice =
+          `Đã tạo thay đổi #${result.change.id} (${verb.toLowerCase()}): ` +
+          "Approve rồi Apply ở trên để áp lên thiết bị.";
+        await this.refreshCheckpoints();
+      } catch (err) {
+        if (generation === this._checkpointsGeneration) {
+          this.checkpointError = err.message || `Không thể ${verb.toLowerCase()}.`;
+        }
+      } finally {
+        if (generation === this._checkpointsGeneration) this.checkpointBusy = false;
+      }
+    },
+
+    startRenameCheckpoint(step) {
+      this.checkpointRenameId = step.id;
+      this.checkpointRenameText = step.name;
+    },
+
+    async saveRenameCheckpoint() {
+      const id = this.checkpointRenameId;
+      const name = (this.checkpointRenameText || "").trim();
+      if (!id || !name) return;
+      try {
+        const updated = await this.authFetch(`/api/checkpoints/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name }),
+        });
+        const index = this.checkpoints.findIndex((item) => item.id === id);
+        if (index >= 0) this.checkpoints[index] = { ...this.checkpoints[index], name: updated.name };
+        this.checkpointRenameId = null;
+        this.checkpointRenameText = "";
+      } catch (err) {
+        this.checkpointError = err.message || "Không đổi được tên.";
+      }
+    },
+
     async approveChange(id) {
       try {
         const generation = this._changesRefreshGeneration;
@@ -1193,6 +1314,7 @@ document.addEventListener("alpine:init", () => {
           this.changesById[id] = updated;
           delete this.confirmInputs[id];
         }
+        this.refreshCheckpoints().catch(() => {});
       } catch (err) {
         alert(err.message);
       }

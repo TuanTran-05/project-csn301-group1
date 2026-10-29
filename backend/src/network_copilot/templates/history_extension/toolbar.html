@@ -1,16 +1,21 @@
 <div class="nc-history-heading">
   <h2>Thay đổi đang chờ</h2>
-  <div class="nc-history-toolbar" role="group" aria-label="Lịch sử cấu hình">
-    <span class="nc-history-tooltip" data-tooltip="Hoàn tác (Undo)">
-      <button type="button" data-history-action="undo" disabled aria-label="Hoàn tác (Undo)" title="Hoàn tác (Undo)">
+  <!-- Undo/redo the configuration applied to devices (Lịch sử cấu hình thiết bị). -->
+  <div class="nc-device-toolbar" role="group" aria-label="Hoàn tác / làm lại cấu hình thiết bị"
+       x-show="canRestoreCheckpoints">
+    <span class="nc-history-tooltip" data-tooltip="Hoàn tác cấu hình thiết bị">
+      <button type="button" :disabled="checkpointBusy || !checkpointUndoId"
+        @click="restoreCheckpoint(checkpointUndoId, 'undo')"
+        aria-label="Hoàn tác cấu hình thiết bị" title="Hoàn tác bước cấu hình mới nhất trên thiết bị">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 4 9l5 5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
       </button>
     </span>
-    <span class="nc-history-tooltip" data-tooltip="Làm lại (Redo)">
-      <button type="button" data-history-action="redo" disabled aria-label="Làm lại (Redo)" title="Làm lại (Redo)">
+    <span class="nc-history-tooltip" data-tooltip="Làm lại cấu hình thiết bị">
+      <button type="button" :disabled="checkpointBusy || !checkpointRedoId"
+        @click="restoreCheckpoint(checkpointRedoId, 'redo')"
+        aria-label="Làm lại cấu hình thiết bị" title="Làm lại bước cấu hình vừa hoàn tác">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5-5 5m5-5H10a6 6 0 0 0 0 12h3"/></svg>
       </button>
     </span>
   </div>
 </div>
-<p class="nc-history-message" role="status" aria-live="polite" hidden></p>
