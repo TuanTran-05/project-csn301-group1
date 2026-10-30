@@ -1,6 +1,14 @@
 <section class="login-screen" x-show="!currentUser" x-cloak>
   <aside class="login-brand" aria-label="Eastern International University">
-    <img class="login-brand-logo" src="{{ url_for('static', filename='img/eiu-logo.jpg') }}" alt="Logo EIU — Trường Đại học Quốc tế Miền Đông" />
+    <div class="login-brand-card">
+      <img class="login-brand-logo" src="{{ url_for('static', filename='img/eiu-logo.jpg') }}" alt="Logo EIU NetAI" />
+      <span class="login-brand-divider" aria-hidden="true"></span>
+      <div class="login-brand-name">
+        <span class="login-brand-acronym">EIU</span>
+        <span class="login-brand-vi">Trường Đại học<br />Quốc tế Miền Đông</span>
+        <span class="login-brand-en">Eastern International University</span>
+      </div>
+    </div>
 
     <div class="login-brand-copy">
       <span class="login-brand-rule" aria-hidden="true"></span>

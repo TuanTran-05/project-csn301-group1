@@ -300,7 +300,7 @@ def import_diagram(project, message_id: int, source_project_id: int | None = Non
                 project,
             )
             device_service._assert_unique(project.id, data.hostname, data.management_ip)
-            prepared.append((node, data.model_dump(exclude={"credential"})))
+            prepared.append((node, data.model_dump(exclude={"credential", "use_project_ssh"})))
 
         devices_by_source: dict[str, Device] = {}
         for node, fields in prepared:

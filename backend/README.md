@@ -53,6 +53,16 @@ Open <http://127.0.0.1:5000/projects>.
   port and its SSH login — from the page or `POST /api/devices`. The password is
   encrypted before it is stored and is never returned. There is no seed list to
   edit.
+- **Default SSH login.** *Thiết bị → SSH mặc định của project* stores one login
+  (encrypted, `project_ssh_defaults`) for the whole lab. A new managed device that
+  is created without a login takes it — from the form, *Nhập từ PNETLab*, CSV,
+  drag-and-drop on the canvas, a restored version, or when a planned device is
+  provisioned. The device form fills it in and offers *Dùng SSH mặc định của
+  project*; *Gán cho N thiết bị chưa có SSH* (or *dùng mặc định* on a row) gives
+  it to existing devices. Like device logins, the password is never returned and
+  the name is only shown to editors: `GET/PUT/DELETE /api/projects/<pid>/ssh-default`,
+  `POST .../ssh-default/apply {"scope": "missing" | "all"}`, and
+  `"use_project_ssh": true` on `POST/PUT /api/devices`.
 - **Sharing.** The owner shares a project with a username as `viewer` (read) or
   `editor` (devices and diagram). Sharing never grants more than the user's
   global role: a `VIEWER` account stays read-only everywhere. An ADMIN can see
@@ -83,7 +93,11 @@ Open <http://127.0.0.1:5000/projects>.
   nodes, fix the management IPs (PNETLab does not know them), and import: devices
   come with their canvas positions and the cables between them. Only private
   lab addresses are accepted as the PNETLab URL, redirects are refused, and the
-  lab password is never stored or logged. vIOS/IOL/CSR nodes become routers,
+  lab password is never logged. *Ghi nhớ đăng nhập PNETLab* saves the address,
+  account, lab path and the password (encrypted, `project_pnetlab_logins`) after a
+  preview that worked; later imports and console bootstraps of that project leave the
+  password empty and the saved one is used, only for that same address and account.
+  It is never returned (`GET/DELETE /api/projects/<pid>/topology/pnetlab-login`). vIOS/IOL/CSR nodes become routers,
   `*l2*` nodes switches, ASAv firewalls; other templates (VPCS, Linux…) are listed
   as unsupported.
 - **Bootstrapping SSH through the console.** A node freshly started in PNETLab has
@@ -554,6 +568,41 @@ Everything below `/api/devices`, `/api/commands`, `/api/changes`,
 `/api/audit-logs` acts on the current project (see *Selecting a project*). The
 role column above is the minimum **project access** (viewer < editor < owner);
 the change workflow keeps its global ADMIN requirement on top.
+
+### Undo / redo of applied configuration
+
+Every change that applies and verifies in configuration mode on a Cisco IOS
+device becomes a named step in **Lịch sử cấu hình thiết bị**, under the
+Pending column of the chat page (`config_checkpoints`). A step keeps the
+running-config captured just before the change (`pre_change` backup) and the
+one captured right after it (`post_change` backup); its default name is
+`<hostname>: <description>` and can be renamed (✎).
+
+* **Undo / Hoàn tác** reads the device's current running-config, computes the
+  lines that bring it back to the step's pre-change config
+  (`checkpoints/diff.py`: lines only in the current config are negated, lines
+  only in the saved one are added, sections are compared line by line) and
+  stores them as an ordinary pending change (`source: restore`). Nothing is
+  written yet: the change goes through Approve → typed hostname → Apply →
+  Verify like any other, with its own backup first. Only when it succeeds does
+  the step become `undone`.
+* **Redo / Làm lại** does the same towards the step's post-change config.
+* Per device the steps are a stack: only the newest active step can be undone,
+  only the most recently undone one redone, and a new change on the device
+  discards its redo steps. While a device has a change pending or running, no
+  undo/redo can be staged for it.
+* An undo restores the *whole* saved config, so any other edit made on the
+  device after that step is removed too (the preview says so). Secrets
+  (`username`, `enable secret`, keys), banners and certificates are never
+  emitted and are listed as left untouched. PAN-OS and ASA are not supported yet.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| GET | `/api/checkpoints` | project viewer | Steps of the current project, with `undo_next_id` / `redo_next_id` |
+| PATCH | `/api/checkpoints/<id>` | project editor | Rename (`{"name": ...}`) |
+| POST | `/api/checkpoints/<id>/undo` · `/redo` | may preview changes | Stage the restore as a pending change (10 req/min) |
+
+`CONFIG_CHECKPOINTS_ENABLED=false` turns step recording off.
 
 ### Change states
 

@@ -1,5 +1,21 @@
 <form class="nc-pending-editor" x-show="pendingEditor" x-cloak @submit.prevent="savePendingEditor()">
-  <strong>Sửa cấu hình đang chờ duyệt</strong>
+  <div class="nc-pending-editor-head">
+    <strong>Sửa cấu hình đang chờ duyệt</strong>
+    <!-- Undo/redo of draft edits (never touches a device). -->
+    <div class="nc-history-toolbar" role="group" aria-label="Lịch sử sửa nháp">
+      <span class="nc-history-tooltip" data-tooltip="Hoàn tác sửa nháp">
+        <button type="button" data-history-action="undo" disabled aria-label="Hoàn tác sửa nháp" title="Hoàn tác sửa nháp (chưa duyệt)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 4 9l5 5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+        </button>
+      </span>
+      <span class="nc-history-tooltip" data-tooltip="Làm lại sửa nháp">
+        <button type="button" data-history-action="redo" disabled aria-label="Làm lại sửa nháp" title="Làm lại sửa nháp (chưa duyệt)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5-5 5m5-5H10a6 6 0 0 0 0 12h3"/></svg>
+        </button>
+      </span>
+    </div>
+  </div>
+  <p class="nc-history-message" role="status" aria-live="polite" hidden></p>
   <label x-show="pendingEditor && pendingEditor.kind === 'batch'">
     Mô tả batch
     <input type="text" maxlength="255" :value="pendingEditor?.description || ''"

@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI Tool</title>
-  <link rel="icon" href="data:," />
+  <link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}" sizes="any" />
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon-32.png') }}" sizes="32x32" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/history-toolbar.css') }}" />
 </head>
@@ -594,11 +596,38 @@
                 class="change-command-summary"
                 x-text="(change.commands || []).join(' · ')"
               ></div>
+              <div class="change-sidebar-description" x-show="change.description" x-text="change.description"></div>
               <span class="risk-pill" x-text="change.risk_level"></span>
+              <span class="status-pill" x-show="change.status === 'approved'">approved</span>
+              <ul class="change-sidebar-warnings" x-show="change.source === 'restore' && (change.warnings || []).length">
+                <template x-for="warning in (change.warnings || []).slice(-2)">
+                  <li x-text="warning"></li>
+                </template>
+              </ul>
+              <div
+                class="batch-sidebar-confirmation"
+                x-show="change.status === 'approved' && change.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+              >
+                <label :for="'sidebar-change-confirm-' + change.id">
+                  Gõ <code x-text="change.device && change.device.hostname"></code> để Apply
+                </label>
+                <input
+                  type="text"
+                  :id="'sidebar-change-confirm-' + change.id"
+                  :placeholder="change.device && change.device.hostname"
+                  x-model="confirmInputs[change.id]"
+                  autocomplete="off"
+                />
+              </div>
               <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
-                <button @click="approveChange(change.id)">Approve</button>
+                <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
+                <button
+                  x-show="change.status === 'approved'"
+                  :disabled="change.requires_confirmation && !confirmHostnameMatches(change.id)"
+                  @click="applyChange(change.id)"
+                >Apply</button>
                 <button @click="cancelChange(change.id)">Cancel</button>
-                <button type="button" x-show="change.requested_by_id === currentUser?.id"
+                <button type="button" x-show="change.status === 'pending_approval' && change.requested_by_id === currentUser?.id"
                   @click="openPendingEditor('change', change.id)">Sửa nháp</button>
               </div>
             </li>
@@ -664,6 +693,52 @@
             </li>
           </template>
         </ul>
+
+        <section class="checkpoints" aria-labelledby="checkpoints-heading">
+          <div class="checkpoints-heading">
+            <h2 id="checkpoints-heading">Lịch sử cấu hình thiết bị</h2>
+          </div>
+          <p class="checkpoint-state" x-show="checkpointBusy" x-cloak>Đang đọc cấu hình thiết bị…</p>
+          <p class="checkpoint-state checkpoint-state-error" role="alert" x-show="checkpointError" x-text="checkpointError" x-cloak></p>
+          <p class="checkpoint-state checkpoint-state-notice" role="status" x-show="checkpointNotice" x-text="checkpointNotice" x-cloak></p>
+          <p class="checkpoint-state" x-show="checkpoints.length === 0">
+            <small>Mỗi lần Apply cấu hình thành công sẽ được lưu thành một bước ở đây để hoàn tác/làm lại.</small>
+          </p>
+          <ol class="checkpoint-list">
+            <template x-for="step in checkpoints" :key="'checkpoint-' + step.id">
+              <li class="checkpoint-item" :class="'checkpoint-' + step.state">
+                <div class="checkpoint-row">
+                  <template x-if="checkpointRenameId !== step.id">
+                    <strong class="checkpoint-name" x-text="step.name"></strong>
+                  </template>
+                  <template x-if="checkpointRenameId === step.id">
+                    <form class="checkpoint-rename" @submit.prevent="saveRenameCheckpoint()">
+                      <input type="text" maxlength="120" x-model="checkpointRenameText"
+                        @keydown.escape="checkpointRenameId = null" aria-label="Tên bước" />
+                      <button type="submit">Lưu</button>
+                    </form>
+                  </template>
+                  <button type="button" class="checkpoint-rename-btn" x-show="checkpointRenameId !== step.id"
+                    @click="startRenameCheckpoint(step)" title="Đặt tên">✎</button>
+                </div>
+                <div class="checkpoint-meta">
+                  <span class="status-pill" x-text="checkpointStateLabel(step)"></span>
+                  <span x-text="step.hostname"></span>
+                  <span x-text="checkpointTime(step.created_at)"></span>
+                  <span x-show="step.created_by" x-text="step.created_by"></span>
+                </div>
+                <div class="change-command-summary" x-text="(step.commands || []).join(' · ')"></div>
+                <div class="checkpoint-result" x-show="step.last_result" x-text="step.last_result"></div>
+                <div class="sidebar-actions" x-show="canRestoreCheckpoints && (step.can_undo || step.can_redo)">
+                  <button type="button" x-show="step.can_undo" :disabled="checkpointBusy"
+                    @click="restoreCheckpoint(step.id, 'undo')">Hoàn tác</button>
+                  <button type="button" x-show="step.can_redo" :disabled="checkpointBusy"
+                    @click="restoreCheckpoint(step.id, 'redo')">Làm lại</button>
+                </div>
+              </li>
+            </template>
+          </ol>
+        </section>
       </aside>
     </div>
   </div>
