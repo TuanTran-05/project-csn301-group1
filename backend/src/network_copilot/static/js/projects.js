@@ -1279,16 +1279,19 @@ document.addEventListener("alpine:init", () => {
     openPnetExport() {
       const slug = ((this.project && this.project.name) || "netai")
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
-        .replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "netai";
+        // PNETLab keeps letters and digits only in a lab's file name.
+        .replace(/[^A-Za-z0-9]+/g, "").slice(0, 40) || "netai";
       const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
       this.pnetExport = {
-        form: { url: "", username: "", password: "", verify_tls: true, folder: "/NetAI",
-                lab_name: `${slug}-${stamp}`, management_cloud: true, remember: true },
+        form: { url: "", username: "", password: "", verify_tls: true, folder: "",
+                lab_name: `${slug}${stamp}`, management_cloud: true, remember: true },
         saved: null, plan: null, loading: false, error: "", job: null,
       };
       const panel = this.pnetExport;
       this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
-        if (this.pnetExport !== panel || !data.saved) return;
+        if (this.pnetExport !== panel) return;
+        if (!panel.form.folder) panel.form.folder = data.export_folder || "";
+        if (!data.saved) return;
         panel.saved = data.saved;
         if (!panel.form.url) panel.form.url = data.saved.url;
         if (!panel.form.username) panel.form.username = data.saved.username;

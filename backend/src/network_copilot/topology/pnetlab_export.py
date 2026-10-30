@@ -21,7 +21,7 @@ from ..devices.model import Device
 from ..errors import AppError
 from ..extensions import db
 from ..integrations.pnetlab import PNETLabClient, PNETLabError
-from ..integrations.pnetlab_writer import ExistingLabError, PNETLabWriter
+from ..integrations.pnetlab_writer import ExistingLabError, PNETLabWriter, lab_file_name
 from ..projects.service import validate
 from .interfaces import normalize_label
 from .model import TopologyLink
@@ -43,7 +43,8 @@ class ExportRequest(BaseModel):
     # Accepted (the saved login carries them) but not used by an export.
     lab: str = Field(default="", max_length=255)
     api_mode: str = Field(default="session", max_length=16)
-    folder: str = Field(default="/NetAI", max_length=255)
+    # Empty: PNETLAB_EXPORT_FOLDER, a folder the export account may write to.
+    folder: str = Field(default="", max_length=255)
     lab_name: str = Field(min_length=1, max_length=64)
     # Cable each managed device's management port to Cloud0.
     management_cloud: bool = True
@@ -217,6 +218,16 @@ def _writer(request: ExportRequest) -> PNETLabWriter:
 
 def validate_request(payload: dict) -> ExportRequest:
     request = validate(ExportRequest, payload, "Export")
+    if not request.folder:
+        request.folder = current_app.config.get("PNETLAB_EXPORT_FOLDER") or "/NetAI"
+    # Use the name PNETLab will keep, so the taken-name check, opening the lab
+    # and deleting it on failure all agree with the file it writes.
+    original = request.lab_name
+    request.lab_name = lab_file_name(original)
+    if not request.lab_name:
+        from ..errors import ValidationError
+
+        raise ValidationError("Lab name needs letters or digits.", {"lab_name": ["Invalid."]})
     _check(request)
     return request
 

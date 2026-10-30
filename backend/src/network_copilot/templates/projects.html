@@ -521,8 +521,10 @@
                     <label>Tài khoản <input type="text" x-model="pnetExport.form.username" required autocomplete="off" /></label>
                     <label>Mật khẩu <input type="password" x-model="pnetExport.form.password" :required="!pnetExportUsesSavedPassword"
                       autocomplete="new-password" :placeholder="pnetExportUsesSavedPassword ? '•••••••• (đã lưu)' : ''" /></label>
-                    <label>Thư mục <input type="text" x-model="pnetExport.form.folder" required placeholder="/NetAI" /></label>
-                    <label>Tên lab mới <input type="text" x-model="pnetExport.form.lab_name" required maxlength="64" /></label>
+                    <label>Thư mục <input type="text" x-model="pnetExport.form.folder" required placeholder="/Courses/CSN301-StudentLab/Group-1"
+                      title="Thư mục tài khoản PNETLab được phép ghi (không phải thư mục gốc /)" /></label>
+                    <label>Tên lab mới <input type="text" x-model="pnetExport.form.lab_name" required maxlength="64"
+                      title="PNETLab chỉ giữ chữ và số trong tên lab: ký tự khác sẽ bị bỏ" /></label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.management_cloud" /> Nối cổng quản trị của thiết bị vào Cloud0</label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.remember" /> Ghi nhớ đăng nhập PNETLab cho project này</label>

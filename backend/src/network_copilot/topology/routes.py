@@ -504,9 +504,14 @@ def get_pnetlab_login(project_id: int):
     """The remembered PNETLab address and account (never the password)."""
     from ..integrations import saved_login
 
+    from flask import current_app
+
     project = _project(project_id, "editor")
     record = saved_login.get_saved(project.id)
-    return jsonify({"saved": record.to_dict() if record else None}), 200
+    return jsonify({
+        "saved": record.to_dict() if record else None,
+        "export_folder": current_app.config.get("PNETLAB_EXPORT_FOLDER") or "/NetAI",
+    }), 200
 
 
 @bp.delete("/pnetlab-login")

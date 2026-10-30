@@ -23,6 +23,12 @@ one lab. It never starts, stops or edits an existing node.
 from .pnetlab import PNETLabClient, PNETLabError, _NoSessionAPI
 
 
+def lab_file_name(name: str) -> str:
+    """The name PNETLab keeps: it drops every character but letters and digits
+    ("netai-probe-create" is saved as netaiprobecreate.unl)."""
+    return "".join(ch for ch in name if ch.isascii() and ch.isalnum())
+
+
 def _is_lab(labinfo: dict, name: str, path: str) -> bool:
     """Whether the session's labinfo describes the lab just created."""
     if not isinstance(labinfo, dict):
@@ -107,11 +113,13 @@ class PNETLabWriter:
         PNETLab builds differ in how a lab is created, so the known ways are
         tried in turn, each checked by reading the session's lab back:
 
+        * what PNETLab's web UI does: ``POST /api/labs`` writes the .unl,
+          then ``factory/create`` with its path opens it (the call the
+          import already uses);
         * ``factory/create`` with the parent folder and a name
-          (pnetlab-mcp-server), then with the file path;
-        * the EVE-NG way PNETLab inherits: ``POST /api/labs`` writes the
-          .unl, then ``factory/create`` with its path opens it (the call the
-          import already uses).
+          (pnetlab-mcp-server), then with the file path.
+
+        ``name`` must already be what PNETLab keeps (see ``lab_file_name``).
 
         A failure reports what PNETLab answered to each attempt.
         """
@@ -153,14 +161,35 @@ class PNETLabWriter:
             return True
 
         create = "/api/labs/session/factory/create"
+        # What PNETLab's own "Add new lab" sends (captured on the CSN301
+        # server): the folder with a trailing slash, the account's user id as
+        # author, and access for that account only; then the lab is opened.
+        user_id = self.user_id()
+        ui_body = {**meta, "path": folder.rstrip("/") + "/", "scripttimeout": 300, "countdown": 60}
+        if user_id:
+            ui_body.update(author=user_id, openable=2, openable_emails=[user_id],
+                           joinable=2, joinable_emails=[user_id], editable=2, editable_emails=[user_id])
+        if attempt("POST /api/labs", "POST", "/api/labs", ui_body) \
+                and attempt("open", "POST", create, {"path": path}) and opened():
+            return path
+        # Older builds and pnetlab-mcp-server create through factory/create.
         if attempt("factory/create folder+name", "POST", create, {"path": folder, **meta}) and opened():
             return path
         if attempt("factory/create path", "POST", create, {"path": path, **meta}) and opened():
             return path
-        if attempt("POST /api/labs", "POST", "/api/labs", {"path": folder, **meta}) \
-                and attempt("open", "POST", create, {"path": path}) and opened():
-            return path
         raise PNETLabError(f"PNETLab could not create the lab {path}. Answers: " + "; ".join(answers))
+
+    def user_id(self) -> str | None:
+        """This account's PNETLab user id (the UI sends it as the lab author)."""
+        status, data, _ = self.client._send("GET", "/api/auth")
+        info = data.get("data") if isinstance(data, dict) and not self.client._failed(status, data) else None
+        if not isinstance(info, dict):
+            return None
+        for key in ("id", "user_id", "uid", "user"):
+            value = info.get(key)
+            if isinstance(value, (int, str)) and str(value).isdigit():
+                return str(value)
+        return None
 
     def lab_exists(self, folder: str, name: str) -> bool:
         """Whether the folder already lists ``<name>.unl`` (False if unreadable)."""
