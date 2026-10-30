@@ -513,8 +513,8 @@
                 <div class="card pnet-export">
                   <h4>Đẩy sơ đồ sang PNETLab</h4>
                   <p class="hint">Tạo một <strong>lab mới</strong> trên PNETLab từ sơ đồ này: mỗi thiết bị thành một node (vIOS, vIOS-L2, ASAv, PA-VM, VPCS)
-                    đặt đúng vị trí, mỗi dây nối thành dây nối, cổng quản trị nối vào Cloud0. Node được tạo ở trạng thái tắt, chưa cấu hình;
-                    sau đó bật node và dùng "Khởi tạo SSH qua console" ở tab Thiết bị. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối.
+                    đặt đúng vị trí, mỗi dây nối thành dây nối, cổng quản trị nối vào Cloud0. Với "Bật node và khởi tạo SSH", NetAI bật các node
+                    rồi cấu hình IP quản trị và SSH qua console khi chúng boot xong; bỏ tick thì node để tắt, chưa cấu hình. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối.
                     Nếu lỗi giữa chừng, hệ thống thử xoá lab vừa tạo dở; tài khoản không có quyền xoá thì đường dẫn lab được báo lại để admin xoá.
                     Tên lab chỉ giữ chữ và số (PNETLab tự bỏ ký tự khác). Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
                   <p class="hint warn-text">PNETLab chỉ cho một phiên đăng nhập mỗi tài khoản: mỗi lần NetAI đăng nhập (Xem trước, Tạo lab),
@@ -576,7 +576,7 @@
                     <p class="hint" x-show="pnetExport.job && pnetExport.job.current"
                       x-text="pnetExport.job && pnetExport.job.current ? 'Đang làm: ' + (pnetExport.job.current.message || '') : ''"></p>
                     <template x-for="item in (pnetExport.job ? pnetExport.job.devices : [])" :key="item.hostname">
-                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span><span x-show="pnetExportSsh(item)" x-text="' · ' + pnetExportSsh(item)"></span></p>
+                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span><span x-show="item.cloud0 && item.cloud0.length" x-text="' · Cloud0: ' + (item.cloud0 || []).join(', ')"></span><span x-show="pnetExportSsh(item)" x-text="' · ' + pnetExportSsh(item)"></span></p>
                     </template>
                     <p class="ok-text" x-show="pnetExport.job && pnetExport.job.status === 'done'">
                       Đã tạo <strong x-text="pnetExport.job && pnetExport.job.summary ? pnetExport.job.summary.lab_path : ''"></strong>
@@ -1361,6 +1361,18 @@
         </div>
       </template>
       <div class="form-actions"><button type="button" class="primary-btn" @click="versionsOpen = false">Đóng</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="pnetExport && pnetExport.confirm" x-cloak @click.self="pnetExportCancel()"
+    @keydown.escape.window="pnetExportCancel()">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Tạo lab trên PNETLab" data-testid="pnet-export-confirm">
+      <h3>Tạo lab trên PNETLab</h3>
+      <p x-text="pnetExport ? pnetExport.confirm : ''"></p>
+      <div class="form-actions">
+        <button type="button" class="primary-btn" @click="pnetExportConfirm()" data-testid="pnet-export-confirm-ok">Tạo lab</button>
+        <button type="button" @click="pnetExportCancel()">Huỷ</button>
+      </div>
     </div>
   </div>
 
