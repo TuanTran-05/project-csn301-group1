@@ -7,12 +7,15 @@ Cloud0 (pnet0) network, and a shared segment a bridge network.
 
 It only ever creates a *new* lab under a folder of its own; a lab name that
 is taken is refused, and a build that fails part way deletes what it made.
-Nodes are created stopped and unconfigured: the console bootstrap (Thiết bị
--> Khởi tạo) gives them a management address and SSH afterwards.
+Nodes are created stopped and unconfigured. With ``start_and_bootstrap`` the
+export then starts them and, as each finishes booting, gives every managed
+device its management address and SSH through the console (the same work as
+Thiết bị -> Khởi tạo), with the lab login of the form (g1/group1 by default).
 """
 
 import logging
 import re
+import time
 
 from flask import current_app
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +51,11 @@ class ExportRequest(BaseModel):
     lab_name: str = Field(min_length=1, max_length=64)
     # Cable each managed device's management port to Cloud0.
     management_cloud: bool = True
+    # Start the nodes, then give managed devices SSH through their console.
+    start_and_bootstrap: bool = False
+    # The login put on those devices (and saved as theirs); empty: LAB_SSH_*.
+    ssh_username: str = Field(default="", max_length=64)
+    ssh_password: str = Field(default="", max_length=128)
 
 
 # -- what each NetAI device becomes ----------------------------------------------
@@ -381,11 +389,119 @@ def run(project, payload: dict, progress=None) -> dict:
             ) from exc
         raise PNETLabError(f"{message} The half-built lab {path} was deleted.") from exc
 
-    return {
-        "devices": results, "api": "session",
-        "summary": {"lab_path": path, "cables": cabled, "networks": len(network_ids),
-                    "management": len(built["management"]), "warnings": built["warnings"]},
-    }
+    summary = {"lab_path": path, "cables": cabled, "networks": len(network_ids),
+               "management": len(built["management"]), "warnings": built["warnings"]}
+    if request.start_and_bootstrap:
+        summary.update(_bring_up(project, request, built, results, node_ids, writer, path, progress))
+    return {"devices": results, "api": "session", "summary": summary}
+
+
+# -- start the nodes and bootstrap SSH -------------------------------------------------
+
+BOOTSTRAPPED = ("cisco_ios", "paloalto_panos")
+# Console answers that mean "still booting": try again a little later.
+BOOTING = ("did not answer", "privileged EXEC", "Cannot open the console", "closed.",
+           "No prompt after", "is stopped")
+
+
+def _lab_login(request: ExportRequest) -> tuple[str, str]:
+    config = current_app.config
+    return (request.ssh_username or config.get("LAB_SSH_USERNAME") or "g1",
+            request.ssh_password or config.get("LAB_SSH_PASSWORD") or "group1")
+
+
+def _still_booting(item: dict) -> bool:
+    return item.get("status") in ("error", "skipped") and not item.get("errors") and \
+        any(marker in (item.get("message") or "") for marker in BOOTING)
+
+
+def _bring_up(project, request, built, results, node_ids, writer, path, progress) -> dict:
+    """Start every new node, then bootstrap SSH on the managed ones as they boot.
+
+    The lab is built by now and stays whatever happens here: a node that
+    does not start or boot is reported on its row, never rolled back.
+    """
+    from ..credentials.service import store_device_credential
+    from . import bootstrap
+
+    username, password = _lab_login(request)
+    by_host = {r["hostname"]: r for r in results}
+    targets = []
+    for entry in built["nodes"]:
+        node_id = node_ids.get(entry["hostname"])
+        if node_id is None:
+            continue
+        result = by_host[entry["hostname"]]
+        device = db.session.get(Device, entry["device_id"])
+        if device is None or not device.managed or device.device_type not in BOOTSTRAPPED:
+            continue
+        if not device.management_ip:
+            result.update(ssh="skipped", ssh_message="No management IP; give it one, then use Thiết bị -> Khởi tạo.")
+            continue
+        # The exported device now lives in this lab, reached with the lab login.
+        device.environment = "pnetlab"
+        store_device_credential(device.id, username, password, None, commit=False)
+        targets.append({"device_id": device.id, "node_id": str(node_id)})
+        result.update(ssh="pending", ssh_message="Waiting for the node to boot.")
+    db.session.commit()
+
+    started = 0
+    for hostname, node_id in node_ids.items():
+        progress(hostname=hostname, phase="start", message="Starting node")
+        try:
+            writer.start_node(node_id)
+            started += 1
+            by_host[hostname]["started"] = True
+        except PNETLabError as exc:
+            by_host[hostname].update(started=False, ssh_message=f"Could not start: {exc.message}")
+            targets = [t for t in targets if t["node_id"] != str(node_id)]
+            if by_host[hostname].get("ssh") == "pending":
+                by_host[hostname]["ssh"] = "error"
+
+    payload = {"url": request.url, "username": request.username, "password": request.password,
+               "verify_tls": request.verify_tls, "lab": path, "api_mode": "session"}
+    timeout = float(current_app.config.get("PNETLAB_BOOT_TIMEOUT", 900))
+    pause = float(current_app.config.get("PNETLAB_BOOT_RETRY_SECONDS", 30))
+    deadline = time.monotonic() + timeout
+    by_id = {t["device_id"]: t for t in targets}
+    pending = list(targets)
+    while pending:
+        progress(phase="bootstrap", message=f"SSH on {len(pending)} device(s), waiting for them to boot")
+        retry_all = False
+        try:
+            report = bootstrap.run(project, {**payload, "devices": pending}, progress)["devices"]
+        except AppError as exc:  # PNETLab itself did not answer: try again
+            retry_all = True
+            report = [{"device_id": t["device_id"], "status": "error", "message": exc.message}
+                      for t in pending]
+        except Exception as exc:  # keep the built lab's summary; report, do not retry
+            logger.exception("Bootstrap after the PNETLab export failed")
+            report = [{"device_id": t["device_id"], "status": "error",
+                       "message": f"Bootstrap failed ({type(exc).__name__}); see the server log."}
+                      for t in pending]
+        waiting = []
+        for item in report:
+            target = by_id.get(item.get("device_id"))
+            hostname = next((h for h, n in node_ids.items() if target and str(n) == target["node_id"]), None)
+            if hostname is None:
+                continue
+            by_host[hostname].update(ssh=item.get("status"), ssh_message=item.get("message"))
+            if item.get("errors"):
+                by_host[hostname]["ssh_errors"] = item["errors"]
+            if retry_all or _still_booting(item):
+                waiting.append(target)
+        pending = waiting
+        if pending and time.monotonic() + pause < deadline:
+            time.sleep(pause)
+        else:
+            break
+    for result in results:
+        if result.get("ssh") in ("pending", "error", "skipped") and result.get("ssh_message") and \
+                any(marker in result["ssh_message"] for marker in BOOTING):
+            result["ssh_message"] += " (still booting? run Thiết bị -> Khởi tạo later)"
+    return {"started": started, "ssh_user": username,
+            "ssh_ok": sum(1 for r in results if r.get("ssh") == "ok"),
+            "ssh_total": len(targets)}
 
 
 __all__ = ["ExistingLabError", "interface_index", "plan", "preview", "run", "validate_request"]

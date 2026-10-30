@@ -381,3 +381,85 @@ def test_pnetlab_5_3_lists_the_folder_with_a_query_string(client, admin_headers,
     taken = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
                         json=body(**folder, lab_name="Group1Lab1")).get_json()
     assert taken["blocked"] is True and "already exists" in taken["warnings"][0]
+
+
+# -- start the nodes and bootstrap SSH ------------------------------------------------
+
+def test_start_and_bootstrap_waits_for_each_node_to_boot(client, admin_headers, base, cabled, fake_pnetlab,
+                                                          app, monkeypatch):
+    from network_copilot.credentials.service import get_device_credential
+    from network_copilot.topology import bootstrap
+
+    app.config.update(PNETLAB_BOOT_TIMEOUT=60, PNETLAB_BOOT_RETRY_SECONDS=0)
+    rounds = []
+
+    def fake_run(project, payload, progress=None):
+        rounds.append(payload)
+        devices = []
+        for target in payload["devices"]:
+            device = db.session.get(type(cabled["r1"]), target["device_id"])
+            if device.hostname == "R1" and len(rounds) == 1:
+                devices.append({"device_id": device.id, "status": "error",
+                                "message": "The console did not answer; is the node fully booted?"})
+            else:
+                devices.append({"device_id": device.id, "status": "ok", "message": "SSH answers."})
+        return {"devices": devices}
+
+    monkeypatch.setattr(bootstrap, "run", fake_run)
+    response = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body(start_and_bootstrap=True))
+    assert response.status_code == 202, response.get_json()
+    job = response.get_json()["job"]
+    assert job["status"] == "done", job
+
+    started = [json["id"] for _, path, json in fake_pnetlab.calls if path.endswith("/nodes/start")]
+    assert sorted(started) == [1, 2, 3, 4]  # the ASA starts too
+    # The ASA is not bootstrapped; R1 was retried once it had booted.
+    assert len(rounds) == 2 and len(rounds[0]["devices"]) == 3 and len(rounds[1]["devices"]) == 1
+    assert rounds[0]["lab"] == "/NetAI/csn301lab.unl" and rounds[0]["api_mode"] == "session"
+    ssh = {d["hostname"]: d.get("ssh") for d in job["devices"]}
+    assert ssh == {"R1": "ok", "SW1": "ok", "SW2": "ok", "FW1": None}
+    assert job["summary"]["ssh_ok"] == 3 and job["summary"]["started"] == 4
+    assert job["summary"]["ssh_user"] == "g1"
+    credential = get_device_credential(cabled["r1"].id)
+    assert (credential.username, credential.password) == ("g1", "group1")
+    db.session.refresh(cabled["r1"])
+    assert cabled["r1"].environment == "pnetlab"
+
+
+def test_a_typed_ssh_login_wins_and_a_node_that_never_boots_is_reported(client, admin_headers, base, cabled,
+                                                                       fake_pnetlab, monkeypatch):
+    from network_copilot.credentials.service import get_device_credential
+    from network_copilot.topology import bootstrap
+
+    def fake_run(project, payload, progress=None):
+        return {"devices": [{"device_id": t["device_id"], "status": "error",
+                             "message": "The console did not answer; is the node fully booted?"}
+                            for t in payload["devices"]]}
+
+    monkeypatch.setattr(bootstrap, "run", fake_run)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers,
+                      json=body(start_and_bootstrap=True, ssh_username="netai", ssh_password="Secret-1")).get_json()["job"]
+    assert job["status"] == "done", job  # the lab stays; the rows say what is left to do
+    r1 = next(d for d in job["devices"] if d["hostname"] == "R1")
+    assert r1["ssh"] == "error" and "Khởi tạo later" in r1["ssh_message"]
+    assert not fake_pnetlab.deleted
+    assert get_device_credential(cabled["r1"].id).username == "netai"
+
+
+def test_start_and_bootstrap_takes_the_project_owner(client, admin_headers, base, cabled, fake_pnetlab,
+                                                    monkeypatch):
+    from network_copilot.projects import service as project_service
+    from network_copilot.topology import bootstrap
+
+    needs = []
+    original = project_service.require_project
+
+    def spy(user, project_id, need):
+        needs.append(need)
+        return original(user, project_id, need)
+
+    monkeypatch.setattr(project_service, "require_project", spy)
+    monkeypatch.setattr(bootstrap, "run", lambda project, payload, progress=None: {"devices": []})
+    client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body())
+    client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body(lab_name="other", start_and_bootstrap=True))
+    assert needs == ["editor", "owner"]

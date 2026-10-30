@@ -265,6 +265,10 @@ class PNETLabWriter:
             "node_id": str(node_id), "data": {str(int(index)): str(network_id)},
         }, what=f"attach node {node_id} to network {network_id}")
 
+    def start_node(self, node_id: str) -> None:
+        self._call("POST", "/api/labs/session/nodes/start", {"id": int(node_id)},
+                   what=f"start node {node_id}")
+
     def delete_lab(self, path: str) -> str | None:
         """Close the session's lab and delete its file. Never raises.
 

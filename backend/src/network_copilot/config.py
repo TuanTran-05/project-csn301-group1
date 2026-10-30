@@ -68,6 +68,13 @@ class Config:
     PNETLAB_EXPORT_FOLDER = os.environ.get(
         "PNETLAB_EXPORT_FOLDER", "/Courses/CSN301-StudentLab/Group-1"
     )
+    # "Đẩy sang PNETLab" can start the new nodes and give them SSH through the
+    # console with this login (a lab default, changed in the export form).
+    LAB_SSH_USERNAME = os.environ.get("LAB_SSH_USERNAME", "g1")
+    LAB_SSH_PASSWORD = os.environ.get("LAB_SSH_PASSWORD", "group1")
+    # How long to keep trying a console while the started nodes boot.
+    PNETLAB_BOOT_TIMEOUT = int(os.environ.get("PNETLAB_BOOT_TIMEOUT", "900"))
+    PNETLAB_BOOT_RETRY_SECONDS = float(os.environ.get("PNETLAB_BOOT_RETRY_SECONDS", "30"))
     # A failed post-change verification is re-read this many more times,
     # this many seconds apart: links and trunks take a moment to come up.
     VERIFICATION_RETRIES = int(os.environ.get("VERIFICATION_RETRIES", "2"))
@@ -141,6 +148,8 @@ class TestConfig(Config):
     BOOTSTRAP_SSH_RETRY_SECONDS = 0
     BOOTSTRAP_PANOS_SSH_RETRY_SECONDS = 0
     BOOTSTRAP_PANOS_RETRY_SECONDS = 0
+    PNETLAB_BOOT_TIMEOUT = 0
+    PNETLAB_BOOT_RETRY_SECONDS = 0
 
 
 class ForeignKeyTestConfig(TestConfig):

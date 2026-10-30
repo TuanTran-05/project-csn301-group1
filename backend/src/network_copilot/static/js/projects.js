@@ -1284,13 +1284,15 @@ document.addEventListener("alpine:init", () => {
       const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
       this.pnetExport = {
         form: { url: "", username: "", password: "", verify_tls: true, folder: "",
-                lab_name: `${slug}${stamp}`, management_cloud: true, remember: true },
+                lab_name: `${slug}${stamp}`, management_cloud: true, remember: true,
+                start_and_bootstrap: true, ssh_username: "", ssh_password: "" },
         saved: null, plan: null, loading: false, error: "", job: null,
       };
       const panel = this.pnetExport;
       this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
         if (this.pnetExport !== panel) return;
         if (!panel.form.folder) panel.form.folder = data.export_folder || "";
+        if (!panel.form.ssh_username) panel.form.ssh_username = data.lab_ssh_username || "";
         if (!data.saved) return;
         panel.saved = data.saved;
         if (!panel.form.url) panel.form.url = data.saved.url;
@@ -1306,10 +1308,20 @@ document.addEventListener("alpine:init", () => {
       return trim(panel.form.url) === trim(panel.saved.url) && trim(panel.form.username) === panel.saved.username;
     },
 
+    pnetExportSsh(item) {
+      if (!item.ssh) return item.started ? "đã bật" : "";
+      const label = { ok: "SSH OK", configured: "đã cấu hình, SSH chưa trả lời", pending: "đang chờ boot",
+                      skipped: "bỏ qua", refused: "bỏ qua", error: "lỗi SSH" }[item.ssh] || item.ssh;
+      return item.ssh_message && item.ssh !== "ok" ? `${label} — ${item.ssh_message}` : label;
+    },
+
     _pnetExportBody() {
       const f = this.pnetExport.form;
       return { url: f.url, username: f.username, password: f.password, verify_tls: !!f.verify_tls,
-               folder: f.folder, lab_name: f.lab_name, management_cloud: !!f.management_cloud };
+               folder: f.folder, lab_name: f.lab_name, management_cloud: !!f.management_cloud,
+               start_and_bootstrap: !!f.start_and_bootstrap,
+               ssh_username: f.start_and_bootstrap ? f.ssh_username : "",
+               ssh_password: f.start_and_bootstrap ? f.ssh_password : "" };
     },
 
     async pnetExportPreview() {
@@ -1334,7 +1346,10 @@ document.addEventListener("alpine:init", () => {
       const panel = this.pnetExport;
       if (!panel.plan || panel.plan.blocked) return;
       const ready = panel.plan.nodes.filter((n) => n.ready).length;
-      if (!window.confirm(`Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node? Node được tạo ở trạng thái tắt; không lab nào khác bị đụng tới.`)) return;
+      const then = panel.form.start_and_bootstrap
+        ? " Sau đó bật các node và khởi tạo SSH qua console (có thể mất 5–15 phút)."
+        : " Node được tạo ở trạng thái tắt.";
+      if (!window.confirm(`Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node?${then} Không lab nào khác bị đụng tới.`)) return;
       panel.error = "";
       panel.loading = true;
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

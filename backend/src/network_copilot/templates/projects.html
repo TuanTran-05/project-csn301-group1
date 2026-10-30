@@ -530,6 +530,9 @@
                     <label>Tên lab mới <input type="text" x-model="pnetExport.form.lab_name" required maxlength="64"
                       title="PNETLab chỉ giữ chữ và số trong tên lab: ký tự khác sẽ bị bỏ" /></label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.management_cloud" /> Nối cổng quản trị của thiết bị vào Cloud0</label>
+                    <label class="check"><input type="checkbox" x-model="pnetExport.form.start_and_bootstrap" /> Bật node và khởi tạo SSH qua console (lưu tài khoản này cho thiết bị)</label>
+                    <label x-show="pnetExport.form.start_and_bootstrap">Tài khoản SSH <input type="text" x-model="pnetExport.form.ssh_username" autocomplete="off" placeholder="g1" /></label>
+                    <label x-show="pnetExport.form.start_and_bootstrap">Mật khẩu SSH <input type="password" x-model="pnetExport.form.ssh_password" autocomplete="new-password" placeholder="để trống: mật khẩu mặc định (group1)" /></label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.remember" /> Ghi nhớ đăng nhập PNETLab cho project này</label>
                     <div class="form-actions">
@@ -573,12 +576,14 @@
                     <p class="hint" x-show="pnetExport.job && pnetExport.job.current"
                       x-text="pnetExport.job && pnetExport.job.current ? 'Đang làm: ' + (pnetExport.job.current.message || '') : ''"></p>
                     <template x-for="item in (pnetExport.job ? pnetExport.job.devices : [])" :key="item.hostname">
-                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span></p>
+                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span><span x-show="pnetExportSsh(item)" x-text="' · ' + pnetExportSsh(item)"></span></p>
                     </template>
                     <p class="ok-text" x-show="pnetExport.job && pnetExport.job.status === 'done'">
                       Đã tạo <strong x-text="pnetExport.job && pnetExport.job.summary ? pnetExport.job.summary.lab_path : ''"></strong>
                       (<span x-text="pnetExport.job && pnetExport.job.summary ? pnetExport.job.summary.cables : 0"></span> dây nối).
-                      Mở lab này trên PNETLab bằng tài khoản của bạn, bật node, rồi khởi tạo SSH ở tab Thiết bị.
+                      <span x-show="!(pnetExport.job && pnetExport.job.summary && pnetExport.job.summary.ssh_user)">Mở lab này trên PNETLab bằng tài khoản của bạn, bật node, rồi khởi tạo SSH ở tab Thiết bị.</span>
+                      <span x-show="pnetExport.job && pnetExport.job.summary && pnetExport.job.summary.ssh_user"
+                        x-text="pnetExport.job && pnetExport.job.summary ? `Đã bật ${pnetExport.job.summary.started} node; SSH sẵn sàng trên ${pnetExport.job.summary.ssh_ok}/${pnetExport.job.summary.ssh_total} thiết bị (tài khoản ${pnetExport.job.summary.ssh_user}).` : ''"></span>
                     </p>
                   </div>
                 </div>
