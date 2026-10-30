@@ -116,6 +116,7 @@ def chat():
     user = current_user()
     user_id = user.id if user else None
     username = user.username if user else None
+    project_read_only = project_service.access_level(user, project) == "viewer"
     # Chat sessions are shared by the project; resolve a missing or foreign
     # project session to the latest session the caller may access.
     data.session_id = resolve_or_create_session(
@@ -123,8 +124,15 @@ def chat():
     ).id
     g.chat_session_id = data.session_id
 
-    if data.mode == "design" and user.role == "VIEWER":
-        raise ForbiddenError("Viewer accounts can ask questions and run read-only show commands, but cannot create or apply network designs.")
+    if project_read_only and (
+        data.mode == "design"
+        or requests_network_design(data.message)
+        or requests_project(data.message)
+    ):
+        raise ForbiddenError(
+            "Quyền Viewer trong project chỉ cho phép chạy lệnh show chỉ-đọc; "
+            "không thể tạo project, topology hoặc cấu hình thiết bị."
+        )
 
     if (
         user.role == "OPERATOR"
@@ -150,7 +158,7 @@ def chat():
         return jsonify({"intent": "project_created", "explanation": content,
                         "session_id": session.id, **payload}), 201
 
-    if user.role == "OPERATOR":
+    if user.role == "OPERATOR" and not project_read_only:
         from ..chat.model import ChatMessage, ChatSession
         prompt = db.session.query(ChatMessage).filter_by(
             session_id=data.session_id, role="assistant"
@@ -181,7 +189,7 @@ def chat():
             service.provider, data.message, project,
             service._recent_history(data.session_id, data.message, project.id),
         )
-    elif user.role != "VIEWER" and requests_network_design(data.message):
+    elif not project_read_only and user.role != "VIEWER" and requests_network_design(data.message):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
         result = AIService().handle(

@@ -108,7 +108,7 @@ document.addEventListener("alpine:init", () => {
     // Starter prompts built from this project's real devices, so a new chat
     // is never a blank box.
     get suggestions() {
-      if (this.designMode) {
+      if (this.designMode && this.canManageProjectConfiguration) {
         return [
           "Chia mạng thành 3 VLAN: Kế toán, Kỹ thuật, Khách; gateway trên switch lõi",
           "Dùng dải 192.168.0.0/16 và chạy OSPF giữa các router",
@@ -129,13 +129,13 @@ document.addEventListener("alpine:init", () => {
       }
       if (this.devices.length) {
         prompts.push("Thiết bị nào đang offline?");
-        if (this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role)) {
+        if (this.canManageProjectConfiguration) {
           prompts.push("Lưu cấu hình trên toàn bộ thiết bị");
         }
       } else {
         prompts.push("Mạng của tôi cần những gì để bắt đầu?");
       }
-      if (this.currentUser && this.currentUser.role === "OPERATOR") {
+      if (this.currentUser && this.currentUser.role === "OPERATOR" && this.canManageProjectConfiguration) {
         prompts.unshift("Tạo project mới");
       }
       return prompts;
@@ -265,7 +265,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     toggleDesignMode() {
-      if (this.currentUser && this.currentUser.role === "VIEWER") return;
+      if (!this.canManageProjectConfiguration) return;
       this.designMode = !this.designMode;
       try { localStorage.setItem("nc_design_mode", this.designMode ? "1" : "0"); } catch { /* optional */ }
       this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
@@ -757,6 +757,10 @@ document.addEventListener("alpine:init", () => {
           if (generation !== this._sessionGeneration) return;
         }
         if (generation !== this._sessionGeneration) return;
+      }
+      if (!this.canManageProjectConfiguration && this.designMode) {
+        this.designMode = false;
+        try { localStorage.removeItem("nc_design_mode"); } catch { /* optional */ }
       }
       if (this.noProject) return;
       this.changesLoading = true;
@@ -1668,7 +1672,7 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify({
             message: text,
             session_id: this.currentSessionId,
-            ...(this.designMode ? { mode: "design" } : {}),
+            ...(this.designMode && this.canManageProjectConfiguration ? { mode: "design" } : {}),
           }),
         });
         if (generation !== this._messagesRefreshGeneration) return;

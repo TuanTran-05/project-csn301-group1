@@ -550,7 +550,7 @@
           <span class="dots"><i></i><i></i><i></i></span> AI đang xử lý…
         </div>
         <form class="chat-input" @submit.prevent="sendMessage()">
-          <button type="button" class="mode-toggle" x-show="currentUser && currentUser.role !== 'VIEWER'" :class="{ active: designMode }" :aria-pressed="designMode"
+          <button type="button" class="mode-toggle" x-show="canManageProjectConfiguration" :class="{ active: designMode }" :aria-pressed="designMode"
             @click="toggleDesignMode()" :disabled="noProject"
             title="Bật để AI thiết kế VLAN, IP, gateway và định tuyến cho project">Thiết kế mạng</button>
           <label class="sr-only" for="chat-message">Tin nhắn cho AI Tool</label>
@@ -562,7 +562,7 @@
             :disabled="sending || noProject"
             @keydown="onComposerKeydown($event)"
             @input="autoGrow($event.target)"
-            :placeholder="designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
+            :placeholder="!canManageProjectConfiguration ? 'Quyền Viewer: chỉ chạy lệnh show, ví dụ: show ip route R1' : designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
           ></textarea>
           <button type="submit" :disabled="sending || noProject || !draftMessage.trim()">Gửi</button>
         </form>
