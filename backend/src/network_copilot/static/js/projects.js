@@ -183,6 +183,8 @@ document.addEventListener("alpine:init", () => {
 
     // -- PNETLab import --
     pnet: null,
+    // "Đẩy sang PNETLab": the push-to-PNETLab panel on the topology tab, or null.
+    pnetExport: null,
 
     // -- sharing --
     members: [],
@@ -1267,6 +1269,90 @@ document.addEventListener("alpine:init", () => {
         boot.error = this.describeError(err);
       } finally {
         boot.loading = false;
+      }
+    },
+
+    // ------------------------------------------------------------------
+    // push the topology to PNETLab as a new lab
+    // ------------------------------------------------------------------
+
+    openPnetExport() {
+      const slug = ((this.project && this.project.name) || "netai")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
+        .replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "netai";
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      this.pnetExport = {
+        form: { url: "", username: "", password: "", verify_tls: true, folder: "/NetAI",
+                lab_name: `${slug}-${stamp}`, management_cloud: true, remember: true },
+        saved: null, plan: null, loading: false, error: "", job: null,
+      };
+      const panel = this.pnetExport;
+      this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
+        if (this.pnetExport !== panel || !data.saved) return;
+        panel.saved = data.saved;
+        if (!panel.form.url) panel.form.url = data.saved.url;
+        if (!panel.form.username) panel.form.username = data.saved.username;
+        panel.form.verify_tls = data.saved.verify_tls;
+      }).catch(() => {});
+    },
+
+    get pnetExportUsesSavedPassword() {
+      const panel = this.pnetExport;
+      if (!panel || !panel.saved || panel.form.password) return false;
+      const trim = (value) => (value || "").trim().replace(/\/+$/, "");
+      return trim(panel.form.url) === trim(panel.saved.url) && trim(panel.form.username) === panel.saved.username;
+    },
+
+    _pnetExportBody() {
+      const f = this.pnetExport.form;
+      return { url: f.url, username: f.username, password: f.password, verify_tls: !!f.verify_tls,
+               folder: f.folder, lab_name: f.lab_name, management_cloud: !!f.management_cloud };
+    },
+
+    async pnetExportPreview() {
+      const panel = this.pnetExport;
+      panel.error = "";
+      panel.plan = null;
+      panel.job = null;
+      panel.loading = true;
+      try {
+        panel.plan = await this.authFetch(this.topologyUrl("/export/pnetlab/preview"), {
+          method: "POST",
+          body: JSON.stringify({ ...this._pnetExportBody(), remember: !!panel.form.remember }),
+        });
+      } catch (err) {
+        panel.error = this.describeError(err);
+      } finally {
+        panel.loading = false;
+      }
+    },
+
+    async pnetExportRun() {
+      const panel = this.pnetExport;
+      if (!panel.plan || panel.plan.blocked) return;
+      const ready = panel.plan.nodes.filter((n) => n.ready).length;
+      if (!window.confirm(`Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node? Node được tạo ở trạng thái tắt; không lab nào khác bị đụng tới.`)) return;
+      panel.error = "";
+      panel.loading = true;
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      try {
+        const started = await this.authFetch(this.topologyUrl("/export/pnetlab"), {
+          method: "POST",
+          body: JSON.stringify(this._pnetExportBody()),
+        });
+        let job = started.job;
+        panel.job = job;
+        while (job.status === "queued" || job.status === "running") {
+          await sleep(1500);
+          if (this.pnetExport !== panel) return; // panel closed
+          job = (await this.authFetch(this.topologyUrl(`/export/jobs/${job.id}`))).job;
+          panel.job = job;
+        }
+        if (job.status === "error") panel.error = job.message || "Không đẩy được sơ đồ sang PNETLab.";
+      } catch (err) {
+        panel.error = this.describeError(err);
+      } finally {
+        panel.loading = false;
       }
     },
 

@@ -1939,6 +1939,8 @@ a:focus-visible {
 .project-actions { display: flex; gap: 8px; }
 .hint { color: var(--text-muted); font-size: 12px; margin: 4px 0 8px; }
 .ok-text { color: var(--success-text); font-size: 13px; margin: 6px 0; }
+.warn-text { color: var(--warn-text); }
+.pnet-export { margin-bottom: 12px; }
 .empty-state { padding: 40px 0; color: var(--text-muted); }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 8px 0 16px; }

@@ -1,0 +1,161 @@
+"""Write side of PNETLab's session API: build a new lab from NetAI.
+
+The calls are the ones PNETLab's own web UI makes (captured on the CSN301
+server, PNETLab 4/5) and those of pnetlab-mcp-server:
+
+    POST /api/folders/add                    {path, name}
+    POST /api/labs/session/factory/create    {path, name, version, ...}  creates and opens
+    GET  /api/list/templates/                available templates
+    GET  /api/list/templates/<template>      a template's option defaults
+    POST /api/labs/session/nodes/add         {template, type, image, name, ethernet, left, top, ...}
+    POST /api/labs/session/networks/add      {type: "pnet0" | "bridge", name, left, top, ...} -> data.id
+    POST /api/labs/session/networks/p2p      {src_id, src_if, dest_id, dest_if}
+    POST /api/labs/session/interfaces/edit   {node_id, data: {"<interface index>": "<network id>"}}
+    GET  /api/labs/session/topology          what the lab holds now
+    GET  /api/auth                           data.lab: this session's lab id
+    POST /api/labs/session/factory/destroy   {lab_session}
+    DELETE /api/labs                         {path}
+
+Every call targets the lab bound to the login session, so one writer builds
+one lab. It never starts, stops or edits an existing node.
+"""
+
+from .pnetlab import PNETLabClient, PNETLabError
+
+
+class ExistingLabError(PNETLabError):
+    """The lab name is taken; nothing was built and nothing must be deleted."""
+
+
+class PNETLabWriter:
+    def __init__(self, client: PNETLabClient):
+        self.client = client
+
+    # -- transport -------------------------------------------------------------
+
+    def login(self) -> None:
+        self.client.session_login()
+
+    def _call(self, method: str, path: str, body: dict | None = None, *, what: str) -> dict:
+        status, data, _ = self.client._send(method, path, json=body) if body is not None \
+            else self.client._send(method, path)
+        if self.client._failed(status, data):
+            raise PNETLabError(f"PNETLab could not {what}: {self.client._message(data, status)}.")
+        return data
+
+    @staticmethod
+    def _data(response: dict):
+        return response.get("data") if isinstance(response, dict) else None
+
+    # -- reading -----------------------------------------------------------------
+
+    def templates(self) -> list[str]:
+        """Template keys this server can run (".missing" ones have no image)."""
+        listing = self._data(self._call("GET", "/api/list/templates/", what="list its templates"))
+        if not isinstance(listing, dict):
+            return []
+        return sorted(key for key, label in listing.items() if not str(label).endswith(".missing"))
+
+    def template_options(self, template: str) -> dict:
+        data = self._data(self._call("GET", f"/api/list/templates/{template}",
+                                     what=f"read template {template}"))
+        options = data.get("options") if isinstance(data, dict) else None
+        return options if isinstance(options, dict) else {}
+
+    def topology(self) -> dict:
+        data = self._data(self._call("GET", "/api/labs/session/topology", what="read the lab"))
+        if not isinstance(data, dict):
+            raise PNETLabError("PNETLab returned no topology for the new lab.")
+        return data
+
+    def _node_ids(self) -> set[str]:
+        nodes = self.topology().get("nodes") or {}
+        if isinstance(nodes, list):
+            return {str(n.get("id")) for n in nodes if isinstance(n, dict)}
+        return {str(key) for key in nodes}
+
+    # -- building ---------------------------------------------------------------
+
+    def create_lab(self, folder: str, name: str) -> str:
+        """Create ``<folder>/<name>.unl``, bind it to the session, return its path."""
+        folder = "/" + folder.strip("/")
+        if folder != "/":
+            parent, _, leaf = folder.rpartition("/")
+            # An existing folder answers with an error; the lab step decides.
+            self.client._send("POST", "/api/folders/add", json={"path": parent or "/", "name": leaf})
+        path = (folder.rstrip("/") + "/" + name + ".unl")
+        if self.lab_exists(folder, name):
+            raise PNETLabError(f"{path} already exists in PNETLab; choose another lab name.")
+        meta = {"name": name, "version": "1", "author": "NetAI",
+                "description": "Built by NetAI from a project topology.", "body": ""}
+        # pnetlab-mcp-server passes the parent folder; fall back to the file path.
+        for target in (folder, path):
+            status, data, _ = self.client._send(
+                "POST", "/api/labs/session/factory/create", json={"path": target, **meta})
+            if self.client._failed(status, data):
+                continue
+            current = self.topology()
+            labinfo = current.get("labinfo") or {}
+            if str(labinfo.get("name") or "").strip() == name or path in str(labinfo):
+                if current.get("nodes") or current.get("networks"):
+                    # factory/create opens a lab that already exists: never
+                    # build into (or later delete) someone else's lab.
+                    raise ExistingLabError(f"{path} already exists in PNETLab; choose another lab name.")
+                return path
+        raise PNETLabError(f"PNETLab could not create the lab {path}.")
+
+    def lab_exists(self, folder: str, name: str) -> bool:
+        """Whether the folder already lists ``<name>.unl`` (False if unreadable)."""
+        status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
+        listing = data.get("data") if isinstance(data, dict) and not self.client._failed(status, data) else None
+        labs = listing.get("labs") if isinstance(listing, dict) else None
+        wanted = f"{name}.unl".lower()
+        for lab in labs or []:
+            names = (lab.get(key) for key in ("file", "name", "path")) if isinstance(lab, dict) else (lab,)
+            if any(str(value or "").lower().rsplit("/", 1)[-1] in (wanted, name.lower()) for value in names):
+                return True
+        return False
+
+    def add_node(self, body: dict) -> str:
+        """Add one node and return its id (read from the topology, not guessed)."""
+        before = self._node_ids()
+        self._call("POST", "/api/labs/session/nodes/add", body, what=f"add node {body.get('name')}")
+        new = sorted(self._node_ids() - before, key=lambda key: int(key) if key.isdigit() else 0)
+        if not new:
+            raise PNETLabError(f"PNETLab accepted node {body.get('name')} but it is not in the lab.")
+        return new[-1]
+
+    def add_network(self, kind: str, name: str, left: int, top: int, icon: str) -> str:
+        response = self._call("POST", "/api/labs/session/networks/add", {
+            "count": "1", "visibility": "1", "name": name, "type": kind,
+            "left": int(left), "top": str(int(top)), "size": "", "icon": icon, "postfix": 0,
+        }, what=f"add network {name}")
+        data = self._data(response)
+        network_id = data.get("id") if isinstance(data, dict) else None
+        if network_id is None:
+            raise PNETLabError(f"PNETLab added network {name} without telling its id.")
+        return str(network_id)
+
+    def connect(self, src_id: str, src_if: int, dest_id: str, dest_if: int) -> None:
+        self._call("POST", "/api/labs/session/networks/p2p", {
+            "name": "", "src_id": int(src_id), "src_if": int(src_if),
+            "dest_id": int(dest_id), "dest_if": int(dest_if),
+        }, what="cable two nodes")
+
+    def attach(self, node_id: str, index: int, network_id: str) -> None:
+        self._call("POST", "/api/labs/session/interfaces/edit", {
+            "node_id": str(node_id), "data": {str(int(index)): str(network_id)},
+        }, what=f"attach node {node_id} to network {network_id}")
+
+    def delete_lab(self, path: str) -> None:
+        """Close the session's lab and delete its file; best effort, never raises."""
+        try:
+            status, data, _ = self.client._send("GET", "/api/auth")
+            info = data.get("data") if isinstance(data, dict) else None
+            session = info.get("lab") if isinstance(info, dict) else None
+            if session:
+                self.client._send("POST", "/api/labs/session/factory/destroy",
+                                  json={"lab_session": session})
+            self.client._send("DELETE", "/api/labs", json={"path": path})
+        except PNETLabError:
+            pass
