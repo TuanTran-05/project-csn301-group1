@@ -35,8 +35,9 @@ class FakePNETLab:
         if path.startswith("/api/folders") and method == "GET":
             return 200, {**ok, "data": {"folders": [], "labs": [{"file": f} for f in self.existing]}}, {}
         if path == "/api/labs/session/factory/create":
-            self.labinfo = {"name": json["name"], "path": json["path"]}
-            if f"{json['name']}.unl" in self.existing:
+            name = json.get("name") or json["path"].rsplit("/", 1)[-1].removesuffix(".unl")
+            self.labinfo = {"name": name, "path": json["path"]}
+            if f"{name}.unl" in self.existing:
                 self.nodes["1"] = {"name": "SOMEONE-ELSE", "ethernets": {}}
             return 200, ok, {}
         if path == "/api/list/templates/":
@@ -107,7 +108,7 @@ def cabled(lab, project):
 
 
 def body(**extra):
-    return {**LOGIN, "lab_name": "csn301-lab", **extra}
+    return {**LOGIN, "folder": "/NetAI", "lab_name": "csn301-lab", **extra}
 
 
 @pytest.mark.parametrize("template, name, index", [
@@ -123,7 +124,7 @@ def test_preview_plans_without_building(client, admin_headers, base, cabled, fak
     response = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body())
     assert response.status_code == 200, response.get_json()
     plan = response.get_json()
-    assert plan["lab_path"] == "/NetAI/csn301-lab.unl"
+    assert plan["lab_path"] == "/NetAI/csn301lab.unl"
     assert {n["hostname"]: n["template"] for n in plan["nodes"]} == {
         "R1": "vios", "SW1": "viosl2", "SW2": "viosl2", "FW1": "asav"}
     assert len(plan["cables"]) == 3
@@ -141,7 +142,7 @@ def test_run_builds_nodes_cables_and_cloud0(client, admin_headers, base, cabled,
     assert job["status"] == "done", job
     assert {d["hostname"]: d["status"] for d in job["devices"]} == {
         "R1": "created", "SW1": "created", "SW2": "created", "FW1": "created"}
-    assert job["summary"]["cables"] == 3 and job["summary"]["lab_path"] == "/NetAI/csn301-lab.unl"
+    assert job["summary"]["cables"] == 3 and job["summary"]["lab_path"] == "/NetAI/csn301lab.unl"
     cloud = next(i for i, n in fake_pnetlab.networks.items() if n["type"] == "pnet0")
     r1 = fake_pnetlab.wired("R1")
     assert r1["Gi0/0"] == int(cloud) and "Gi0/1" in r1 and "Gi0/2" in r1
@@ -153,7 +154,7 @@ def test_run_builds_nodes_cables_and_cloud0(client, admin_headers, base, cabled,
 
 
 def test_a_taken_lab_name_is_refused_and_nothing_is_deleted(client, admin_headers, base, cabled, fake_pnetlab):
-    fake_pnetlab.existing.add("csn301-lab.unl")
+    fake_pnetlab.existing.add("csn301lab.unl")
     preview = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
     assert preview["blocked"] is True
     job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
@@ -168,7 +169,7 @@ def test_a_failure_part_way_deletes_the_half_built_lab(client, admin_headers, ba
     job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
     job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
     assert job["status"] == "error" and "was deleted" in job["message"]
-    assert fake_pnetlab.deleted == ["/NetAI/csn301-lab.unl"]
+    assert fake_pnetlab.deleted == ["/NetAI/csn301lab.unl"]
 
 
 def test_a_missing_template_leaves_that_device_out(client, admin_headers, base, cabled, fake_pnetlab):
@@ -184,7 +185,7 @@ def test_a_missing_template_leaves_that_device_out(client, admin_headers, base, 
 
 def test_bad_lab_names_and_viewers_are_refused(client, admin_headers, viewer_headers, base, cabled, fake_pnetlab):
     assert client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
-                       json=body(lab_name="../etc")).status_code == 422
+                       json=body(lab_name="---")).status_code == 422
     assert client.post(f"{base}/export/pnetlab", headers=viewer_headers, json=body()).status_code in (403, 404)
 
 
@@ -202,3 +203,147 @@ def test_a_login_that_is_not_pnetlab_json_is_explained_not_a_500(client, admin_h
     response = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body())
     assert response.status_code == 422, response.get_json()
     assert "https" in response.get_json()["message"]
+
+
+class OpenOnlyPNETLab(FakePNETLab):
+    """factory/create only opens a .unl that exists; POST /api/labs writes it.
+
+    The CSN301 server refused both factory/create bodies that create a lab."""
+
+    def __init__(self, accept_create=True):
+        super().__init__()
+        self.files = set()
+        self.accept_create = accept_create
+
+    def __call__(self, method, path, json=None, **kw):
+        if path == "/api/labs/session/factory/create":
+            self.calls.append((method, path, json))
+            if json["path"] not in self.files:
+                return 400, {"code": 400, "status": "fail", "message": "Lab does not exist (60038)."}, {}
+            self.labinfo = {"name": json["path"].rsplit("/", 1)[-1][:-4], "path": json["path"]}
+            return 200, {"code": 200, "status": "success"}, {}
+        if method == "POST" and path == "/api/labs":
+            self.calls.append((method, path, json))
+            if not self.accept_create:
+                return 403, {"code": 403, "status": "fail", "message": "Permission denied"}, {}
+            self.files.add(f"{json['path'].rstrip('/')}/{json['name']}.unl")
+            return 200, {"code": 200, "status": "success"}, {}
+        return super().__call__(method, path, json=json, **kw)
+
+
+def _use(app, fake):
+    def factory(request):
+        client_ = PNETLabClient(request.url, request.username, request.password, mode="session")
+        client_._send = fake
+        client_.session_login = lambda: None
+        return PNETLabWriter(client_)
+    app.config["PNETLAB_WRITER_FACTORY"] = factory
+    app.config["BOOTSTRAP_RUN_INLINE"] = True
+
+
+def test_a_lab_is_created_the_eve_ng_way_when_factory_create_only_opens(client, admin_headers, base, cabled, app):
+    fake = OpenOnlyPNETLab()
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "done", job
+    assert fake.files == {"/NetAI/csn301lab.unl"}
+    assert len(fake.nodes) == 4
+
+
+def test_a_lab_that_cannot_be_created_says_what_pnetlab_answered(client, admin_headers, base, cabled, app):
+    fake = OpenOnlyPNETLab(accept_create=False)
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error"
+    assert "Lab does not exist (60038)" in job["message"] and "Permission denied" in job["message"]
+    assert not fake.nodes
+
+
+
+def test_the_lab_is_created_like_the_pnetlab_ui_in_the_configured_folder(client, admin_headers, base, cabled, app):
+    """Captured on the CSN301 server: ai.tool may not write to "/", PNETLab's
+    "Add new lab" posts /api/labs with the folder (trailing slash) and the
+    account's user id, then opens the lab; the name keeps letters and digits."""
+    fake = OpenOnlyPNETLab()
+    original = fake.__call__
+
+    def with_user(method, path, json=None, **kw):
+        if path == "/api/auth":
+            fake.calls.append((method, path, json))
+            return 200, {"code": 200, "status": "success", "data": {"id": 38, "lab": None}}, {}
+        return original(method, path, json=json, **kw)
+
+    _use(app, with_user)
+    app.config["PNETLAB_EXPORT_FOLDER"] = "/Courses/CSN301-StudentLab/Group-1"
+    request_body = {**LOGIN, "lab_name": "Test-2026 10 30"}
+    preview = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=request_body).get_json()
+    assert preview["lab_path"] == "/Courses/CSN301-StudentLab/Group-1/Test20261030.unl"
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=request_body).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "done", job
+    created = next(j for m, p, j in fake.calls if m == "POST" and p == "/api/labs")
+    assert created["path"] == "/Courses/CSN301-StudentLab/Group-1/"
+    assert created["name"] == "Test20261030"
+    assert created["author"] == "38" and created["editable_emails"] == ["38"]
+    assert not any(p == "/api/labs/session/factory/create" and j.get("name") for m, p, j in fake.calls)
+
+
+class StrictAccountPNETLab(FakePNETLab):
+    """ai.tool on the CSN301 server: no access to some folders, and it may
+    create labs but not delete them."""
+
+    def __init__(self, forbidden=(), fail_on=None):
+        super().__init__(fail_on=fail_on)
+        self.forbidden = set(forbidden)
+
+    def __call__(self, method, path, json=None, **kw):
+        if method == "GET" and path.startswith("/api/folders"):
+            folder = path[len("/api/folders"):] or "/"
+            if folder in self.forbidden:
+                self.calls.append((method, path, json))
+                return 400, {"code": 400, "status": "fail",
+                             "message": f"You do not have permission to access folder {folder}"}, {}
+        if method == "DELETE" and path == "/api/labs":
+            self.calls.append((method, path, json))
+            return 400, {"code": 400, "status": "fail", "message": "You do not have permission to delete this lab"}, {}
+        return super().__call__(method, path, json=json, **kw)
+
+
+def test_a_folder_the_account_cannot_use_blocks_the_preview_and_the_run(client, admin_headers, base, cabled, app):
+    fake = StrictAccountPNETLab(forbidden={"/NetAI"})
+    _use(app, fake)
+    preview = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert preview["blocked"] is True
+    assert "permission to access folder /NetAI" in preview["warnings"][0]
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error" and "/NetAI" in job["message"]
+    assert not any(p in ("/api/labs", "/api/labs/session/factory/create") for _, p, _ in fake.calls)
+
+
+def test_a_rollback_the_account_may_not_delete_names_the_lab_left_behind(client, admin_headers, base, cabled, app):
+    fake = StrictAccountPNETLab(fail_on="/networks/p2p")
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error"
+    assert "/NetAI/csn301lab.unl KHÔNG xoá được" in job["message"]
+    assert "permission to delete" in job["message"]
+
+
+def test_a_template_without_an_image_is_left_out(client, admin_headers, base, cabled, app):
+    fake = FakePNETLab()
+    original = fake.__call__
+
+    def no_asav_image(method, path, json=None, **kw):
+        if path == "/api/list/templates/asav":
+            return 200, {"code": 200, "status": "success",
+                         "data": {"options": {"image": {"value": "", "list": {}}}}}, {}
+        return original(method, path, json=json, **kw)
+
+    _use(app, no_asav_image)
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert next(n for n in plan["nodes"] if n["hostname"] == "FW1")["ready"] is False
+    assert next(n for n in plan["nodes"] if n["hostname"] == "R1")["ready"] is True

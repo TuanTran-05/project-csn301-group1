@@ -23,6 +23,27 @@ one lab. It never starts, stops or edits an existing node.
 from .pnetlab import PNETLabClient, PNETLabError, _NoSessionAPI
 
 
+def lab_file_name(name: str) -> str:
+    """The name PNETLab keeps: it drops every character but letters and digits
+    ("netai-probe-create" is saved as netaiprobecreate.unl)."""
+    return "".join(ch for ch in name if ch.isascii() and ch.isalnum())
+
+
+def _is_lab(labinfo: dict, name: str, path: str) -> bool:
+    """Whether the session's labinfo describes the lab just created."""
+    if not isinstance(labinfo, dict):
+        return False
+    if str(labinfo.get("name") or "").strip().lower() == name.lower():
+        return True
+    wanted = path.lower()
+    for key in ("path", "filename", "file", "lab"):
+        value = str(labinfo.get(key) or "").strip().lower()
+        if value and (value == wanted or value.endswith("/" + wanted.rsplit("/", 1)[-1])
+                      or value == wanted.rsplit("/", 1)[-1]):
+            return True
+    return False
+
+
 class ExistingLabError(PNETLabError):
     """The lab name is taken; nothing was built and nothing must be deleted."""
 
@@ -87,32 +108,100 @@ class PNETLabWriter:
     # -- building ---------------------------------------------------------------
 
     def create_lab(self, folder: str, name: str) -> str:
-        """Create ``<folder>/<name>.unl``, bind it to the session, return its path."""
+        """Create ``<folder>/<name>.unl``, bind it to the session, return its path.
+
+        PNETLab builds differ in how a lab is created, so the known ways are
+        tried in turn, each checked by reading the session's lab back:
+
+        * what PNETLab's web UI does: ``POST /api/labs`` writes the .unl,
+          then ``factory/create`` with its path opens it (the call the
+          import already uses);
+        * ``factory/create`` with the parent folder and a name
+          (pnetlab-mcp-server), then with the file path.
+
+        ``name`` must already be what PNETLab keeps (see ``lab_file_name``).
+
+        A failure reports what PNETLab answered to each attempt.
+        """
         folder = "/" + folder.strip("/")
         if folder != "/":
             parent, _, leaf = folder.rpartition("/")
             # An existing folder answers with an error; the lab step decides.
-            self.client._send("POST", "/api/folders/add", json={"path": parent or "/", "name": leaf})
+            for route in ("/api/folders/add", "/api/folders"):
+                status, data, _ = self.client._send("POST", route, json={"path": parent or "/", "name": leaf})
+                if not self.client._failed(status, data):
+                    break
         path = (folder.rstrip("/") + "/" + name + ".unl")
         if self.lab_exists(folder, name):
             raise PNETLabError(f"{path} already exists in PNETLab; choose another lab name.")
         meta = {"name": name, "version": "1", "author": "NetAI",
                 "description": "Built by NetAI from a project topology.", "body": ""}
-        # pnetlab-mcp-server passes the parent folder; fall back to the file path.
-        for target in (folder, path):
-            status, data, _ = self.client._send(
-                "POST", "/api/labs/session/factory/create", json={"path": target, **meta})
-            if self.client._failed(status, data):
-                continue
-            current = self.topology()
+        answers: list[str] = []
+
+        def attempt(label: str, method: str, route: str, body: dict) -> bool:
+            status, data, _ = self.client._send(method, route, json=body)
+            failed = self.client._failed(status, data)
+            answers.append(f"{label}: {status} {self.client._message(data, status)}")
+            return not failed
+
+        def opened() -> bool:
+            status, data, _ = self.client._send("GET", "/api/labs/session/topology")
+            current = data.get("data") if isinstance(data, dict) and not self.client._failed(status, data) else None
+            if not isinstance(current, dict):
+                answers.append("topology: no lab open")
+                return False
             labinfo = current.get("labinfo") or {}
-            if str(labinfo.get("name") or "").strip() == name or path in str(labinfo):
-                if current.get("nodes") or current.get("networks"):
-                    # factory/create opens a lab that already exists: never
-                    # build into (or later delete) someone else's lab.
-                    raise ExistingLabError(f"{path} already exists in PNETLab; choose another lab name.")
-                return path
-        raise PNETLabError(f"PNETLab could not create the lab {path}.")
+            if not _is_lab(labinfo, name, path):
+                answers.append(f"topology: lab open is {labinfo.get('name') or labinfo.get('path') or '?'}")
+                return False
+            if current.get("nodes") or current.get("networks"):
+                # factory/create opens a lab that already exists: never
+                # build into (or later delete) someone else's lab.
+                raise ExistingLabError(f"{path} already exists in PNETLab; choose another lab name.")
+            return True
+
+        create = "/api/labs/session/factory/create"
+        # What PNETLab's own "Add new lab" sends (captured on the CSN301
+        # server): the folder with a trailing slash, the account's user id as
+        # author, and access for that account only; then the lab is opened.
+        user_id = self.user_id()
+        ui_body = {**meta, "path": folder.rstrip("/") + "/", "scripttimeout": 300, "countdown": 60}
+        if user_id:
+            ui_body.update(author=user_id, openable=2, openable_emails=[user_id],
+                           joinable=2, joinable_emails=[user_id], editable=2, editable_emails=[user_id])
+        if attempt("POST /api/labs", "POST", "/api/labs", ui_body) \
+                and attempt("open", "POST", create, {"path": path}) and opened():
+            return path
+        # Older builds and pnetlab-mcp-server create through factory/create.
+        if attempt("factory/create folder+name", "POST", create, {"path": folder, **meta}) and opened():
+            return path
+        if attempt("factory/create path", "POST", create, {"path": path, **meta}) and opened():
+            return path
+        raise PNETLabError(f"PNETLab could not create the lab {path}. Answers: " + "; ".join(answers))
+
+    def user_id(self) -> str | None:
+        """This account's PNETLab user id (the UI sends it as the lab author)."""
+        status, data, _ = self.client._send("GET", "/api/auth")
+        info = data.get("data") if isinstance(data, dict) and not self.client._failed(status, data) else None
+        if not isinstance(info, dict):
+            return None
+        for key in ("id", "user_id", "uid", "user"):
+            value = info.get(key)
+            if isinstance(value, (int, str)) and str(value).isdigit():
+                return str(value)
+        return None
+
+    def folder_problem(self, folder: str) -> str | None:
+        """Why this account cannot use the folder, or None when it can list it.
+
+        ai.tool may not even open "/" on the CSN301 server ("You do not have
+        permission to access folder /"); checking first keeps a build from
+        failing after it started.
+        """
+        status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
+        if self.client._failed(status, data):
+            return self.client._message(data, status)
+        return None
 
     def lab_exists(self, folder: str, name: str) -> bool:
         """Whether the folder already lists ``<name>.unl`` (False if unreadable)."""
@@ -157,8 +246,13 @@ class PNETLabWriter:
             "node_id": str(node_id), "data": {str(int(index)): str(network_id)},
         }, what=f"attach node {node_id} to network {network_id}")
 
-    def delete_lab(self, path: str) -> None:
-        """Close the session's lab and delete its file; best effort, never raises."""
+    def delete_lab(self, path: str) -> str | None:
+        """Close the session's lab and delete its file. Never raises.
+
+        Returns None once the lab is gone, else why not: an account may
+        create labs yet not delete them (ai.tool on the CSN301 server), and
+        the half-built lab must then be named so someone can delete it.
+        """
         try:
             status, data, _ = self.client._send("GET", "/api/auth")
             info = data.get("data") if isinstance(data, dict) else None
@@ -166,6 +260,9 @@ class PNETLabWriter:
             if session:
                 self.client._send("POST", "/api/labs/session/factory/destroy",
                                   json={"lab_session": session})
-            self.client._send("DELETE", "/api/labs", json={"path": path})
-        except PNETLabError:
-            pass
+            status, data, _ = self.client._send("DELETE", "/api/labs", json={"path": path})
+        except PNETLabError as exc:
+            return exc.message
+        if self.client._failed(status, data):
+            return self.client._message(data, status)
+        return None

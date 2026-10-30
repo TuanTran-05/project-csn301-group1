@@ -63,6 +63,11 @@ class Config:
 
     SSH_CONNECT_TIMEOUT = int(os.environ.get("SSH_CONNECT_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT = int(os.environ.get("SSH_COMMAND_TIMEOUT", "30"))
+    # Where "Đẩy sang PNETLab" creates labs by default: a folder the export
+    # account may write to (ai.tool cannot write to the PNETLab root).
+    PNETLAB_EXPORT_FOLDER = os.environ.get(
+        "PNETLAB_EXPORT_FOLDER", "/Courses/CSN301-StudentLab/Group-1"
+    )
     # A failed post-change verification is re-read this many more times,
     # this many seconds apart: links and trunks take a moment to come up.
     VERIFICATION_RETRIES = int(os.environ.get("VERIFICATION_RETRIES", "2"))
