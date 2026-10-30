@@ -480,16 +480,18 @@ def pnetlab_export_preview(project_id: int):
 def pnetlab_export_run(project_id: int):
     """Build a new PNETLab lab from the topology as a background job.
 
-    It only creates a lab of its own (a taken name is refused) and never
-    touches devices, so an editor may run it. The page polls
-    ``/export/jobs/<id>``.
+    It only creates a lab of its own (a taken name is refused), so an editor
+    may run it. Starting the nodes and bootstrapping SSH on them also saves
+    the devices' login and configures them, which takes the owner, like the
+    console bootstrap. The page polls ``/export/jobs/<id>``.
     """
     from flask import current_app
 
     from ..integrations import saved_login
 
-    project = _project(project_id, "editor")
-    payload, _ = saved_login.fill_payload(project, request.get_json(silent=True) or {})
+    body = request.get_json(silent=True) or {}
+    project = _project(project_id, "owner" if body.get("start_and_bootstrap") else "editor")
+    payload, _ = saved_login.fill_payload(project, body)
     pnetlab_export.validate_request(payload)  # a bad request fails now, not in the job
     job = bootstrap_jobs.start(
         current_app._get_current_object(), project.id, current_user().id, payload,
@@ -511,6 +513,7 @@ def get_pnetlab_login(project_id: int):
     return jsonify({
         "saved": record.to_dict() if record else None,
         "export_folder": current_app.config.get("PNETLAB_EXPORT_FOLDER") or "/NetAI",
+        "lab_ssh_username": current_app.config.get("LAB_SSH_USERNAME") or "g1",
     }), 200
 
 
