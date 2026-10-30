@@ -150,6 +150,9 @@ def test_run_builds_nodes_cables_and_cloud0(client, admin_headers, base, cabled,
     assert fake_pnetlab.wired("SW1")["Gi1/0"]                 # index 4 on IOSv-L2
     assert fake_pnetlab.wired("FW1")["Mgmt0/0"] == int(cloud)
     assert not fake_pnetlab.deleted
+    # Each row says which ports landed on Cloud0, as read back from the lab.
+    assert {d["hostname"]: d.get("cloud0") for d in job["devices"]} == {
+        "R1": ["Gi0/0"], "SW1": ["Gi0/0"], "SW2": ["Gi0/1"], "FW1": ["Mgmt0/0"]}
     assert not any(p.endswith("/nodes/start") for _, p, _ in fake_pnetlab.calls)
 
 

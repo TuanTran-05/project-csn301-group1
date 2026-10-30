@@ -1286,7 +1286,7 @@ document.addEventListener("alpine:init", () => {
         form: { url: "", username: "", password: "", verify_tls: true, folder: "",
                 lab_name: `${slug}${stamp}`, management_cloud: true, remember: true,
                 start_and_bootstrap: true, ssh_username: "", ssh_password: "" },
-        saved: null, plan: null, loading: false, error: "", job: null,
+        saved: null, plan: null, loading: false, error: "", job: null, confirm: "",
       };
       const panel = this.pnetExport;
       this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
@@ -1349,7 +1349,18 @@ document.addEventListener("alpine:init", () => {
       const then = panel.form.start_and_bootstrap
         ? " Sau đó bật các node và khởi tạo SSH qua console (có thể mất 5–15 phút)."
         : " Node được tạo ở trạng thái tắt.";
-      if (!window.confirm(`Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node?${then} Không lab nào khác bị đụng tới.`)) return;
+      // An in-page confirmation: a native confirm() blocks the page (and browser automation).
+      panel.confirm = `Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node?${then} Không lab nào khác bị đụng tới.`;
+    },
+
+    pnetExportCancel() {
+      if (this.pnetExport) this.pnetExport.confirm = "";
+    },
+
+    async pnetExportConfirm() {
+      const panel = this.pnetExport;
+      if (!panel || !panel.confirm) return;
+      panel.confirm = "";
       panel.error = "";
       panel.loading = true;
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -325,6 +325,28 @@ def _actual_index(topology: dict, node_id: str, wanted: int, name: str | None) -
     return wanted
 
 
+def _record_cloud_ports(writer, results, node_ids, cloud_id: str) -> None:
+    """Note on each row which of the node's ports PNETLab cabled to Cloud0.
+
+    Read back from the lab, so a Cloud device's own cable counts too. The lab
+    is built by now: a failed read falls back to the planned index.
+    """
+    try:
+        nodes = writer.topology().get("nodes") or {}
+    except PNETLabError:
+        nodes = {}
+    for result in results:
+        node = nodes.get(str(result.get("node_id"))) if isinstance(nodes, dict) else None
+        ethernets = (node or {}).get("ethernets") or {}
+        items = ethernets.items() if isinstance(ethernets, dict) else enumerate(ethernets)
+        ports = [eth.get("name") or f"#{index}" for index, eth in items
+                 if isinstance(eth, dict) and str(eth.get("network_id")) == str(cloud_id)]
+        if not ports and "management_index" in result:
+            ports = [f"#{result['management_index']}"]
+        if ports:
+            result["cloud0"] = ports
+
+
 def run(project, payload: dict, progress=None) -> dict:
     """Build the lab; on failure delete it again. Returns per-device results."""
     progress = progress or (lambda **kw: None)
@@ -389,6 +411,8 @@ def run(project, payload: dict, progress=None) -> dict:
             ) from exc
         raise PNETLabError(f"{message} The half-built lab {path} was deleted.") from exc
 
+    if CLOUD_NAME in network_ids:
+        _record_cloud_ports(writer, results, node_ids, network_ids[CLOUD_NAME])
     summary = {"lab_path": path, "cables": cabled, "networks": len(network_ids),
                "management": len(built["management"]), "warnings": built["warnings"]}
     if request.start_and_bootstrap:
