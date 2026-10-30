@@ -186,3 +186,19 @@ def test_bad_lab_names_and_viewers_are_refused(client, admin_headers, viewer_hea
     assert client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
                        json=body(lab_name="../etc")).status_code == 422
     assert client.post(f"{base}/export/pnetlab", headers=viewer_headers, json=body()).status_code in (403, 404)
+
+
+def test_a_login_that_is_not_pnetlab_json_is_explained_not_a_500(client, admin_headers, base, cabled, app):
+    """http://172.16.3.25 answered the login with a redirect (to its https
+    port) instead of JSON; session_login raised its internal _NoSessionAPI
+    and the preview answered 500."""
+
+    def factory(request):
+        client_ = PNETLabClient(request.url, request.username, request.password, mode="session")
+        client_._send = lambda method, path, **kw: (302, None, {"Location": "https://172.16.3.25:8443/"})
+        return PNETLabWriter(client_)
+
+    app.config["PNETLAB_WRITER_FACTORY"] = factory
+    response = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body())
+    assert response.status_code == 422, response.get_json()
+    assert "https" in response.get_json()["message"]

@@ -11,12 +11,14 @@ Nodes are created stopped and unconfigured: the console bootstrap (Thiết bị
 -> Khởi tạo) gives them a management address and SSH afterwards.
 """
 
+import logging
 import re
 
 from flask import current_app
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..devices.model import Device
+from ..errors import AppError
 from ..extensions import db
 from ..integrations.pnetlab import PNETLabClient, PNETLabError
 from ..integrations.pnetlab_writer import ExistingLabError, PNETLabWriter
@@ -27,6 +29,8 @@ from .model import TopologyLink
 LAB_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
 FOLDER = re.compile(r"^/?[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}(/[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}){0,3}$")
 CLOUD_NAME = "Cloud0"
+
+logger = logging.getLogger(__name__)
 
 
 class ExportRequest(BaseModel):
@@ -223,11 +227,19 @@ def preview(project, payload: dict) -> dict:
     """The plan, checked against the templates this PNETLab has. Builds nothing."""
     request = validate_request(payload)
     writer = _writer(request)
-    writer.login()
-    available = set(writer.templates())
+    try:
+        writer.login()
+        available = set(writer.templates())
+        exists = writer.lab_exists("/" + request.folder.strip("/"), request.lab_name)
+    except AppError:
+        raise
+    except Exception as exc:  # an answer shape PNETLab was not expected to give
+        logger.exception("PNETLab export preview failed")
+        raise PNETLabError(
+            f"PNETLab trả lời không như mong đợi ({type(exc).__name__}); xem log máy chủ."
+        ) from exc
     result = plan(project, request, available)
-    folder = "/" + request.folder.strip("/")
-    if writer.lab_exists(folder, request.lab_name):
+    if exists:
         result["warnings"].insert(0, f"{result['lab_path']} already exists; choose another lab name.")
         result["blocked"] = True
     return result

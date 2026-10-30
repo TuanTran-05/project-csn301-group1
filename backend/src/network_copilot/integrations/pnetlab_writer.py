@@ -20,7 +20,7 @@ Every call targets the lab bound to the login session, so one writer builds
 one lab. It never starts, stops or edits an existing node.
 """
 
-from .pnetlab import PNETLabClient, PNETLabError
+from .pnetlab import PNETLabClient, PNETLabError, _NoSessionAPI
 
 
 class ExistingLabError(PNETLabError):
@@ -34,7 +34,17 @@ class PNETLabWriter:
     # -- transport -------------------------------------------------------------
 
     def login(self) -> None:
-        self.client.session_login()
+        try:
+            self.client.session_login()
+        except _NoSessionAPI as exc:
+            # No JSON came back: a redirect (often http -> https) or a page
+            # that is not PNETLab's login API.
+            raise PNETLabError(
+                f"{self.client.base_url} không trả lời API đăng nhập của PNETLab "
+                "(thường do bị chuyển hướng sang https). Thử URL https://… với cổng "
+                "PNETLab đang dùng, và bỏ tick \"Kiểm tra chứng chỉ HTTPS\" nếu "
+                "chứng chỉ là tự ký."
+            ) from exc
 
     def _call(self, method: str, path: str, body: dict | None = None, *, what: str) -> dict:
         status, data, _ = self.client._send(method, path, json=body) if body is not None \
