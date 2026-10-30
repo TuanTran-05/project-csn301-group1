@@ -731,7 +731,7 @@
                           Trạng thái <b x-text="selectedNode && selectedNode.status"></b> ·
                           <span x-text="selectedNode && selectedNode.has_credential ? 'đã có SSH' : 'chưa có SSH'"></span>
                         </p>
-                        <button type="button" x-show="props.managed && props.lifecycle === 'provisioned' && currentUser && ['ADMIN','TEACHER'].includes(currentUser.role)"
+                        <button type="button" x-show="canEdit && props.managed && props.lifecycle === 'provisioned'"
                           :disabled="Boolean(baselineBusy[props.id])" @click="captureBaseline(props.id)">
                           <span x-text="baselineBusy[props.id] ? 'Đang sao lưu…' : 'Lưu cấu hình nền cho AI Management'"></span>
                         </button>
@@ -901,8 +901,8 @@
               <div class="card plan" x-show="plan" x-cloak>
                 <h4>Cấu hình sinh ra từ sơ đồ</h4>
                 <p class="hint">
-                  Đây chỉ là bản xem trước. Không có lệnh nào chạy trên thiết bị cho đến khi một ADMIN
-                  duyệt và áp dụng nó qua luồng Preview → Approve → Apply.
+                  Đây chỉ là bản xem trước. Không có lệnh nào chạy trên thiết bị cho đến khi người có quyền
+                  sửa project duyệt và áp dụng nó qua luồng Preview → Approve → Apply.
                 </p>
                 <template x-for="entry in (plan ? plan.devices : [])" :key="entry.device_id">
                   <div class="plan-device">
@@ -914,10 +914,10 @@
                   <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.reason"></span></p>
                 </template>
                 <div class="form-actions">
-                  <button type="button" class="primary-btn" @click="createPreview()" x-show="isAdmin">
+                  <button type="button" class="primary-btn" @click="createPreview()" x-show="canEdit">
                     Tạo bản xem trước thay đổi
                   </button>
-                  <span class="hint" x-show="!isAdmin">Chỉ ADMIN mới tạo được bản xem trước để duyệt.</span>
+                  <span class="hint" x-show="!canEdit">Chỉ người có quyền sửa project mới tạo được bản xem trước.</span>
                 </div>
                 <p class="ok-text" x-show="previewNotice">
                   <span x-text="previewNotice"></span> <a href="/">Mở trang Chat</a>
@@ -928,7 +928,7 @@
             <!-- ---------- Design: L2 / L3 ---------- -->
             <section x-show="tab === 'design'" x-cloak>
               <h3>Thiết kế L2/L3</h3>
-              <div class="card design-ai-cta">
+              <div class="card design-ai-cta" x-show="canEdit">
                 <p>Bạn không cần tự nhập VLAN, IP hay định tuyến. Mở khung chat, bật <strong>Thiết kế mạng</strong> rồi mô tả
                   mạng bạn muốn, ví dụ “3 VLAN Kế toán, Kỹ thuật, Khách, quản trị qua VLAN 99”. AI đề xuất thiết kế đầy đủ,
                   bạn xem lại và bấm Áp dụng.</p>
@@ -1108,8 +1108,11 @@
             <section x-show="tab === 'sharing'" x-cloak>
               <h3>Thành viên nhóm project</h3>
               <p class="hint">
-                Project là không gian nhóm chung: thành viên có thể xem cùng topology và khung chat. <strong>viewer</strong> chỉ xem;
-                <strong>editor</strong> thêm/sửa thiết bị và sơ đồ. ADMIN luôn thấy mọi project.
+                Project là không gian nhóm chung: thành viên có thể xem cùng topology và lịch sử chat. <strong>viewer</strong> xem sơ đồ,
+                chat và chạy lệnh show; <strong>editor</strong> thêm/sửa thiết bị, sơ đồ và cấu hình thiết bị. ADMIN luôn thấy mọi project.
+              </p>
+              <p class="hint" x-show="currentUser && currentUser.role === 'OPERATOR'">
+                Bạn có thể thêm Viewer để họ xem project hoặc Operator để cùng chỉnh sửa.
               </p>
               <p class="error-text" x-show="shareError" x-text="shareError"></p>
               <table class="data-table" x-show="members.length">
@@ -1134,13 +1137,13 @@
               </table>
               <p class="hint" x-show="!members.length">Chưa chia sẻ cho ai.</p>
               <form class="inline-form" @submit.prevent="shareProject()" x-show="isOwner">
-                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" :placeholder="currentUser && currentUser.role === 'OPERATOR' ? 'tên Viewer (gõ 2 ký tự để gợi ý)' : 'tên đăng nhập (gõ 2 ký tự để gợi ý)'" required autocomplete="off" />
+                <input type="text" x-model="shareForm.username" list="share-candidates" @input.debounce.250ms="searchCandidates()" :placeholder="currentUser && currentUser.role === 'OPERATOR' ? 'tên Viewer hoặc Operator (gõ 2 ký tự để gợi ý)' : 'tên đăng nhập (gõ 2 ký tự để gợi ý)'" required autocomplete="off" />
                 <datalist id="share-candidates"><template x-for="c in shareCandidates" :key="c"><option :value="c"></option></template></datalist>
                 <select x-model="shareForm.access" x-show="currentUser && currentUser.role !== 'OPERATOR'">
                   <option value="viewer">viewer</option>
                   <option value="editor">editor</option>
                 </select>
-                <button type="submit" class="primary-btn" x-text="currentUser && currentUser.role === 'OPERATOR' ? 'Thêm Viewer' : 'Chia sẻ'"></button>
+                <button type="submit" class="primary-btn" x-text="currentUser && currentUser.role === 'OPERATOR' ? 'Thêm thành viên' : 'Chia sẻ'"></button>
               </form>
               <div class="form-actions" x-show="project && !isOwner">
                 <button type="button" class="danger-btn" @click="leaveCurrentProject()">Rời project này</button>

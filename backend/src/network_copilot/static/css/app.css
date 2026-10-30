@@ -2578,9 +2578,10 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   z-index: 2;
   margin: 0;
   color: #f4f6f8;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-sans);
   font-size: clamp(18px, 1.35vw, 23px);
-  font-style: italic;
+  font-style: normal;
+  font-weight: 700;
   line-height: 1.32;
 }
 .sidebar-motto-en {
@@ -4147,7 +4148,7 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   gap: 10px;
   margin: 0;
   color: #123d63;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-sans);
   font-size: clamp(25px, 2vw, 31px);
   font-weight: 700;
   line-height: 1.18;

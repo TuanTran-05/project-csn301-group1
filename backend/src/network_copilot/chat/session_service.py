@@ -1,13 +1,11 @@
-"""Session CRUD and listing, private to the user who started each session.
+"""Project-shared chat sessions and transcript access.
 
-A project's members share its devices and topology, but every member keeps
-their own conversations with the assistant: a Viewer never reads or writes
-into an Operator's session, and vice versa. ADMIN may open any session of a
-project by id for auditing, but still lists only their own.
+Every member who can access a project can read and continue any chat session
+in that project. Project membership remains the isolation boundary.
 """
 
 from ..extensions import db
-from .model import ChatMessage, ChatSession
+from .model import ChatMessage, ChatSession, utc_isoformat
 
 _TITLE_MAX_LENGTH = 60
 
@@ -20,14 +18,20 @@ def create_session(project_id: int, created_by_id: int | None = None) -> ChatSes
 
 
 def can_use_session(user, session: ChatSession, write: bool = False) -> bool:
-    """Whether ``user`` may read (or, with ``write``, post to) ``session``.
+    """Whether ``user`` may read or post to a session in an accessible project.
 
-    ``user=None`` is an internal caller. Only the session's creator may post
-    to it; ADMIN may additionally read any session for auditing.
+    ``user=None`` is an internal caller. Reads and writes are shared among all
+    active members of the same project.
     """
-    if user is None or session.created_by_id == user.id:
+    if user is None:
         return True
-    return not write and user.role == "ADMIN"
+    if not user.is_active:
+        return False
+    from ..projects.model import Project
+    from ..projects.service import access_level
+
+    project = db.session.get(Project, session.project_id)
+    return project is not None and access_level(user, project) is not None
 
 
 def get_session(
@@ -47,11 +51,9 @@ def resolve_or_create_session(
 ) -> ChatSession:
     """Return the session for session_id, or a sensible default.
 
-    Used wherever a session_id is optional at the API layer: an unknown or
-    omitted id - or one that belongs to another project or another user -
-    falls back to the caller's most recently created session in the project,
-    creating a brand new one only if they have none at all. ``user=None`` is
-    an internal caller and resolves across every session of the project.
+    An unknown id or one belonging to another project falls back to the most
+    recently active session in this project, creating one only if necessary.
+    All project members resolve against the same shared session list.
     """
     if session_id is not None:
         session = get_session(session_id, project_id, user, write)
@@ -59,8 +61,6 @@ def resolve_or_create_session(
             return session
 
     query = db.session.query(ChatSession).filter(ChatSession.project_id == project_id)
-    if user is not None:
-        query = query.filter(ChatSession.created_by_id == user.id)
     latest = query.order_by(ChatSession.created_at.desc(), ChatSession.id.desc()).first()
     if latest is not None:
         return latest
@@ -92,12 +92,12 @@ def session_to_dict(session: ChatSession) -> dict:
     return {
         "id": session.id,
         "title": _title_for_session(session.id),
-        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "created_at": utc_isoformat(session.created_at),
     }
 
 
 def list_sessions(project_id: int, user=None) -> list[dict]:
-    """The sessions ``user`` started in the project, most recently active first."""
+    """All sessions in the project, most recently active first."""
     activity = (
         db.session.query(
             ChatMessage.session_id.label("session_id"),
@@ -122,14 +122,12 @@ def list_sessions(project_id: int, user=None) -> list[dict]:
         .outerjoin(activity, activity.c.session_id == ChatSession.id)
         .filter(ChatSession.project_id == project_id)
     )
-    if user is not None:
-        query = query.filter(ChatSession.created_by_id == user.id)
     rows = query.order_by(last_activity.desc(), ChatSession.id.asc()).all()
     return [
         {
             "id": session.id,
             "title": _title_from_content(content),
-            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "created_at": utc_isoformat(session.created_at),
         }
         for session, content in rows
     ]

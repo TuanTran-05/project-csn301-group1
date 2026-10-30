@@ -84,6 +84,7 @@ document.addEventListener("alpine:init", () => {
     sending: false,
     _messagesRefreshGeneration: 0,
     _messagesPollPending: false,
+    _messagesPollInFlight: false,
     _clientMessageSequence: 0,
     topologyChoiceBusy: false,
     topologyChoiceError: "",
@@ -97,9 +98,8 @@ document.addEventListener("alpine:init", () => {
     designBusy: false,
     designError: "",
     sessions: [],
-    // A per-browser bookmark of which of your own sessions this browser was
-    // last looking at. Sessions are private to the user who started them;
-    // the server ignores an id that belongs to someone else.
+    // A per-browser bookmark of the project-shared session this browser was
+    // last looking at. Every project member can read and continue it.
     currentSessionId: (() => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
@@ -108,18 +108,12 @@ document.addEventListener("alpine:init", () => {
     // Starter prompts built from this project's real devices, so a new chat
     // is never a blank box.
     get suggestions() {
-      if (this.designMode) {
+      if (this.designMode && this.canManageProjectConfiguration) {
         return [
           "Chia mạng thành 3 VLAN: Kế toán, Kỹ thuật, Khách; gateway trên switch lõi",
           "Dùng dải 192.168.0.0/16 và chạy OSPF giữa các router",
           "Thêm VLAN 99 để quản trị thiết bị",
         ];
-      }
-      if (this.currentUser && this.currentUser.role === "OPERATOR") {
-        return ["Tạo project mới", "Gợi ý sơ đồ và file cấu hình cho các thiết bị trong lab"];
-      }
-      if (this.currentUser && this.currentUser.role === "VIEWER") {
-        return ["Gợi ý sơ đồ và file cấu hình để dựng lab trên PNETLab", "Cần cấu hình gì để các mạng liên thông?"];
       }
       const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
       const router = byRole("core", "isp");
@@ -135,11 +129,14 @@ document.addEventListener("alpine:init", () => {
       }
       if (this.devices.length) {
         prompts.push("Thiết bị nào đang offline?");
-        if (this.currentUser && this.currentUser.role === "ADMIN") {
+        if (this.canManageProjectConfiguration) {
           prompts.push("Lưu cấu hình trên toàn bộ thiết bị");
         }
       } else {
         prompts.push("Mạng của tôi cần những gì để bắt đầu?");
+      }
+      if (this.currentUser && this.currentUser.role === "OPERATOR" && this.canManageProjectConfiguration) {
+        prompts.unshift("Tạo project mới");
       }
       return prompts;
     },
@@ -248,20 +245,27 @@ document.addEventListener("alpine:init", () => {
       return Boolean(
         batch && batch.ai_management_approved &&
         batch.requested_by_id === this.currentUser?.id &&
-        this.currentUser && this.currentUser.role === "OPERATOR"
+        this.canManageProjectConfiguration
       );
     },
 
-    // Only an Operator with edit rights may push an AI suggestion to devices.
+    get canManageProjectConfiguration() {
+      return Boolean(
+        this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role) &&
+        this.currentProject && ["owner", "editor"].includes(this.currentProject.access)
+      );
+    },
+
+    // Project editors can push an explicitly approved AI suggestion to devices.
     get canApplyChatConfigurations() {
       return Boolean(
         this.currentProject && this.currentProject.ai_management_enabled &&
-        ["owner", "editor"].includes(this.currentProject.access) &&
-        this.currentUser && this.currentUser.role === "OPERATOR"
+        this.canManageProjectConfiguration
       );
     },
 
     toggleDesignMode() {
+      if (!this.canManageProjectConfiguration) return;
       this.designMode = !this.designMode;
       try { localStorage.setItem("nc_design_mode", this.designMode ? "1" : "0"); } catch { /* optional */ }
       this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
@@ -270,7 +274,7 @@ document.addEventListener("alpine:init", () => {
     get canApplyDesign() {
       return Boolean(
         this.currentProject && ["owner", "editor"].includes(this.currentProject.access) &&
-        this.currentUser && this.currentUser.role !== "VIEWER"
+        this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role)
       );
     },
 
@@ -742,6 +746,10 @@ document.addEventListener("alpine:init", () => {
 
     async startApp(options = {}) {
       const generation = this._sessionGeneration;
+      if (this.currentUser && this.currentUser.role === "VIEWER" && this.designMode) {
+        this.designMode = false;
+        try { localStorage.removeItem("nc_design_mode"); } catch { /* optional */ }
+      }
       if (!options.skipProjects) {
         try {
           await this.loadProjects();
@@ -749,6 +757,10 @@ document.addEventListener("alpine:init", () => {
           if (generation !== this._sessionGeneration) return;
         }
         if (generation !== this._sessionGeneration) return;
+      }
+      if (!this.canManageProjectConfiguration && this.designMode) {
+        this.designMode = false;
+        try { localStorage.removeItem("nc_design_mode"); } catch { /* optional */ }
       }
       if (this.noProject) return;
       this.changesLoading = true;
@@ -774,15 +786,21 @@ document.addEventListener("alpine:init", () => {
 
     startPolling() {
       this.stopPolling();
-      // While the event stream is healthy the server says when to refresh, so
-      // these timers only act when it is not.
+      // The event stream triggers device, change, and batch refreshes. These
+      // timers cover gaps when streaming is unavailable; chat also has its own
+      // one-second poll so new messages stay timely through buffered streams.
       const unlessStreaming = (refresh) => () => {
         if (!this._streamHealthy) refresh().catch(() => {});
       };
       this._deviceTimer = setInterval(unlessStreaming(() => this.refreshDevices()), 15000);
       this._changesTimer = setInterval(unlessStreaming(() => this.refreshChanges()), 15000);
       this._batchesTimer = setInterval(unlessStreaming(() => this.refreshBatches()), 15000);
-      this._messagesTimer = setInterval(unlessStreaming(() => this.pollMessages()), 7000);
+      // Shared sessions may be created by another project member; keep the
+      // session picker synchronized while the active transcript is polled.
+      this._sessionsTimer = setInterval(() => this.refreshSessions().catch(() => {}), 5000);
+      // Keep the active transcript fresh even when the SSE connection appears
+      // healthy; proxies can keep a stream open while buffering its events.
+      this._messagesTimer = setInterval(() => this.pollMessages().catch(() => {}), 1000);
       // A slow full refresh as a safety net against a missed event.
       this._safetyTimer = setInterval(() => this._refreshEverything(), 60000);
     },
@@ -898,6 +916,7 @@ document.addEventListener("alpine:init", () => {
       clearInterval(this._changesTimer);
       clearInterval(this._batchesTimer);
       clearInterval(this._messagesTimer);
+      clearInterval(this._sessionsTimer);
       if (this._safetyTimer) clearInterval(this._safetyTimer);
       this._safetyTimer = null;
       this.stopRealtime();
@@ -905,14 +924,22 @@ document.addEventListener("alpine:init", () => {
       this._changesTimer = null;
       this._batchesTimer = null;
       this._messagesTimer = null;
+      this._sessionsTimer = null;
     },
 
     async refreshDevices() {
       const generation = this._deviceRefreshGeneration;
       const data = await this.authFetch("/api/devices");
       if (generation === this._deviceRefreshGeneration) {
+        const allDevices = Array.isArray(data.items) ? data.items : [];
+        // Keep the project card in sync with the full inventory. The chat's
+        // device list below intentionally contains only managed, provisioned
+        // devices, so its length is not the project's total device count.
+        if (this.currentProject) {
+          this.currentProject.device_count = allDevices.length;
+        }
         // The chat only talks about devices the backend can reach.
-        this.devices = data.items.filter((device) => device.deployable !== false);
+        this.devices = allDevices.filter((device) => device.deployable !== false);
       }
     },
 
@@ -1448,6 +1475,19 @@ document.addEventListener("alpine:init", () => {
       localStorage.setItem("nc_session_id", String(this.currentSessionId));
     },
 
+    async refreshSessions() {
+      const selectedSessionId = this.currentSessionId;
+      const data = await this.authFetch("/api/chat/sessions");
+      this.sessions = data.items || [];
+      if (this.sessions.length === 0) {
+        const session = await this.authFetch("/api/chat/sessions", { method: "POST" });
+        this.sessions = [session];
+      }
+      if (!this.sessions.some((session) => session.id === selectedSessionId)) {
+        await this.switchSession(this.sessions[0].id);
+      }
+    },
+
     async switchSession(sessionId, forceReload = false) {
       // Alpine's x-model updates currentSessionId before the change handler
       // runs, so selecting a different option can arrive here with the new
@@ -1556,39 +1596,52 @@ document.addEventListener("alpine:init", () => {
         this._messagesPollPending = true;
         return;
       }
-      const generation = this._messagesRefreshGeneration;
-      const wasAtBottom = this._isScrolledToBottom();
-      const newestServerMessage = [...this.messages]
-        .reverse()
-        .find((message) => !message._client && Number.isFinite(Number(message.id)));
-      const cursor = newestServerMessage
-        ? `&after_id=${newestServerMessage.id}`
-        : `&limit=${this.messagePageSize + 1}`;
-      const data = await this.authFetch(
-        `/api/chat/messages?session_id=${this.currentSessionId}${cursor}`
-      );
-      if (generation !== this._messagesRefreshGeneration) return;
-      const known = new Set(this.messages.map((message) => message.id));
-      let appended = false;
-      const items = data.items || [];
-      if (!newestServerMessage) {
-        this.hasOlderMessages = items.length > this.messagePageSize;
+      if (this._messagesPollInFlight) {
+        this._messagesPollPending = true;
+        return;
       }
-      for (const message of newestServerMessage
-        ? items
-        : items.slice(-this.messagePageSize)) {
-        if (!known.has(message.id)) {
-          this._ingestMessage(message);
-          known.add(message.id);
-          appended = true;
+      this._messagesPollInFlight = true;
+      try {
+        const generation = this._messagesRefreshGeneration;
+        const wasAtBottom = this._isScrolledToBottom();
+        const newestServerMessage = [...this.messages]
+          .reverse()
+          .find((message) => !message._client && Number.isFinite(Number(message.id)));
+        const cursor = newestServerMessage
+          ? `&after_id=${newestServerMessage.id}`
+          : `&limit=${this.messagePageSize + 1}`;
+        const data = await this.authFetch(
+          `/api/chat/messages?session_id=${this.currentSessionId}${cursor}`
+        );
+        if (generation !== this._messagesRefreshGeneration) return;
+        const known = new Set(this.messages.map((message) => message.id));
+        let appended = false;
+        const items = data.items || [];
+        if (!newestServerMessage) {
+          this.hasOlderMessages = items.length > this.messagePageSize;
         }
-      }
-      if (appended && wasAtBottom) {
-        this.$nextTick(() => {
-          if (generation === this._messagesRefreshGeneration) {
-            this._scrollToBottom();
+        for (const message of newestServerMessage
+          ? items
+          : items.slice(-this.messagePageSize)) {
+          if (!known.has(message.id)) {
+            this._ingestMessage(message);
+            known.add(message.id);
+            appended = true;
           }
-        });
+        }
+        if (appended && wasAtBottom) {
+          this.$nextTick(() => {
+            if (generation === this._messagesRefreshGeneration) {
+              this._scrollToBottom();
+            }
+          });
+        }
+      } finally {
+        this._messagesPollInFlight = false;
+        if (this._messagesPollPending && !this.messagesLoading && !this.loadingOlderMessages) {
+          this._messagesPollPending = false;
+          this.pollMessages().catch(() => {});
+        }
       }
     },
 
@@ -1619,7 +1672,7 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify({
             message: text,
             session_id: this.currentSessionId,
-            ...(this.designMode ? { mode: "design" } : {}),
+            ...(this.designMode && this.canManageProjectConfiguration ? { mode: "design" } : {}),
           }),
         });
         if (generation !== this._messagesRefreshGeneration) return;
@@ -1673,8 +1726,7 @@ document.addEventListener("alpine:init", () => {
     async buildTopologyChoice(projectId, option) {
       if (this.topologyChoiceBusy || !option || !this.currentProject ||
           Number(projectId) !== Number(this.currentProject.id) ||
-          this.currentProject.access !== "owner" ||
-          !this.currentUser || this.currentUser.role !== "OPERATOR") return;
+          !this.canManageProjectConfiguration) return;
       this.topologyChoiceBusy = true;
       this.topologyChoiceError = "";
       try {

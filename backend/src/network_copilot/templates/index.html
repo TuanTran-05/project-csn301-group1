@@ -55,14 +55,22 @@
         <h1 class="sidebar-app-title">AI Tool</h1>
         <div class="devices-heading">
           <h2>Thiết bị</h2>
-          <a class="add-device-link" href="/projects" aria-label="Mở project để thêm thiết bị" title="Thêm thiết bị">+</a>
+          <a class="add-device-link" href="/projects" x-show="canManageProjectConfiguration" aria-label="Mở project để thêm thiết bị" title="Thêm thiết bị">+</a>
         </div>
         <a class="device-project-card" href="/projects" aria-label="Mở project hiện tại">
           <span class="device-project-icon" aria-hidden="true"></span>
           <span class="device-project-copy">
             <strong x-text="currentProject ? currentProject.name : 'Project mặc định'"></strong>
-            <small x-show="!devices.length">Chưa có thiết bị. Thêm thiết bị ›</small>
-            <small x-show="devices.length" x-text="devices.length + ' thiết bị'"></small>
+            <small
+              x-show="Number(currentProject && currentProject.device_count) > 0"
+              x-text="currentProject.device_count + ' thiết bị trong project'"></small>
+            <small
+              x-show="Number(currentProject && currentProject.device_count) === 0"
+            >Chưa có thiết bị. Thêm thiết bị ›</small>
+            <small
+              class="device-project-readiness"
+              x-show="Number(currentProject && currentProject.device_count) > 0 && devices.length < currentProject.device_count"
+              x-text="devices.length + ' thiết bị đã có IP quản trị'"></small>
           </span>
         </a>
         <ul>
@@ -110,8 +118,8 @@
         </div>
         <div class="chat-empty" x-show="!messages.length && !sending && !messagesLoading" x-cloak>
           <h3>Bạn muốn làm gì với mạng này?</h3>
-          <p x-show="currentUser && ['OPERATOR', 'VIEWER'].includes(currentUser.role)">AI có thể đề xuất sơ đồ và cấu hình riêng theo từng thiết bị. Bạn xem lại rồi xác nhận tải các file để tự nhập vào PNETLab.</p>
-          <p x-show="currentUser && !['OPERATOR', 'VIEWER'].includes(currentUser.role)">Hỏi bằng tiếng Việt hoặc tiếng Anh. AI chỉ đề xuất; thay đổi cấu hình vẫn qua quy trình duyệt của hệ thống.</p>
+          <p x-show="!canManageProjectConfiguration">Bạn có thể xem sơ đồ, hỏi về project và chạy lệnh chỉ đọc như show, ping hoặc traceroute (tracert).</p>
+          <p x-show="canManageProjectConfiguration">Hỏi bằng tiếng Việt hoặc tiếng Anh. Cấu hình thiết bị sẽ qua bước xem trước, duyệt và áp dụng.</p>
           <div class="chips">
             <template x-for="prompt in suggestions" :key="prompt">
               <button type="button" class="chip" @click="useSuggestion(prompt)" x-text="prompt"></button>
@@ -164,7 +172,7 @@
                       </article>
                     </template>
                   </details>
-                  <button type="button" class="primary-btn" :disabled="chatConfigBusy"
+                  <button type="button" class="primary-btn" x-show="canManageProjectConfiguration" :disabled="chatConfigBusy"
                     @click="downloadChatConfigurations(message)">
                     <span x-text="chatConfigBusy ? 'Đang chuẩn bị…' : 'Đồng ý, tải file để nhập vào PNETLab' "></span>
                   </button>
@@ -174,7 +182,7 @@
                       <span x-text="chatConfigBusy ? 'Đang gửi cấu hình…' : 'Duyệt và áp dụng trên PNETLab' "></span>
                     </button>
                   </template>
-                  <p class="hint" x-show="currentProject && !currentProject.ai_management_enabled">Chủ project có thể bật AI Management trong Cài đặt project để gửi cấu hình đã duyệt tới thiết bị PNETLab.</p>
+                  <p class="hint" x-show="currentProject && !currentProject.ai_management_enabled && canManageProjectConfiguration">Chủ project có thể bật AI Management trong Cài đặt project để gửi cấu hình đã duyệt tới thiết bị PNETLab.</p>
                   <p class="error-text" x-show="chatConfigError" x-text="chatConfigError"></p>
                 </section>
               </template>
@@ -212,7 +220,7 @@
                   </template>
                   <p class="ok-text" x-show="message.payload.applied">
                     Đã áp dụng. Thiết kế cũ được lưu thành một phiên bản tự động.
-                    Mở <a href="/projects">Sơ đồ mạng</a> để xem trước cấu hình và gửi đi duyệt.
+                    Mở <a :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (currentSessionId ? '&amp;session_id=' + currentSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a> để xem topology hiện có và xem trước cấu hình L2/L3; thao tác này không thêm hoặc thay đổi thiết bị, dây nối.
                   </p>
                   <p class="hint">Muốn chỉnh? Nhắn tiếp, ví dụ “đổi VLAN 20 sang 10.20.0.0/24”.</p>
                   <p class="error-text" x-show="designError" x-text="designError"></p>
@@ -228,7 +236,7 @@
                       <p x-text="option.description"></p>
                       <span class="hint" x-text="option.device_count + ' thiết bị mạng' + (option.key === 'campus' ? ' và Cloud mô phỏng Internet' : '')"></span>
                       <button type="button" class="primary-btn"
-                        x-show="currentUser && currentUser.role === 'OPERATOR' && currentProject && currentProject.access === 'owner'"
+                        x-show="canManageProjectConfiguration"
                         :disabled="topologyChoiceBusy"
                         @click="buildTopologyChoice(message.payload.project_id, option)">
                         <span x-text="topologyChoiceBusy ? 'Đang tạo…' : 'Chọn sơ đồ này'"></span>
@@ -353,7 +361,7 @@
                   </template>
                   <div
                     class="confirm-hostname"
-                    x-show="change.status === 'approved' && change.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                    x-show="change.status === 'approved' && change.requires_confirmation && canManageProjectConfiguration"
                   >
                     <p class="confirm-hostname-warning">
                       Thay đổi này chứa lệnh nguy hiểm. Gõ lại chính xác tên thiết bị
@@ -367,7 +375,7 @@
                       autocomplete="off"
                     />
                   </div>
-                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN'">
+                  <div class="action-card-buttons" x-show="canManageProjectConfiguration">
                     <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
                     <button
                       x-show="change.status === 'approved'"
@@ -416,7 +424,7 @@
 
                   <div
                     class="batch-confirmation"
-                    x-show="batch.status === 'approved' && batch.requires_confirmation && ((batch.ai_management_approved && canApplyChatBatch(batch)) || (!batch.ai_management_approved && currentUser && currentUser.role === 'ADMIN'))"
+                    x-show="batch.status === 'approved' && batch.requires_confirmation && ((batch.ai_management_approved && canApplyChatBatch(batch)) || (!batch.ai_management_approved && canManageProjectConfiguration))"
                   >
                     <p class="batch-confirmation-warning">
                       Cấu hình có lệnh cần xác nhận thêm. Nhập chính xác cụm từ sau để tiếp tục:
@@ -509,7 +517,7 @@
                       @click="cancelApprovedChatBatch(batch.id)"
                     >Hủy cấu hình</button>
                   </div>
-                  <div class="action-card-buttons" x-show="currentUser && currentUser.role === 'ADMIN' && !batch.ai_management_approved">
+                  <div class="action-card-buttons" x-show="canManageProjectConfiguration && !batch.ai_management_approved">
                     <button
                       x-show="batch.status === 'pending_approval'"
                       :disabled="Boolean(batchActionIds[batch.id])"
@@ -542,7 +550,7 @@
           <span class="dots"><i></i><i></i><i></i></span> AI đang xử lý…
         </div>
         <form class="chat-input" @submit.prevent="sendMessage()">
-          <button type="button" class="mode-toggle" :class="{ active: designMode }" :aria-pressed="designMode"
+          <button type="button" class="mode-toggle" x-show="canManageProjectConfiguration" :class="{ active: designMode }" :aria-pressed="designMode"
             @click="toggleDesignMode()" :disabled="noProject"
             title="Bật để AI thiết kế VLAN, IP, gateway và định tuyến cho project">Thiết kế mạng</button>
           <label class="sr-only" for="chat-message">Tin nhắn cho AI Tool</label>
@@ -554,7 +562,7 @@
             :disabled="sending || noProject"
             @keydown="onComposerKeydown($event)"
             @input="autoGrow($event.target)"
-            :placeholder="designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
+            :placeholder="!canManageProjectConfiguration ? 'Quyền Viewer: chỉ chạy lệnh chỉ-đọc như show, ping, traceroute (tracert)' : designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
           ></textarea>
           <button type="submit" :disabled="sending || noProject || !draftMessage.trim()">Gửi</button>
         </form>
@@ -598,7 +606,7 @@
               </ul>
               <div
                 class="batch-sidebar-confirmation"
-                x-show="change.status === 'approved' && change.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                x-show="change.status === 'approved' && change.requires_confirmation && canManageProjectConfiguration"
               >
                 <label :for="'sidebar-change-confirm-' + change.id">
                   Gõ <code x-text="change.device && change.device.hostname"></code> để Apply
@@ -611,7 +619,7 @@
                   autocomplete="off"
                 />
               </div>
-              <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
+              <div class="sidebar-actions" x-show="canManageProjectConfiguration">
                 <button x-show="change.status === 'pending_approval'" @click="approveChange(change.id)">Approve</button>
                 <button
                   x-show="change.status === 'approved'"
@@ -619,7 +627,7 @@
                   @click="applyChange(change.id)"
                 >Apply</button>
                 <button @click="cancelChange(change.id)">Cancel</button>
-                <button type="button" x-show="change.status === 'pending_approval' && change.requested_by_id === currentUser?.id"
+                <button type="button" x-show="currentUser && currentUser.role === 'ADMIN' && change.requested_by_id === currentUser.id"
                   @click="openPendingEditor('change', change.id)">Sửa nháp</button>
               </div>
             </li>
@@ -645,7 +653,7 @@
               </div>
               <div
                 class="batch-sidebar-confirmation"
-                x-show="batch.status === 'approved' && batch.requires_confirmation && currentUser && currentUser.role === 'ADMIN'"
+                  x-show="batch.status === 'approved' && batch.requires_confirmation && canManageProjectConfiguration"
               >
                 <label :for="'sidebar-batch-confirm-' + batch.id">
                   Type <code x-text="batch.confirmation_text"></code>
@@ -664,8 +672,8 @@
                 x-show="batchActionErrors[batch.id]"
                 x-text="batchActionErrors[batch.id]"
               ></div>
-              <div class="sidebar-actions" x-show="currentUser && currentUser.role === 'ADMIN'">
-                <button type="button" x-show="batch.status === 'pending_approval' && batch.requested_by_id === currentUser?.id"
+              <div class="sidebar-actions" x-show="canManageProjectConfiguration">
+                <button type="button" x-show="currentUser && currentUser.role === 'ADMIN' && batch.status === 'pending_approval' && batch.requested_by_id === currentUser.id"
                   @click="openPendingEditor('batch', batch.id)">Sửa nháp</button>
                 <button
                   x-show="batch.status === 'pending_approval'"

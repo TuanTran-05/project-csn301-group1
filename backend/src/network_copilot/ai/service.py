@@ -532,12 +532,25 @@ class AIService:
         return operation
 
     @staticmethod
-    def _require_admin(user_id: int | None) -> None:
+    def _require_project_config_access(
+        user_id: int | None, project_id: int | None
+    ) -> None:
         user = db.session.get(User, user_id) if user_id is not None else None
-        if user is None or user.role != "ADMIN":
+        if user is None or not user.is_active:
+            raise ForbiddenError("An active account is required to create a configuration change.")
+        if user.role == "ADMIN":
+            return
+        from ..projects.model import Project
+        from ..projects.service import access_level
+
+        project = db.session.get(Project, project_id) if project_id is not None else None
+        if (
+            user.role != "OPERATOR"
+            or project is None
+            or access_level(user, project) not in {"owner", "editor"}
+        ):
             raise ForbiddenError(
-                "Only an ADMIN may create a configuration change. "
-                "Ask an administrator to review this request."
+                "Only an Admin or an Operator with project edit access may create a configuration change."
             )
 
     # -- intent handlers --------------------------------------------------
@@ -737,7 +750,7 @@ class AIService:
             }
 
         if action.intent == "configure":
-            self._require_admin(user_id)
+            self._require_project_config_access(user_id, project_id)
             return self._handle_configure(action, user_id, project_id, group_id)
 
         operation = self._readonly_operation(action)

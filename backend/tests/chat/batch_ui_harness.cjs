@@ -407,8 +407,29 @@ async function streamRefreshesOnlyChangedParts() {
   assert.deepEqual(calls, []);
 }
 
+async function projectDeviceCountIncludesPlannedDevices() {
+  const { app } = createApp();
+  app.currentProjectId = 7;
+  app.projects = [{ id: 7, name: "Lab", device_count: 0 }];
+  app.authFetch = async (url) => {
+    assert.equal(url, "/api/devices");
+    return {
+      items: [
+        { id: 1, hostname: "planned-router", deployable: false },
+        { id: 2, hostname: "R1", deployable: true },
+      ],
+    };
+  };
+
+  await app.refreshDevices();
+
+  assert.equal(app.currentProject.device_count, 2);
+  assert.deepEqual(app.devices.map((device) => device.hostname), ["R1"]);
+}
+
 const cases = {
   stream_refreshes_only_changed_parts: streamRefreshesOnlyChangedParts,
+  project_device_count_includes_planned_devices: projectDeviceCountIncludesPlannedDevices,
   stale_chat_snapshot: staleChatSnapshot,
   stale_get_after_action: staleGetAfterAction,
   latest_refresh_wins: latestRefreshWins,

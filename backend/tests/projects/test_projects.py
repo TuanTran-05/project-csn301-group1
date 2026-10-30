@@ -78,37 +78,71 @@ def test_share_gives_read_access_only_to_the_target(client, two_projects, alice_
     a, *_ = two_projects
     assert client.get(f"/api/projects/{a.id}", headers=vera_headers).status_code == 404
 
-    # Only an Admin may share with an Operator account (see the next test).
     shared = client.post(
         f"/api/projects/{a.id}/members",
         headers=alice_headers,
         json={"username": "vera", "access": "viewer"},
     )
     assert shared.status_code == 201
-
     assert client.get(f"/api/projects/{a.id}", headers=vera_headers).get_json()["access"] == "viewer"
-    # A Viewer account has no implicit device access; it still cannot see Bob's project.
     assert client.get("/api/devices", headers=scope(vera_headers, a)).status_code == 200
     assert client.get(f"/api/projects/{two_projects[1].id}", headers=vera_headers).status_code == 404
 
 
+def test_operator_can_share_project_with_another_operator_as_editor(
+    client, two_projects, alice_headers, bob_headers
+):
+    a, *_ = two_projects
+    assert client.get(f"/api/projects/{a.id}", headers=bob_headers).status_code == 404
+
+    shared = client.post(
+        f"/api/projects/{a.id}/members",
+        headers=alice_headers,
+        json={"username": "bob"},
+    )
+    assert shared.status_code == 201
+    assert client.get(f"/api/projects/{a.id}", headers=bob_headers).get_json()["access"] == "editor"
+    devices = client.get("/api/devices", headers=scope(bob_headers, a))
+    assert devices.status_code == 200
+    assert [d["hostname"] for d in devices.get_json()["items"]] == ["R1"]
+    created = client.post(
+        "/api/devices",
+        headers=scope(bob_headers, a),
+        json={"hostname": "R2", "management_ip": "10.10.0.2", "device_type": "cisco_ios", "role": "core"},
+    )
+    assert created.status_code == 201
+
+
 def test_an_operator_shared_read_only_sees_that_projects_devices(client, two_projects, admin_headers, bob_headers):
     a, *_ = two_projects
-    assert client.post(f"/api/projects/{a.id}/members", headers=admin_headers,
-                       json={"username": "bob", "access": "viewer"}).status_code == 201
+    assert client.post(
+        f"/api/projects/{a.id}/members", headers=admin_headers,
+        json={"username": "bob", "access": "viewer"},
+    ).status_code == 201
     assert client.get(f"/api/projects/{a.id}", headers=bob_headers).get_json()["access"] == "viewer"
     devices = client.get("/api/devices", headers=scope(bob_headers, a))
     assert devices.status_code == 200
     assert [d["hostname"] for d in devices.get_json()["items"]] == ["R1"]
 
 
-def test_viewer_share_cannot_change_inventory(client, two_projects, admin_headers, bob_headers):
+def test_operator_viewer_share_cannot_change_inventory(client, two_projects, admin_headers, bob_headers):
     a, *_ = two_projects
     shared = client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "bob"})
     assert shared.status_code == 201
     response = client.post(
         "/api/devices",
         headers=scope(bob_headers, a),
+        json={"hostname": "R2", "management_ip": "10.10.0.2", "device_type": "cisco_ios", "role": "core"},
+    )
+    assert response.status_code == 403
+
+
+def test_global_viewer_share_cannot_change_inventory(client, two_projects, alice_headers, vera_headers):
+    a, *_ = two_projects
+    client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "vera"})
+    response = client.post(
+        "/api/devices",
+        headers=scope(vera_headers, a),
         json={"hostname": "R2", "management_ip": "10.10.0.2", "device_type": "cisco_ios", "role": "core"},
     )
     assert response.status_code == 403
@@ -186,14 +220,6 @@ def test_cannot_share_with_an_unknown_user_or_the_owner(client, two_projects, al
     a, *_ = two_projects
     assert client.post(f"/api/projects/{a.id}/members", headers=alice_headers, json={"username": "ghost"}).status_code == 404
     assert client.post(f"/api/projects/{a.id}/members", headers=admin_headers, json={"username": "alice"}).status_code == 409
-
-
-def test_an_operator_can_only_add_viewer_accounts(client, two_projects, alice_headers, vera):
-    a, *_ = two_projects
-    members = f"/api/projects/{a.id}/members"
-    assert client.post(members, headers=alice_headers, json={"username": "bob"}).status_code == 403
-    added = client.post(members, headers=alice_headers, json={"username": "vera", "access": "editor"})
-    assert added.status_code == 201 and added.get_json()["access"] == "viewer"
 
 
 def test_member_listing_is_visible_to_a_viewer(client, two_projects, alice_headers, vera_headers):
