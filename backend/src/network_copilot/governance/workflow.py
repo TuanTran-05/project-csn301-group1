@@ -165,8 +165,16 @@ def approve_allowed(change, user_id):
             and role(user) != "ADMIN" and not project_operator
             and user.id == change.requested_by_id):
         raise ForbiddenError("Independent approval is required; send this change to Admin.")
-    if device.environment == "production" and policy().production_admin_only and role(user) != "ADMIN":
-        raise ForbiddenError("Production changes require Administrator approval.")
+    if (
+        device.environment == "production"
+        and policy().production_admin_only
+        and role(user) != "ADMIN"
+        and not project_operator
+    ):
+        raise ForbiddenError(
+            "Production changes require Administrator approval or an Operator "
+            "with edit access to the project."
+        )
     if not ai_management:
         requester = actor(change.requested_by_id)
         if not operator_has_project_edit(requester, device):
