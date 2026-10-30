@@ -202,3 +202,59 @@ def test_a_login_that_is_not_pnetlab_json_is_explained_not_a_500(client, admin_h
     response = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body())
     assert response.status_code == 422, response.get_json()
     assert "https" in response.get_json()["message"]
+
+
+class OpenOnlyPNETLab(FakePNETLab):
+    """factory/create only opens a .unl that exists; POST /api/labs writes it.
+
+    The CSN301 server refused both factory/create bodies that create a lab."""
+
+    def __init__(self, accept_create=True):
+        super().__init__()
+        self.files = set()
+        self.accept_create = accept_create
+
+    def __call__(self, method, path, json=None, **kw):
+        if path == "/api/labs/session/factory/create":
+            self.calls.append((method, path, json))
+            if json["path"] not in self.files:
+                return 400, {"code": 400, "status": "fail", "message": "Lab does not exist (60038)."}, {}
+            self.labinfo = {"name": json["path"].rsplit("/", 1)[-1][:-4], "path": json["path"]}
+            return 200, {"code": 200, "status": "success"}, {}
+        if method == "POST" and path == "/api/labs":
+            self.calls.append((method, path, json))
+            if not self.accept_create:
+                return 403, {"code": 403, "status": "fail", "message": "Permission denied"}, {}
+            self.files.add(f"{json['path'].rstrip('/')}/{json['name']}.unl")
+            return 200, {"code": 200, "status": "success"}, {}
+        return super().__call__(method, path, json=json, **kw)
+
+
+def _use(app, fake):
+    def factory(request):
+        client_ = PNETLabClient(request.url, request.username, request.password, mode="session")
+        client_._send = fake
+        client_.session_login = lambda: None
+        return PNETLabWriter(client_)
+    app.config["PNETLAB_WRITER_FACTORY"] = factory
+    app.config["BOOTSTRAP_RUN_INLINE"] = True
+
+
+def test_a_lab_is_created_the_eve_ng_way_when_factory_create_only_opens(client, admin_headers, base, cabled, app):
+    fake = OpenOnlyPNETLab()
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "done", job
+    assert fake.files == {"/NetAI/csn301-lab.unl"}
+    assert len(fake.nodes) == 4
+
+
+def test_a_lab_that_cannot_be_created_says_what_pnetlab_answered(client, admin_headers, base, cabled, app):
+    fake = OpenOnlyPNETLab(accept_create=False)
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error"
+    assert "Lab does not exist (60038)" in job["message"] and "Permission denied" in job["message"]
+    assert not fake.nodes
