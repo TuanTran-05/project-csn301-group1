@@ -300,7 +300,10 @@ class StrictAccountPNETLab(FakePNETLab):
 
     def __call__(self, method, path, json=None, **kw):
         if method == "GET" and path.startswith("/api/folders"):
-            folder = path[len("/api/folders"):] or "/"
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse(path)
+            folder = parse_qs(parsed.query).get("path", [parsed.path[len("/api/folders"):] or "/"])[0]
             if folder in self.forbidden:
                 self.calls.append((method, path, json))
                 return 400, {"code": 400, "status": "fail",
@@ -347,3 +350,34 @@ def test_a_template_without_an_image_is_left_out(client, admin_headers, base, ca
     plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
     assert next(n for n in plan["nodes"] if n["hostname"] == "FW1")["ready"] is False
     assert next(n for n in plan["nodes"] if n["hostname"] == "R1")["ready"] is True
+
+
+
+class PNETLab53(FakePNETLab):
+    """PNETLab 5.3.11 on the CSN301 server: folders are listed with
+    ?path=..., the EVE-NG path form answers 404 "Resource not found (60038)"."""
+
+    def __call__(self, method, path, json=None, **kw):
+        if method == "GET" and path.startswith("/api/folders"):
+            self.calls.append((method, path, json))
+            if not path.startswith("/api/folders?path="):
+                return 404, {"code": 404, "status": "fail", "message": "Resource not found (60038)."}, {}
+            return 200, {"code": 200, "status": "success", "message": "Successfully listed path (60007).",
+                         "data": {"folders": [{"name": "..", "path": "/Courses/CSN301-StudentLab"}],
+                                  "labs": [{"file": "Group1Lab1.unl", "owner": True,
+                                            "path": "/Courses/CSN301-StudentLab/Group-1/Group1Lab1.unl"}]}}, {}
+        return super().__call__(method, path, json=json, **kw)
+
+
+def test_pnetlab_5_3_lists_the_folder_with_a_query_string(client, admin_headers, base, cabled, app):
+    fake = PNETLab53()
+    _use(app, fake)
+    folder = {"folder": "/Courses/CSN301-StudentLab/Group-1"}
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
+                       json=body(**folder, lab_name="Test202610301153")).get_json()
+    assert not plan.get("blocked"), plan["warnings"]
+    assert ("GET", "/api/folders?path=%2FCourses%2FCSN301-StudentLab%2FGroup-1", None) in fake.calls
+    # An existing lab in that folder is still recognised by its file name.
+    taken = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
+                        json=body(**folder, lab_name="Group1Lab1")).get_json()
+    assert taken["blocked"] is True and "already exists" in taken["warnings"][0]
