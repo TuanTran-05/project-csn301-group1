@@ -517,6 +517,9 @@
                     sau đó bật node và dùng "Khởi tạo SSH qua console" ở tab Thiết bị. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối.
                     Nếu lỗi giữa chừng, hệ thống thử xoá lab vừa tạo dở; tài khoản không có quyền xoá thì đường dẫn lab được báo lại để admin xoá.
                     Tên lab chỉ giữ chữ và số (PNETLab tự bỏ ký tự khác). Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
+                  <p class="hint warn-text">PNETLab chỉ cho một phiên đăng nhập mỗi tài khoản: mỗi lần NetAI đăng nhập (Xem trước, Tạo lab),
+                    trình duyệt đang mở PNETLab bằng <strong>cùng tài khoản</strong> sẽ bị đăng xuất. Mở lab bằng tài khoản của bạn,
+                    hoặc đăng nhập lại sau khi NetAI chạy xong.</p>
                   <form class="form-grid" @submit.prevent="pnetExportPreview()">
                     <label>URL PNETLab <input type="text" x-model="pnetExport.form.url" required placeholder="http://172.16.3.25 (địa chỉ nội bộ)" /></label>
                     <label>Tài khoản <input type="text" x-model="pnetExport.form.username" required autocomplete="off" /></label>

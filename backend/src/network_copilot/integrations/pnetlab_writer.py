@@ -5,6 +5,7 @@ server, PNETLab 4/5) and those of pnetlab-mcp-server:
 
     POST /api/folders/add                    {path, name}
     POST /api/labs/session/factory/create    {path, name, version, ...}  creates and opens
+    GET  /api/folders?path=<folder>          a folder's sub-folders and labs (PNETLab 5.3)
     GET  /api/list/templates/                available templates
     GET  /api/list/templates/<template>      a template's option defaults
     POST /api/labs/session/nodes/add         {template, type, image, name, ethernet, left, top, ...}
@@ -19,6 +20,8 @@ server, PNETLab 4/5) and those of pnetlab-mcp-server:
 Every call targets the lab bound to the login session, so one writer builds
 one lab. It never starts, stops or edits an existing node.
 """
+
+from urllib.parse import quote
 
 from .pnetlab import PNETLabClient, PNETLabError, _NoSessionAPI
 
@@ -191,6 +194,26 @@ class PNETLabWriter:
                 return str(value)
         return None
 
+    def list_folder(self, folder: str) -> tuple[dict | None, str | None]:
+        """(the folder's listing, None) or (None, why it could not be read).
+
+        PNETLab 5.3 lists a folder with a query string,
+        ``GET /api/folders?path=/Courses/...`` (captured on the CSN301
+        server); the EVE-NG form ``GET /api/folders/Courses/...`` answers
+        "Resource not found (60038)" there and is only the fallback.
+        """
+        folder = "/" + folder.strip("/") if folder.strip("/") else "/"
+        problems = []
+        for route in (f"/api/folders?path={quote(folder, safe='')}",
+                      "/api/folders" + (folder if folder != "/" else "")):
+            status, data, _ = self.client._send("GET", route)
+            listing = data.get("data") if isinstance(data, dict) else None
+            if not self.client._failed(status, data) and isinstance(listing, dict):
+                return listing, None
+            problems.append(self.client._message(data, status))
+        # The query form's answer is the one that describes this server.
+        return None, problems[0]
+
     def folder_problem(self, folder: str) -> str | None:
         """Why this account cannot use the folder, or None when it can list it.
 
@@ -198,15 +221,11 @@ class PNETLabWriter:
         permission to access folder /"); checking first keeps a build from
         failing after it started.
         """
-        status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
-        if self.client._failed(status, data):
-            return self.client._message(data, status)
-        return None
+        return self.list_folder(folder)[1]
 
     def lab_exists(self, folder: str, name: str) -> bool:
         """Whether the folder already lists ``<name>.unl`` (False if unreadable)."""
-        status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
-        listing = data.get("data") if isinstance(data, dict) and not self.client._failed(status, data) else None
+        listing, _ = self.list_folder(folder)
         labs = listing.get("labs") if isinstance(listing, dict) else None
         wanted = f"{name}.unl".lower()
         for lab in labs or []:
