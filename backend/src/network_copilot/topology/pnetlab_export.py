@@ -238,10 +238,16 @@ def preview(project, payload: dict) -> dict:
     """The plan, checked against the templates this PNETLab has. Builds nothing."""
     request = validate_request(payload)
     writer = _writer(request)
+    folder = "/" + request.folder.strip("/")
     try:
         writer.login()
         available = set(writer.templates())
-        exists = writer.lab_exists("/" + request.folder.strip("/"), request.lab_name)
+        folder_problem = writer.folder_problem(folder)
+        exists = not folder_problem and writer.lab_exists(folder, request.lab_name)
+        # A template listed without any image cannot start a node.
+        for template in sorted({t for t in (_template_for_name(d) for d in _project_devices(project)) if t}):
+            if template in available and not _has_image(writer.template_options(template)):
+                available.discard(template)
     except AppError:
         raise
     except Exception as exc:  # an answer shape PNETLab was not expected to give
@@ -250,10 +256,30 @@ def preview(project, payload: dict) -> dict:
             f"PNETLab trả lời không như mong đợi ({type(exc).__name__}); xem log máy chủ."
         ) from exc
     result = plan(project, request, available)
+    if folder_problem:
+        result["warnings"].insert(0, f"Không dùng được thư mục {folder} với tài khoản này: {folder_problem}. "
+                                     "Chọn thư mục tài khoản được phép ghi.")
+        result["blocked"] = True
     if exists:
         result["warnings"].insert(0, f"{result['lab_path']} already exists; choose another lab name.")
         result["blocked"] = True
     return result
+
+
+def _project_devices(project):
+    return db.session.query(Device).filter(Device.project_id == project.id).all()
+
+
+def _template_for_name(device) -> str | None:
+    mapping = _template_for(device)
+    return mapping[1] if mapping and mapping[0] == "node" else None
+
+
+def _has_image(options: dict) -> bool:
+    image = options.get("image")
+    if not isinstance(image, dict):
+        return True  # a template without an image option (VPCS) needs none
+    return bool(image.get("value") or image.get("list"))
 
 
 def _node_body(template: str, options: dict, entry: dict) -> dict:
@@ -303,6 +329,9 @@ def run(project, payload: dict, progress=None) -> dict:
     results = [{"hostname": n["hostname"], "template": n["template"],
                 "status": "pending" if n["ready"] else "skipped"} for n in built["nodes"]]
 
+    problem = writer.folder_problem(folder)
+    if problem:
+        raise PNETLabError(f"Không dùng được thư mục {folder} với tài khoản này: {problem}.")
     progress(phase="lab", message=f"Creating {built['lab_path']}")
     path = writer.create_lab(folder, request.lab_name)  # ExistingLabError: nothing to undo
     try:
@@ -343,8 +372,13 @@ def run(project, payload: dict, progress=None) -> dict:
             result["management_index"] = item["index"]
     except Exception as exc:
         progress(phase="rollback", message=f"Deleting {path}")
-        writer.delete_lab(path)
+        refused = writer.delete_lab(path)
         message = exc.message if isinstance(exc, PNETLabError) else type(exc).__name__
+        if refused:
+            raise PNETLabError(
+                f"{message} Lab tạo dở {path} KHÔNG xoá được ({refused}): "
+                "nhờ admin PNETLab xoá lab này, hoặc dùng tên lab khác cho lần sau."
+            ) from exc
         raise PNETLabError(f"{message} The half-built lab {path} was deleted.") from exc
 
     return {

@@ -191,6 +191,18 @@ class PNETLabWriter:
                 return str(value)
         return None
 
+    def folder_problem(self, folder: str) -> str | None:
+        """Why this account cannot use the folder, or None when it can list it.
+
+        ai.tool may not even open "/" on the CSN301 server ("You do not have
+        permission to access folder /"); checking first keeps a build from
+        failing after it started.
+        """
+        status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
+        if self.client._failed(status, data):
+            return self.client._message(data, status)
+        return None
+
     def lab_exists(self, folder: str, name: str) -> bool:
         """Whether the folder already lists ``<name>.unl`` (False if unreadable)."""
         status, data, _ = self.client._send("GET", "/api/folders" + folder.rstrip("/"))
@@ -234,8 +246,13 @@ class PNETLabWriter:
             "node_id": str(node_id), "data": {str(int(index)): str(network_id)},
         }, what=f"attach node {node_id} to network {network_id}")
 
-    def delete_lab(self, path: str) -> None:
-        """Close the session's lab and delete its file; best effort, never raises."""
+    def delete_lab(self, path: str) -> str | None:
+        """Close the session's lab and delete its file. Never raises.
+
+        Returns None once the lab is gone, else why not: an account may
+        create labs yet not delete them (ai.tool on the CSN301 server), and
+        the half-built lab must then be named so someone can delete it.
+        """
         try:
             status, data, _ = self.client._send("GET", "/api/auth")
             info = data.get("data") if isinstance(data, dict) else None
@@ -243,6 +260,9 @@ class PNETLabWriter:
             if session:
                 self.client._send("POST", "/api/labs/session/factory/destroy",
                                   json={"lab_session": session})
-            self.client._send("DELETE", "/api/labs", json={"path": path})
-        except PNETLabError:
-            pass
+            status, data, _ = self.client._send("DELETE", "/api/labs", json={"path": path})
+        except PNETLabError as exc:
+            return exc.message
+        if self.client._failed(status, data):
+            return self.client._message(data, status)
+        return None

@@ -514,8 +514,9 @@
                   <h4>Đẩy sơ đồ sang PNETLab</h4>
                   <p class="hint">Tạo một <strong>lab mới</strong> trên PNETLab từ sơ đồ này: mỗi thiết bị thành một node (vIOS, vIOS-L2, ASAv, PA-VM, VPCS)
                     đặt đúng vị trí, mỗi dây nối thành dây nối, cổng quản trị nối vào Cloud0. Node được tạo ở trạng thái tắt, chưa cấu hình;
-                    sau đó bật node và dùng "Khởi tạo SSH qua console" ở tab Thiết bị. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối,
-                    và nếu lỗi giữa chừng thì lab vừa tạo dở được xoá. Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
+                    sau đó bật node và dùng "Khởi tạo SSH qua console" ở tab Thiết bị. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối.
+                    Nếu lỗi giữa chừng, hệ thống thử xoá lab vừa tạo dở; tài khoản không có quyền xoá thì đường dẫn lab được báo lại để admin xoá.
+                    Tên lab chỉ giữ chữ và số (PNETLab tự bỏ ký tự khác). Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
                   <form class="form-grid" @submit.prevent="pnetExportPreview()">
                     <label>URL PNETLab <input type="text" x-model="pnetExport.form.url" required placeholder="http://172.16.3.25 (địa chỉ nội bộ)" /></label>
                     <label>Tài khoản <input type="text" x-model="pnetExport.form.username" required autocomplete="off" /></label>

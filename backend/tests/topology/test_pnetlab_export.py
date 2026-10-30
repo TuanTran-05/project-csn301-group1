@@ -288,3 +288,62 @@ def test_the_lab_is_created_like_the_pnetlab_ui_in_the_configured_folder(client,
     assert created["name"] == "Test20261030"
     assert created["author"] == "38" and created["editable_emails"] == ["38"]
     assert not any(p == "/api/labs/session/factory/create" and j.get("name") for m, p, j in fake.calls)
+
+
+class StrictAccountPNETLab(FakePNETLab):
+    """ai.tool on the CSN301 server: no access to some folders, and it may
+    create labs but not delete them."""
+
+    def __init__(self, forbidden=(), fail_on=None):
+        super().__init__(fail_on=fail_on)
+        self.forbidden = set(forbidden)
+
+    def __call__(self, method, path, json=None, **kw):
+        if method == "GET" and path.startswith("/api/folders"):
+            folder = path[len("/api/folders"):] or "/"
+            if folder in self.forbidden:
+                self.calls.append((method, path, json))
+                return 400, {"code": 400, "status": "fail",
+                             "message": f"You do not have permission to access folder {folder}"}, {}
+        if method == "DELETE" and path == "/api/labs":
+            self.calls.append((method, path, json))
+            return 400, {"code": 400, "status": "fail", "message": "You do not have permission to delete this lab"}, {}
+        return super().__call__(method, path, json=json, **kw)
+
+
+def test_a_folder_the_account_cannot_use_blocks_the_preview_and_the_run(client, admin_headers, base, cabled, app):
+    fake = StrictAccountPNETLab(forbidden={"/NetAI"})
+    _use(app, fake)
+    preview = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert preview["blocked"] is True
+    assert "permission to access folder /NetAI" in preview["warnings"][0]
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error" and "/NetAI" in job["message"]
+    assert not any(p in ("/api/labs", "/api/labs/session/factory/create") for _, p, _ in fake.calls)
+
+
+def test_a_rollback_the_account_may_not_delete_names_the_lab_left_behind(client, admin_headers, base, cabled, app):
+    fake = StrictAccountPNETLab(fail_on="/networks/p2p")
+    _use(app, fake)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    job = client.get(f"{base}/export/jobs/{job['id']}", headers=admin_headers).get_json()["job"]
+    assert job["status"] == "error"
+    assert "/NetAI/csn301lab.unl KHÔNG xoá được" in job["message"]
+    assert "permission to delete" in job["message"]
+
+
+def test_a_template_without_an_image_is_left_out(client, admin_headers, base, cabled, app):
+    fake = FakePNETLab()
+    original = fake.__call__
+
+    def no_asav_image(method, path, json=None, **kw):
+        if path == "/api/list/templates/asav":
+            return 200, {"code": 200, "status": "success",
+                         "data": {"options": {"image": {"value": "", "list": {}}}}}, {}
+        return original(method, path, json=json, **kw)
+
+    _use(app, no_asav_image)
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert next(n for n in plan["nodes"] if n["hostname"] == "FW1")["ready"] is False
+    assert next(n for n in plan["nodes"] if n["hostname"] == "R1")["ready"] is True
