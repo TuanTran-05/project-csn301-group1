@@ -98,9 +98,8 @@ document.addEventListener("alpine:init", () => {
     designBusy: false,
     designError: "",
     sessions: [],
-    // A per-browser bookmark of which of your own sessions this browser was
-    // last looking at. Sessions are private to the user who started them;
-    // the server ignores an id that belongs to someone else.
+    // A per-browser bookmark of the project-shared session this browser was
+    // last looking at. Every project member can read and continue it.
     currentSessionId: (() => {
       const stored = localStorage.getItem("nc_session_id");
       return stored ? Number(stored) : null;
@@ -116,12 +115,6 @@ document.addEventListener("alpine:init", () => {
           "Thêm VLAN 99 để quản trị thiết bị",
         ];
       }
-      if (this.currentUser && this.currentUser.role === "OPERATOR") {
-        return ["Tạo project mới", "Gợi ý sơ đồ và file cấu hình cho các thiết bị trong lab"];
-      }
-      if (this.currentUser && this.currentUser.role === "VIEWER") {
-        return ["Gợi ý sơ đồ và file cấu hình để dựng lab trên PNETLab", "Cần cấu hình gì để các mạng liên thông?"];
-      }
       const byRole = (...roles) => this.devices.find((d) => roles.includes(d.role));
       const router = byRole("core", "isp");
       const switchDevice = byRole("access", "distribution");
@@ -136,11 +129,14 @@ document.addEventListener("alpine:init", () => {
       }
       if (this.devices.length) {
         prompts.push("Thiết bị nào đang offline?");
-        if (this.currentUser && this.currentUser.role === "ADMIN") {
+        if (this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role)) {
           prompts.push("Lưu cấu hình trên toàn bộ thiết bị");
         }
       } else {
         prompts.push("Mạng của tôi cần những gì để bắt đầu?");
+      }
+      if (this.currentUser && this.currentUser.role === "OPERATOR") {
+        prompts.unshift("Tạo project mới");
       }
       return prompts;
     },
@@ -249,20 +245,27 @@ document.addEventListener("alpine:init", () => {
       return Boolean(
         batch && batch.ai_management_approved &&
         batch.requested_by_id === this.currentUser?.id &&
-        this.currentUser && this.currentUser.role === "OPERATOR"
+        this.canManageProjectConfiguration
       );
     },
 
-    // Only an Operator with edit rights may push an AI suggestion to devices.
+    get canManageProjectConfiguration() {
+      return Boolean(
+        this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role) &&
+        this.currentProject && ["owner", "editor"].includes(this.currentProject.access)
+      );
+    },
+
+    // Project editors can push an explicitly approved AI suggestion to devices.
     get canApplyChatConfigurations() {
       return Boolean(
         this.currentProject && this.currentProject.ai_management_enabled &&
-        ["owner", "editor"].includes(this.currentProject.access) &&
-        this.currentUser && this.currentUser.role === "OPERATOR"
+        this.canManageProjectConfiguration
       );
     },
 
     toggleDesignMode() {
+      if (this.currentUser && this.currentUser.role === "VIEWER") return;
       this.designMode = !this.designMode;
       try { localStorage.setItem("nc_design_mode", this.designMode ? "1" : "0"); } catch { /* optional */ }
       this.$nextTick(() => this.$refs.composer && this.$refs.composer.focus());
@@ -271,7 +274,7 @@ document.addEventListener("alpine:init", () => {
     get canApplyDesign() {
       return Boolean(
         this.currentProject && ["owner", "editor"].includes(this.currentProject.access) &&
-        this.currentUser && this.currentUser.role !== "VIEWER"
+        this.currentUser && ["ADMIN", "OPERATOR"].includes(this.currentUser.role)
       );
     },
 
@@ -743,6 +746,10 @@ document.addEventListener("alpine:init", () => {
 
     async startApp(options = {}) {
       const generation = this._sessionGeneration;
+      if (this.currentUser && this.currentUser.role === "VIEWER" && this.designMode) {
+        this.designMode = false;
+        try { localStorage.removeItem("nc_design_mode"); } catch { /* optional */ }
+      }
       if (!options.skipProjects) {
         try {
           await this.loadProjects();
@@ -784,6 +791,9 @@ document.addEventListener("alpine:init", () => {
       this._deviceTimer = setInterval(unlessStreaming(() => this.refreshDevices()), 15000);
       this._changesTimer = setInterval(unlessStreaming(() => this.refreshChanges()), 15000);
       this._batchesTimer = setInterval(unlessStreaming(() => this.refreshBatches()), 15000);
+      // Shared sessions may be created by another project member; keep the
+      // session picker synchronized while the active transcript is polled.
+      this._sessionsTimer = setInterval(() => this.refreshSessions().catch(() => {}), 5000);
       // Keep the active transcript fresh even when the SSE connection appears
       // healthy; proxies can keep a stream open while buffering its events.
       this._messagesTimer = setInterval(() => this.pollMessages().catch(() => {}), 1000);
@@ -902,6 +912,7 @@ document.addEventListener("alpine:init", () => {
       clearInterval(this._changesTimer);
       clearInterval(this._batchesTimer);
       clearInterval(this._messagesTimer);
+      clearInterval(this._sessionsTimer);
       if (this._safetyTimer) clearInterval(this._safetyTimer);
       this._safetyTimer = null;
       this.stopRealtime();
@@ -909,6 +920,7 @@ document.addEventListener("alpine:init", () => {
       this._changesTimer = null;
       this._batchesTimer = null;
       this._messagesTimer = null;
+      this._sessionsTimer = null;
     },
 
     async refreshDevices() {
@@ -1459,6 +1471,19 @@ document.addEventListener("alpine:init", () => {
       localStorage.setItem("nc_session_id", String(this.currentSessionId));
     },
 
+    async refreshSessions() {
+      const selectedSessionId = this.currentSessionId;
+      const data = await this.authFetch("/api/chat/sessions");
+      this.sessions = data.items || [];
+      if (this.sessions.length === 0) {
+        const session = await this.authFetch("/api/chat/sessions", { method: "POST" });
+        this.sessions = [session];
+      }
+      if (!this.sessions.some((session) => session.id === selectedSessionId)) {
+        await this.switchSession(this.sessions[0].id);
+      }
+    },
+
     async switchSession(sessionId, forceReload = false) {
       // Alpine's x-model updates currentSessionId before the change handler
       // runs, so selecting a different option can arrive here with the new
@@ -1697,8 +1722,7 @@ document.addEventListener("alpine:init", () => {
     async buildTopologyChoice(projectId, option) {
       if (this.topologyChoiceBusy || !option || !this.currentProject ||
           Number(projectId) !== Number(this.currentProject.id) ||
-          this.currentProject.access !== "owner" ||
-          !this.currentUser || this.currentUser.role !== "OPERATOR") return;
+          !this.canManageProjectConfiguration) return;
       this.topologyChoiceBusy = true;
       this.topologyChoiceError = "";
       try {

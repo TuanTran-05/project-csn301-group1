@@ -574,9 +574,8 @@ def config_plan(project_id: int):
 def config_preview(project_id: int):
     """Freeze the design's configuration as a change batch awaiting approval.
 
-    Needs editor access to the project and, like any change, a config.create
-    permission (an ADMIN, or a scoped group grant). Approving and applying it
-    stays an ADMIN action.
+    A project owner or editor may create this proposal. Approval and application
+    continue through the project-scoped change workflow and its safety policies.
     """
     project = _project(project_id, "editor")
     data = _config_request()

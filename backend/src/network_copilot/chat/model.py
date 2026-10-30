@@ -25,18 +25,17 @@ def utc_isoformat(value: datetime | None) -> str | None:
 
 
 class ChatSession(db.Model):
-    """A named conversation thread belonging to one user within a project.
+    """A named conversation thread shared by the members of one project.
 
-    Project members share devices and topology, while each user has private
-    chat sessions. Admins can read other members' sessions for auditing.
-    There is no stored title: it is derived from the session's first message
-    by chat/session_service.py, computed at read time.
+    ``created_by_id`` records who started the session; it does not restrict
+    which project members can read or continue it. The title is derived from
+    the session's first message by chat/session_service.py.
     """
 
     __tablename__ = "chat_sessions"
 
     id = db.Column(db.Integer, primary_key=True)
-    # Sessions are scoped to one project and private to their creator.
+    # Sessions are project-scoped and shared with every project member.
     project_id = db.Column(
         db.Integer,
         db.ForeignKey("projects.id", ondelete="CASCADE"),

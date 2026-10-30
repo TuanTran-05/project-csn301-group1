@@ -12,7 +12,7 @@ from ..chat.onboarding import (
     requested_device_count,
     topology_options,
 )
-from ..errors import ValidationError
+from ..errors import ForbiddenError, ValidationError
 from ..extensions import db, limiter
 from ..projects.scope import current_project
 from ..projects import service as project_service
@@ -116,12 +116,15 @@ def chat():
     user = current_user()
     user_id = user.id if user else None
     username = user.username if user else None
-    # Chat sessions are private to the user who started them. A missing id,
-    # or one belonging to another member, is replaced by the caller's own.
+    # Chat sessions are shared by the project; resolve a missing or foreign
+    # project session to the latest session the caller may access.
     data.session_id = resolve_or_create_session(
         data.session_id, project.id, user, write=True
     ).id
     g.chat_session_id = data.session_id
+
+    if data.mode == "design" and user.role == "VIEWER":
+        raise ForbiddenError("Viewer accounts can ask questions and run read-only show commands, but cannot create or apply network designs.")
 
     if (
         user.role == "OPERATOR"
@@ -178,7 +181,7 @@ def chat():
             service.provider, data.message, project,
             service._recent_history(data.session_id, data.message, project.id),
         )
-    elif user.role in {"OPERATOR", "VIEWER"} or requests_network_design(data.message):
+    elif user.role != "VIEWER" and requests_network_design(data.message):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
         result = AIService().handle(

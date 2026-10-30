@@ -487,7 +487,15 @@ def capture_baseline(device_id):
     if device is None:
         raise NotFoundError("Device not found.")
     user = current_user()
-    require(user, "device.observe", device=device)
+    if role(user) == "OPERATOR":
+        from ..projects.model import Project
+        from ..projects.service import access_level
+
+        project = db.session.get(Project, device.project_id)
+        if project is None or access_level(user, project) not in {"owner", "editor"}:
+            raise ForbiddenError("Project edit access is required to capture a device baseline.")
+    else:
+        require(user, "device.observe", device=device)
     if role(user) == "STUDENT":
         raise ForbiddenError("Ask your Teacher to capture the baseline.")
     if db.session.get(DeviceLease, device_id):
