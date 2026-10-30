@@ -118,8 +118,8 @@
         </div>
         <div class="chat-empty" x-show="!messages.length && !sending && !messagesLoading" x-cloak>
           <h3>Bạn muốn làm gì với mạng này?</h3>
-          <p x-show="currentUser && currentUser.role === 'VIEWER'">Bạn có thể xem sơ đồ, hỏi về project và chạy lệnh chỉ đọc như show route hoặc show vlan.</p>
-          <p x-show="currentUser && currentUser.role !== 'VIEWER'">Hỏi bằng tiếng Việt hoặc tiếng Anh. Cấu hình thiết bị sẽ qua bước xem trước, duyệt và áp dụng.</p>
+          <p x-show="!canManageProjectConfiguration">Bạn có thể xem sơ đồ, hỏi về project và chạy lệnh chỉ đọc như show, ping hoặc traceroute (tracert).</p>
+          <p x-show="canManageProjectConfiguration">Hỏi bằng tiếng Việt hoặc tiếng Anh. Cấu hình thiết bị sẽ qua bước xem trước, duyệt và áp dụng.</p>
           <div class="chips">
             <template x-for="prompt in suggestions" :key="prompt">
               <button type="button" class="chip" @click="useSuggestion(prompt)" x-text="prompt"></button>
@@ -562,7 +562,7 @@
             :disabled="sending || noProject"
             @keydown="onComposerKeydown($event)"
             @input="autoGrow($event.target)"
-            :placeholder="!canManageProjectConfiguration ? 'Quyền Viewer: chỉ chạy lệnh show, ví dụ: show ip route R1' : designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
+            :placeholder="!canManageProjectConfiguration ? 'Quyền Viewer: chỉ chạy lệnh chỉ-đọc như show, ping, traceroute (tracert)' : designMode ? 'Mô tả mạng bạn muốn, ví dụ: 3 VLAN Kế toán, Kỹ thuật, Khách; quản trị qua VLAN 99' : 'Nhập yêu cầu…  Enter: gửi · Shift+Enter: xuống dòng · ↑: tin trước'"
           ></textarea>
           <button type="submit" :disabled="sending || noProject || !draftMessage.trim()">Gửi</button>
         </form>

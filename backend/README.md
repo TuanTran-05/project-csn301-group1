@@ -66,7 +66,7 @@ Open <http://127.0.0.1:5000/projects>.
 - **Sharing.** The owner shares a project with a username as `viewer` (read) or
   `editor` (devices and diagram). A global `VIEWER` stays read-only, but can
   view the topology, participate in the shared project chat and run allowlisted
-  read-only commands such as `show`. An `OPERATOR` can configure devices and
+  read-only commands such as `show`, `ping` and `traceroute`. An `OPERATOR` can configure devices and
   edit the project when they own it or have `editor` access; project access does
   not grant global user-administration rights. An ADMIN can manage every
   project. ADMINs create accounts at `POST /api/users` or in the page's account

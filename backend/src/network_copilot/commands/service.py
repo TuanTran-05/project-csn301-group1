@@ -52,24 +52,6 @@ def evaluate(command: str, device_role: str) -> CommandDecision:
     return default_policy.evaluate(command, device_role)
 
 
-def _viewer_project_is_read_only(user_id: int | None, project_id: int) -> bool:
-    """Whether an Operator or Viewer has only viewer access to this project."""
-    if user_id is None:
-        return False
-    from ..auth.model import User
-    from ..projects.model import Project
-    from ..projects.service import access_level
-
-    user = db.session.get(User, user_id)
-    project = db.session.get(Project, project_id)
-    return bool(
-        user
-        and user.role in {"OPERATOR", "VIEWER"}
-        and project
-        and access_level(user, project) == "viewer"
-    )
-
-
 def execute_readonly(
     device_id: int,
     command: str,
@@ -90,14 +72,6 @@ def execute_readonly(
     device = device_service.ensure_deployable(device_service.get_device(device_id, project_id))
 
     decision = policy_for_source(source).evaluate(command, device.role)
-    if decision.allowed and _viewer_project_is_read_only(user_id, device.project_id):
-        normalized = default_policy.normalize(command)
-        if normalized != "show" and not normalized.startswith("show "):
-            decision = CommandDecision(
-                allowed=False,
-                normalized_command=normalized,
-                reason="Viewer access to this project only permits read-only show commands.",
-            )
     if not decision.allowed:
         _record(
             device_id=device.id,

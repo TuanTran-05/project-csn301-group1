@@ -302,7 +302,10 @@ class CommandPolicy:
 
     @staticmethod
     def normalize(command: str) -> str:
-        return re.sub(r"\s+", " ", command.strip()).lower()
+        normalized = re.sub(r"\s+", " ", command.strip()).lower()
+        if normalized == "tracert" or normalized.startswith("tracert "):
+            return "traceroute" + normalized[len("tracert"):]
+        return normalized
 
     def evaluate(self, command, device_role: str) -> CommandDecision:
         if not isinstance(command, str) or not command.strip():
@@ -347,9 +350,12 @@ class CommandPolicy:
                     ),
                     matched_rule=rule.name,
                 )
+            normalized_command = " ".join(command.split()) if rule.preserve_case else normalized
+            if rule.preserve_case and normalized_command.lower().startswith("tracert "):
+                normalized_command = "traceroute" + normalized_command[len("tracert"):]
             return CommandDecision(
                 allowed=True,
-                normalized_command=" ".join(command.split()) if rule.preserve_case else normalized,
+                normalized_command=normalized_command,
                 matched_rule=rule.name,
             )
 

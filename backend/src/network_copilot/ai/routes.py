@@ -130,7 +130,8 @@ def chat():
         or requests_project(data.message)
     ):
         raise ForbiddenError(
-            "Quyền Viewer trong project chỉ cho phép chạy lệnh show chỉ-đọc; "
+            "Quyền Viewer trong project chỉ cho phép lệnh chỉ-đọc như show, ping, "
+            "traceroute; "
             "không thể tạo project, topology hoặc cấu hình thiết bị."
         )
 
