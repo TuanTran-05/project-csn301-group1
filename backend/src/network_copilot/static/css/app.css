@@ -198,11 +198,13 @@ textarea { font-family: inherit; }
   background: linear-gradient(180deg, transparent, #c9a06a 18%, #c9a06a 82%, transparent);
 }
 
+/* Georgia has no glyphs for stacked Vietnamese marks (Ố, Ế, Ề), so the
+   browser drew them apart; Times New Roman has the full Vietnamese set. */
 .login-brand-name {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Times New Roman", "Noto Serif", "Liberation Serif", "DejaVu Serif", serif;
   text-transform: uppercase;
 }
 
@@ -430,60 +432,47 @@ textarea { font-family: inherit; }
 
 .login-password-field { position: relative; }
 
+/* Centred with top/bottom + margin rather than a transform: the global
+   "button:active { transform }" rule would otherwise make the eye jump
+   when it is clicked. */
 .login-form .login-password-toggle {
   position: absolute;
-  top: 50%;
+  top: 0;
+  bottom: 0;
   right: 15px;
   width: 34px;
   height: 34px;
   display: grid;
   place-items: center;
-  margin: 0;
+  margin: auto 0;
   padding: 0;
   border: 0;
   border-radius: 7px;
   color: #778391;
   background: transparent;
   cursor: pointer;
-  transform: translateY(-50%);
+  transition: none;
+  transform: none;
 }
 
-.login-password-toggle:hover { background: #f0f3f6; }
+.login-form .login-password-toggle:hover,
+.login-form .login-password-toggle:active {
+  background: transparent;
+  filter: none;
+  transform: none;
+}
 .login-password-toggle:focus-visible { outline: 2px solid #1b5a83; outline-offset: 2px; }
 
 .login-eye {
-  position: relative;
   display: block;
-  width: 18px;
-  height: 12px;
-  border: 2px solid currentColor;
-  border-radius: 100% 10% / 90% 10%;
-  transform: rotate(45deg) scale(0.86);
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-
-.login-eye::before {
-  content: "";
-  position: absolute;
-  left: 5px;
-  top: 2px;
-  width: 4px;
-  height: 4px;
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-}
-
-.login-eye::after {
-  content: "";
-  position: absolute;
-  left: -4px;
-  top: 3px;
-  width: 23px;
-  height: 2px;
-  background: currentColor;
-  transform: rotate(-45deg);
-}
-
-.login-eye.is-visible::after { display: none; }
 
 .login-form .error-text {
   margin: -4px 0 0;
@@ -2580,7 +2569,7 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   z-index: 2;
   margin: 0;
   color: #f4f6f8;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Times New Roman", "Noto Serif", "Liberation Serif", "DejaVu Serif", serif;
   font-size: clamp(18px, 1.35vw, 23px);
   font-style: italic;
   line-height: 1.32;
@@ -4149,7 +4138,7 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   gap: 10px;
   margin: 0;
   color: #123d63;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Times New Roman", "Noto Serif", "Liberation Serif", "DejaVu Serif", serif;
   font-size: clamp(25px, 2vw, 31px);
   font-weight: 700;
   line-height: 1.18;
