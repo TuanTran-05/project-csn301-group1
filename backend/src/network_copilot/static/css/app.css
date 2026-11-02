@@ -4438,3 +4438,77 @@ td .link-btn { margin-left: 8px; font-size: 12px; }
 /* A saved password: the field stays empty (the secret never comes back), so the
    placeholder looks like a filled-in password. */
 input.saved-secret::placeholder { color: inherit; opacity: 0.85; letter-spacing: 0.08em; }
+
+/* VI / EN language switch (top bar and login screen). */
+.lang-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 3px;
+  border: 1px solid #e2e9f1;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(18, 52, 79, 0.08);
+}
+.app-shell .top-bar-nav .lang-switch { height: 50px; padding: 5px; }
+.lang-switch button {
+  min-width: 38px;
+  height: 100%;
+  margin: 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5b6f83;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: none;
+  transform: none;
+}
+.lang-switch button:hover { color: #103e65; background: #f2f6fa; }
+.lang-switch button.is-active,
+.lang-switch button.is-active:hover { color: #fff; background: #103e65; }
+.lang-switch button:active { transform: none; }
+.lang-switch button:focus-visible { outline: 2px solid #1b5a83; outline-offset: 1px; }
+/* On the login card: a quiet footer row under the sign-in button. */
+.login-lang {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top: 1px solid #e8edf2;
+}
+.login-lang-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7a8796;
+  font-size: 13px;
+}
+.login-lang-label svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+.login-lang .lang-switch { height: 34px; box-shadow: none; }
+.login-lang .lang-switch button { min-width: 40px; font-size: 12.5px; }
+@media (max-width: 700px) {
+  .app-shell .top-bar-nav .lang-switch { height: 42px; padding: 4px; }
+}
+/* The project picker must shrink with its slot, or the extra switch pushes
+   the nav links over it on narrower laptops. */
+.app-shell .top-bar-project-slot .project-switch { width: 100%; }
+@media (max-width: 1280px) {
+  .app-shell .top-bar-nav { gap: 7px; }
+  .app-shell .top-bar-nav .nav-link { padding-right: 12px; padding-left: 12px; }
+  .app-shell .top-bar-project-slot { flex: 1 1 150px; min-width: 120px; max-width: 220px; }
+}
