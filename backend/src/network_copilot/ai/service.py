@@ -46,7 +46,12 @@ from .topology import build_addressing, build_topology
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a network operations assistant for a Cisco lab.
+# A pipe stays out: filtered output is not on the read-only allowlist.
+_RUNNING_CONFIG_REQUEST = re.compile(
+    r"\s*show\s+run(?:ning-config)?(?:\s+(?P<rest>[^|]*))?\s*", re.IGNORECASE
+)
+
+SYSTEM_PROMPT ="""You are a network operations assistant for a Cisco lab.
 
 Reply with a single JSON object and nothing else. The schema is:
 {
@@ -578,6 +583,65 @@ class AIService:
                 }
             )
         return results
+
+    @staticmethod
+    def running_config_request(
+        message: str,
+        user_id: int | None,
+        project_id: int | None,
+        group_id: int | None = None,
+    ) -> dict | None:
+        """Answer a typed "show run [device]" without involving the model.
+
+        Returns None for any other message. The model must never receive a
+        running-config, so this runs on the user's own words: the output only
+        lives in the reply's payload, which _recent_history leaves out, and
+        execute_readonly has already masked its credential lines.
+        """
+        match = _RUNNING_CONFIG_REQUEST.fullmatch(message)
+        if match is None:
+            return None
+
+        devices = device_service.list_devices(project_id=project_id, deployable=True)
+        words = {
+            word.strip(".,:;?!").lower() for word in (match.group("rest") or "").split()
+        }
+        named = [device for device in devices if device.hostname.lower() in words]
+        if not words and len(devices) == 1:
+            named = devices
+        if len(named) != 1:
+            return {
+                "intent": "chat",
+                "explanation": "Bạn muốn xem cấu hình của thiết bị nào? Ví dụ: show run R1.",
+                "requires_approval": False,
+                "diagram": None,
+            }
+
+        device = named[0]
+        execution = command_service.execute_readonly(
+            device_id=device.id,
+            command="show running-config",
+            user_id=user_id,
+            source="chat",
+            project_id=project_id,
+            group_id=group_id,
+        )
+        return {
+            "intent": "monitor",
+            "device": device.hostname,
+            "explanation": (
+                f"Cấu hình đang chạy của {device.hostname}. "
+                "Các dòng chứa mật khẩu hoặc khóa đã được ẩn."
+            ),
+            "results": [{
+                "command": execution.command,
+                "status": execution.status,
+                "output": execution.output,
+                "parsed": [],
+                "duration_ms": execution.duration_ms,
+            }],
+            "requires_approval": False,
+        }
 
     def _handle_monitor(
         self,

@@ -3,14 +3,16 @@ from sqlalchemy.exc import IntegrityError
 
 from ..errors import RateLimitError
 from ..extensions import db
-from .access import actor, policy, require
+from .access import actor, policy, require, role
 from .model import Usage, now
 
 
 def consume_ai(user_id, group_id=None):
     user = actor(user_id)
-    require(user, "ai.use", group_id)
-    day = now().date().isoformat()
+    # Operators and Viewers are scoped by project membership, not by group grants.
+    if role(user) not in {"OPERATOR", "VIEWER"}:
+        require(user, "ai.use", group_id)
+    day =now().date().isoformat()
     if db.session.get(Usage, (user.id, day)) is None:
         try:
             with db.session.begin_nested():

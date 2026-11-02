@@ -113,6 +113,19 @@ def test_operator_can_share_project_with_another_operator_as_editor(
     assert created.status_code == 201
 
 
+def test_operator_asking_for_viewer_access_does_not_grant_editor(
+    client, two_projects, alice_headers, bob_headers
+):
+    a, *_ = two_projects
+    shared = client.post(
+        f"/api/projects/{a.id}/members",
+        headers=alice_headers,
+        json={"username": "bob", "access": "viewer"},
+    )
+    assert shared.status_code == 201 and shared.get_json()["access"] == "viewer"
+    assert client.get(f"/api/projects/{a.id}", headers=bob_headers).get_json()["access"] == "viewer"
+
+
 def test_an_operator_shared_read_only_sees_that_projects_devices(client, two_projects, admin_headers, bob_headers):
     a, *_ = two_projects
     assert client.post(

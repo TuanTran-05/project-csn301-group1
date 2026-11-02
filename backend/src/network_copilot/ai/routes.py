@@ -124,11 +124,9 @@ def chat():
     ).id
     g.chat_session_id = data.session_id
 
-    if project_read_only and (
-        data.mode == "design"
-        or requests_network_design(data.message)
-        or requests_project(data.message)
-    ):
+    # Only what creates something is refused here. Merely mentioning the topology
+    # must not block a diagnostic; a configure intent is refused by AIService.
+    if project_read_only and (data.mode == "design" or requests_project(data.message)):
         raise ForbiddenError(
             "Quyền Viewer trong project chỉ cho phép lệnh chỉ-đọc như show, ping, "
             "traceroute; "
@@ -190,6 +188,10 @@ def chat():
             service.provider, data.message, project,
             service._recent_history(data.session_id, data.message, project.id),
         )
+    elif (typed := AIService.running_config_request(
+        data.message, user_id, project.id, data.group_id
+    )) is not None:
+        result = typed
     elif not project_read_only and user.role != "VIEWER" and requests_network_design(data.message):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:

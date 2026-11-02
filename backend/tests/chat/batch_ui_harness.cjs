@@ -359,6 +359,7 @@ async function logoutInvalidatesActionAndCleansTimers() {
   app._changesTimer = 12;
   app._batchesTimer = 13;
   app._messagesTimer = 14;
+  app._sessionsTimer = 15;
   app.authFetch = () => actionResponse.promise;
 
   const action = app.approveBatch(1);
@@ -369,7 +370,7 @@ async function logoutInvalidatesActionAndCleansTimers() {
   assert.deepEqual(Object.keys(app.batchesById), []);
   assert.deepEqual(Object.keys(app.batchActionIds), []);
   assert.equal(app.currentUser, null);
-  assert.deepEqual(clearedIntervals, [11, 12, 13, 14]);
+  assert.deepEqual(clearedIntervals, [11, 12, 13, 14, 15]);
 }
 
 async function streamRefreshesOnlyChangedParts() {
@@ -427,7 +428,24 @@ async function projectDeviceCountIncludesPlannedDevices() {
   assert.deepEqual(app.devices.map((device) => device.hostname), ["R1"]);
 }
 
+async function projectEditorsCanRestoreCheckpoints() {
+  const { app } = createApp();
+  app.currentProjectId = 7;
+  const canRestore = (role, access) => {
+    app.currentUser = { id: 1, username: "user", role };
+    app.projects = [{ id: 7, name: "Lab", access }];
+    return app.canRestoreCheckpoints;
+  };
+
+  assert.equal(canRestore("OPERATOR", "owner"), true);
+  assert.equal(canRestore("OPERATOR", "editor"), true);
+  assert.equal(canRestore("OPERATOR", "viewer"), false);
+  assert.equal(canRestore("VIEWER", "viewer"), false);
+  assert.equal(canRestore("ADMIN", "owner"), true);
+}
+
 const cases = {
+  project_editors_can_restore_checkpoints: projectEditorsCanRestoreCheckpoints,
   stream_refreshes_only_changed_parts: streamRefreshesOnlyChangedParts,
   project_device_count_includes_planned_devices: projectDeviceCountIncludesPlannedDevices,
   stale_chat_snapshot: staleChatSnapshot,

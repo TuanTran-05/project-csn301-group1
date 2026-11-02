@@ -2,6 +2,10 @@
 
 Every member who can access a project can read and continue any chat session
 in that project. Project membership remains the isolation boundary.
+
+The default lab is the exception: every account can open it without being
+added by anyone, so membership says nothing there and its sessions stay private
+to whoever started them. ADMIN may read them by id for auditing.
 """
 
 from ..extensions import db
@@ -17,11 +21,18 @@ def create_session(project_id: int, created_by_id: int | None = None) -> ChatSes
     return session
 
 
+def _sessions_are_private(project_id: int) -> bool:
+    from ..projects.service import default_lab_id
+
+    return project_id == default_lab_id()
+
+
 def can_use_session(user, session: ChatSession, write: bool = False) -> bool:
     """Whether ``user`` may read or post to a session in an accessible project.
 
     ``user=None`` is an internal caller. Reads and writes are shared among all
-    active members of the same project.
+    active members of the same project, except in the default lab where only
+    the session's creator may post and ADMIN may additionally read.
     """
     if user is None:
         return True
@@ -31,7 +42,11 @@ def can_use_session(user, session: ChatSession, write: bool = False) -> bool:
     from ..projects.service import access_level
 
     project = db.session.get(Project, session.project_id)
-    return project is not None and access_level(user, project) is not None
+    if project is None or access_level(user, project) is None:
+        return False
+    if _sessions_are_private(project.id):
+        return session.created_by_id == user.id or (not write and user.role == "ADMIN")
+    return True
 
 
 def get_session(
@@ -53,7 +68,8 @@ def resolve_or_create_session(
 
     An unknown id or one belonging to another project falls back to the most
     recently active session in this project, creating one only if necessary.
-    All project members resolve against the same shared session list.
+    All project members resolve against the same shared session list; in the
+    default lab a caller only resolves against their own sessions.
     """
     if session_id is not None:
         session = get_session(session_id, project_id, user, write)
@@ -61,6 +77,8 @@ def resolve_or_create_session(
             return session
 
     query = db.session.query(ChatSession).filter(ChatSession.project_id == project_id)
+    if user is not None and _sessions_are_private(project_id):
+        query = query.filter(ChatSession.created_by_id == user.id)
     latest = query.order_by(ChatSession.created_at.desc(), ChatSession.id.desc()).first()
     if latest is not None:
         return latest
@@ -97,7 +115,11 @@ def session_to_dict(session: ChatSession) -> dict:
 
 
 def list_sessions(project_id: int, user=None) -> list[dict]:
-    """All sessions in the project, most recently active first."""
+    """The project's sessions ``user`` may see, most recently active first.
+
+    That is all of them, except in the default lab: there it is only the ones
+    ``user`` started, even for ADMIN.
+    """
     activity = (
         db.session.query(
             ChatMessage.session_id.label("session_id"),
@@ -122,6 +144,8 @@ def list_sessions(project_id: int, user=None) -> list[dict]:
         .outerjoin(activity, activity.c.session_id == ChatSession.id)
         .filter(ChatSession.project_id == project_id)
     )
+    if user is not None and _sessions_are_private(project_id):
+        query = query.filter(ChatSession.created_by_id == user.id)
     rows = query.order_by(last_activity.desc(), ChatSession.id.asc()).all()
     return [
         {

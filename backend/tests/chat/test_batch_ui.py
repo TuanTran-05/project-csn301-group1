@@ -74,5 +74,9 @@ def test_logout_invalidates_batch_action_and_cleans_polling_timers():
     assert_behavior_case("logout_cleanup")
 
 
+def test_project_editors_see_the_checkpoint_undo_actions():
+    assert_behavior_case("project_editors_can_restore_checkpoints")
+
+
 def test_event_stream_refreshes_only_the_parts_that_changed():
     assert_behavior_case("stream_refreshes_only_changed_parts")

@@ -305,6 +305,8 @@ class CommandPolicy:
         normalized = re.sub(r"\s+", " ", command.strip()).lower()
         if normalized == "tracert" or normalized.startswith("tracert "):
             return "traceroute" + normalized[len("tracert"):]
+        if normalized == "show run":
+            return "show running-config"
         return normalized
 
     def evaluate(self, command, device_role: str) -> CommandDecision:

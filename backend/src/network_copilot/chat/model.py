@@ -28,8 +28,9 @@ class ChatSession(db.Model):
     """A named conversation thread shared by the members of one project.
 
     ``created_by_id`` records who started the session; it does not restrict
-    which project members can read or continue it. The title is derived from
-    the session's first message by chat/session_service.py.
+    which project members can read or continue it, except in the default lab
+    (see chat/session_service.py). The title is derived from the session's
+    first message by chat/session_service.py.
     """
 
     __tablename__ = "chat_sessions"

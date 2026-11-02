@@ -338,7 +338,12 @@ def share_project(project: Project, granted_by: User, payload: dict) -> ProjectM
         db.session.add(member)
     if target.role == "VIEWER":
         member.access = "viewer"
-    elif granted_by.role == "OPERATOR" and target.role == "OPERATOR":
+    elif (
+        granted_by.role == "OPERATOR"
+        and target.role == "OPERATOR"
+        and "access" not in data.model_fields_set
+    ):
+        # An Operator adds a teammate to work together; asking for less is honoured.
         member.access = "editor"
     else:
         member.access = data.access

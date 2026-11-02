@@ -29,15 +29,23 @@ def test_readonly_command_executes_and_returns_output(
     assert body["duration_ms"] >= 0
 
 
-def test_legacy_viewer_cannot_run_commands_without_permissions(client, viewer_headers, device, ssh_factory):
+def test_viewer_runs_only_allowlisted_read_only_commands(client, viewer_headers, device, ssh_factory):
     ssh_factory.set_client(device.hostname, default_output="ok")
     response = client.post(
         "/api/commands/execute-readonly",
         headers=viewer_headers,
         json={"device_id": device.id, "command": "show ip route"},
     )
-    assert response.status_code == 403
-    assert ssh_factory.get(device.hostname).show_commands == []
+    assert response.status_code == 200
+    assert ssh_factory.get(device.hostname).show_commands == ["show ip route"]
+
+    response = client.post(
+        "/api/commands/execute-readonly",
+        headers=viewer_headers,
+        json={"device_id": device.id, "command": "reload"},
+    )
+    assert response.status_code != 200
+    assert ssh_factory.get(device.hostname).show_commands == ["show ip route"]
 
 
 def test_anonymous_cannot_run_commands(client, device):

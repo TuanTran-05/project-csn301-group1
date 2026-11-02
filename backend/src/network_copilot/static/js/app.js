@@ -1193,7 +1193,8 @@ document.addEventListener("alpine:init", () => {
 
     get canRestoreCheckpoints() {
       return Boolean(
-        this.currentUser && ["ADMIN", "TEACHER"].includes(this.currentUser.role)
+        this.canManageProjectConfiguration ||
+        (this.currentUser && ["ADMIN", "TEACHER"].includes(this.currentUser.role))
       );
     },
 
