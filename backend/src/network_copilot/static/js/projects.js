@@ -183,6 +183,8 @@ document.addEventListener("alpine:init", () => {
 
     // -- PNETLab import --
     pnet: null,
+    // "Đẩy sang PNETLab": the push-to-PNETLab panel on the topology tab, or null.
+    pnetExport: null,
 
     // -- sharing --
     members: [],
@@ -1267,6 +1269,119 @@ document.addEventListener("alpine:init", () => {
         boot.error = this.describeError(err);
       } finally {
         boot.loading = false;
+      }
+    },
+
+    // ------------------------------------------------------------------
+    // push the topology to PNETLab as a new lab
+    // ------------------------------------------------------------------
+
+    openPnetExport() {
+      const slug = ((this.project && this.project.name) || "netai")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
+        // PNETLab keeps letters and digits only in a lab's file name.
+        .replace(/[^A-Za-z0-9]+/g, "").slice(0, 40) || "netai";
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      this.pnetExport = {
+        form: { url: "", username: "", password: "", verify_tls: true, folder: "",
+                lab_name: `${slug}${stamp}`, management_cloud: true, remember: true,
+                start_and_bootstrap: true, ssh_username: "", ssh_password: "" },
+        saved: null, plan: null, loading: false, error: "", job: null, confirm: "",
+      };
+      const panel = this.pnetExport;
+      this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
+        if (this.pnetExport !== panel) return;
+        if (!panel.form.folder) panel.form.folder = data.export_folder || "";
+        if (!panel.form.ssh_username) panel.form.ssh_username = data.lab_ssh_username || "";
+        if (!data.saved) return;
+        panel.saved = data.saved;
+        if (!panel.form.url) panel.form.url = data.saved.url;
+        if (!panel.form.username) panel.form.username = data.saved.username;
+        panel.form.verify_tls = data.saved.verify_tls;
+      }).catch(() => {});
+    },
+
+    get pnetExportUsesSavedPassword() {
+      const panel = this.pnetExport;
+      if (!panel || !panel.saved || panel.form.password) return false;
+      const trim = (value) => (value || "").trim().replace(/\/+$/, "");
+      return trim(panel.form.url) === trim(panel.saved.url) && trim(panel.form.username) === panel.saved.username;
+    },
+
+    pnetExportSsh(item) {
+      if (!item.ssh) return item.started ? "đã bật" : "";
+      const label = { ok: "SSH OK", configured: "đã cấu hình, SSH chưa trả lời", pending: "đang chờ boot",
+                      skipped: "bỏ qua", refused: "bỏ qua", error: "lỗi SSH" }[item.ssh] || item.ssh;
+      return item.ssh_message && item.ssh !== "ok" ? `${label} — ${item.ssh_message}` : label;
+    },
+
+    _pnetExportBody() {
+      const f = this.pnetExport.form;
+      return { url: f.url, username: f.username, password: f.password, verify_tls: !!f.verify_tls,
+               folder: f.folder, lab_name: f.lab_name, management_cloud: !!f.management_cloud,
+               start_and_bootstrap: !!f.start_and_bootstrap,
+               ssh_username: f.start_and_bootstrap ? f.ssh_username : "",
+               ssh_password: f.start_and_bootstrap ? f.ssh_password : "" };
+    },
+
+    async pnetExportPreview() {
+      const panel = this.pnetExport;
+      panel.error = "";
+      panel.plan = null;
+      panel.job = null;
+      panel.loading = true;
+      try {
+        panel.plan = await this.authFetch(this.topologyUrl("/export/pnetlab/preview"), {
+          method: "POST",
+          body: JSON.stringify({ ...this._pnetExportBody(), remember: !!panel.form.remember }),
+        });
+      } catch (err) {
+        panel.error = this.describeError(err);
+      } finally {
+        panel.loading = false;
+      }
+    },
+
+    async pnetExportRun() {
+      const panel = this.pnetExport;
+      if (!panel.plan || panel.plan.blocked) return;
+      const ready = panel.plan.nodes.filter((n) => n.ready).length;
+      const then = panel.form.start_and_bootstrap
+        ? " Sau đó bật các node và khởi tạo SSH qua console (có thể mất 5–15 phút)."
+        : " Node được tạo ở trạng thái tắt.";
+      // An in-page confirmation: a native confirm() blocks the page (and browser automation).
+      panel.confirm = `Tạo lab mới ${panel.plan.lab_path} trên PNETLab với ${ready} node?${then} Không lab nào khác bị đụng tới.`;
+    },
+
+    pnetExportCancel() {
+      if (this.pnetExport) this.pnetExport.confirm = "";
+    },
+
+    async pnetExportConfirm() {
+      const panel = this.pnetExport;
+      if (!panel || !panel.confirm) return;
+      panel.confirm = "";
+      panel.error = "";
+      panel.loading = true;
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      try {
+        const started = await this.authFetch(this.topologyUrl("/export/pnetlab"), {
+          method: "POST",
+          body: JSON.stringify(this._pnetExportBody()),
+        });
+        let job = started.job;
+        panel.job = job;
+        while (job.status === "queued" || job.status === "running") {
+          await sleep(1500);
+          if (this.pnetExport !== panel) return; // panel closed
+          job = (await this.authFetch(this.topologyUrl(`/export/jobs/${job.id}`))).job;
+          panel.job = job;
+        }
+        if (job.status === "error") panel.error = job.message || "Không đẩy được sơ đồ sang PNETLab.";
+      } catch (err) {
+        panel.error = this.describeError(err);
+      } finally {
+        panel.loading = false;
       }
     },
 

@@ -60,7 +60,8 @@ def _progress(job_id: str, hostname=None, step=None, **update) -> None:
         job["updated_at"] = _now()
 
 
-def start(app, project_id: int, user_id: int | None, payload: dict, work) -> dict:
+def start(app, project_id: int, user_id: int | None, payload: dict, work,
+          action: str = "topology.pnetlab_bootstrap") -> dict:
     """Create a job and run ``work(project, payload, progress)`` for it.
 
     ``work`` returns the result dict ({"devices": [...], ...}); its devices
@@ -71,7 +72,7 @@ def start(app, project_id: int, user_id: int | None, payload: dict, work) -> dic
     job = {
         "id": job_id, "project_id": project_id, "status": "queued",
         "created_at": _now(), "updated_at": _now(),
-        "current": None, "devices": [], "log": [], "message": None,
+        "current": None, "devices": [], "log": [], "message": None, "summary": None,
         "_user_id": user_id, "_finished": None,
     }
     with _lock:
@@ -80,7 +81,7 @@ def start(app, project_id: int, user_id: int | None, payload: dict, work) -> dic
 
     def target():
         with app.app_context():
-            _run(app, job_id, project_id, user_id, payload, work)
+            _run(app, job_id, project_id, user_id, payload, work, action)
 
     if app.config.get("BOOTSTRAP_RUN_INLINE"):
         target()
@@ -89,7 +90,7 @@ def start(app, project_id: int, user_id: int | None, payload: dict, work) -> dic
     return get(job_id, project_id)
 
 
-def _run(app, job_id, project_id, user_id, payload, work) -> None:
+def _run(app, job_id, project_id, user_id, payload, work, action) -> None:
     from ..audit.service import record_event
     from ..extensions import db
     from ..projects.model import Project
@@ -111,15 +112,16 @@ def _run(app, job_id, project_id, user_id, payload, work) -> None:
         job = _jobs.get(job_id)
         if job is not None:
             job.update(status=status, message=message, devices=devices, current=None,
-                       api=(result or {}).get("api"), updated_at=_now(), _finished=time.time())
+                       api=(result or {}).get("api"), summary=(result or {}).get("summary"),
+                       updated_at=_now(), _finished=time.time())
     record_event(
-        action="topology.pnetlab_bootstrap",
+        action=action,
         result="success" if status == "done" and all(
             d.get("status") in ("ok", "skipped") for d in devices) else "failure",
         user_id=user_id,
         project_id=project_id,
         details={
-            "job": job_id, "lab": payload.get("lab"), "url": payload.get("url"),
+            "job": job_id, "lab": payload.get("lab_name") or payload.get("lab"), "url": payload.get("url"),
             "overwrite": bool(payload.get("overwrite")),
             "devices": [{"hostname": d.get("hostname"), "status": d.get("status"),
                          "interface": d.get("interface")} for d in devices],

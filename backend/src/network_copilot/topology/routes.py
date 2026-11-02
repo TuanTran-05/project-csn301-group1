@@ -9,7 +9,7 @@ from ..errors import AppError
 from ..extensions import db, limiter
 from ..projects import service as project_service
 from ..projects.model import Project
-from . import blueprints, bootstrap, bootstrap_jobs, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_import, service
+from . import blueprints, bootstrap, bootstrap_jobs, configgen, design, ipam, lint, notes, versions, discovery, pnetlab_export, pnetlab_import, service
 from . import chat_import
 from .schemas import ConfigRequestSchema
 from .templates import DEVICE_TEMPLATES
@@ -459,15 +459,62 @@ def bootstrap_run(project_id: int):
     return jsonify({"job": job}), 202
 
 
+@bp.post("/export/pnetlab/preview")
+@jwt_required()
+@limiter.limit("10 per minute")
+def pnetlab_export_preview(project_id: int):
+    """What pushing this topology to PNETLab would build. Builds nothing."""
+    from ..integrations import saved_login
+
+    project = _project(project_id, "editor")
+    payload, remember = saved_login.fill_payload(project, request.get_json(silent=True) or {})
+    result = pnetlab_export.preview(project, payload)
+    if remember:  # the login just worked
+        saved_login.remember(project, payload, current_user().id)
+    return jsonify(result), 200
+
+
+@bp.post("/export/pnetlab")
+@jwt_required()
+@limiter.limit("5 per minute")
+def pnetlab_export_run(project_id: int):
+    """Build a new PNETLab lab from the topology as a background job.
+
+    It only creates a lab of its own (a taken name is refused), so an editor
+    may run it. Starting the nodes and bootstrapping SSH on them also saves
+    the devices' login and configures them, which takes the owner, like the
+    console bootstrap. The page polls ``/export/jobs/<id>``.
+    """
+    from flask import current_app
+
+    from ..integrations import saved_login
+
+    body = request.get_json(silent=True) or {}
+    project = _project(project_id, "owner" if body.get("start_and_bootstrap") else "editor")
+    payload, _ = saved_login.fill_payload(project, body)
+    pnetlab_export.validate_request(payload)  # a bad request fails now, not in the job
+    job = bootstrap_jobs.start(
+        current_app._get_current_object(), project.id, current_user().id, payload,
+        pnetlab_export.run, action="topology.pnetlab_export",
+    )
+    return jsonify({"job": job}), 202
+
+
 @bp.get("/pnetlab-login")
 @jwt_required()
 def get_pnetlab_login(project_id: int):
     """The remembered PNETLab address and account (never the password)."""
     from ..integrations import saved_login
 
+    from flask import current_app
+
     project = _project(project_id, "editor")
     record = saved_login.get_saved(project.id)
-    return jsonify({"saved": record.to_dict() if record else None}), 200
+    return jsonify({
+        "saved": record.to_dict() if record else None,
+        "export_folder": current_app.config.get("PNETLAB_EXPORT_FOLDER") or "/NetAI",
+        "lab_ssh_username": current_app.config.get("LAB_SSH_USERNAME") or "g1",
+    }), 200
 
 
 @bp.delete("/pnetlab-login")
@@ -486,6 +533,13 @@ def delete_pnetlab_login(project_id: int):
 @jwt_required()
 def bootstrap_job(project_id: int, job_id: str):
     project = _project(project_id, "owner")
+    return jsonify({"job": bootstrap_jobs.get(job_id, project.id)}), 200
+
+
+@bp.get("/export/jobs/<job_id>")
+@jwt_required()
+def pnetlab_export_job(project_id: int, job_id: str):
+    project = _project(project_id, "editor")
     return jsonify({"job": bootstrap_jobs.get(job_id, project.id)}), 200
 
 
