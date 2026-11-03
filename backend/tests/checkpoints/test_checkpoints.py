@@ -172,6 +172,41 @@ def test_no_step_is_recorded_when_checkpoints_are_disabled(app, admin_user, acce
     assert db.session.query(ConfigCheckpoint).count() == 0
 
 
+@pytest.mark.parametrize("access", ["owner", "editor"])
+def test_project_operator_can_undo_an_applied_change(client, checkpoints_on, ssh_factory, access):
+    from conftest import _create_device, _create_user
+    from network_copilot.auth.service import issue_token
+    from network_copilot.credentials.model import DeviceCredential
+    from network_copilot.projects.model import Project, ProjectMember
+
+    owner = _create_user("undo_owner", "UndoPassword123!", "OPERATOR")
+    project = Project(name="Undo Lab", management_network="10.40.0.0/24",
+                      environment="pnetlab", owner_id=owner.id)
+    db.session.add(project)
+    db.session.commit()
+    operator = owner
+    if access == "editor":
+        operator = _create_user("undo_editor", "UndoPassword123!", "OPERATOR")
+        db.session.add(ProjectMember(project_id=project.id, user_id=operator.id, access="editor"))
+    device = _create_device("ACC-SW1", "10.40.0.1", "access", project=project)
+    db.session.add(DeviceCredential(device_id=device.id, username="u", password_encrypted="p"))
+    db.session.commit()
+    headers = {"Authorization": "Bearer " + issue_token(operator), "X-Project-Id": str(project.id)}
+
+    applied = _apply(_vlan_change(operator, device), operator, ssh_factory, BEFORE, AFTER, VLAN_WITH_25)
+    assert applied.status == "success"
+    step = db.session.query(ConfigCheckpoint).one()
+
+    ssh_factory.clients["ACC-SW1"] = StatefulSSH(AFTER, BEFORE, VLAN_WITHOUT_25)
+    response = client.post(f"/api/checkpoints/{step.id}/undo", headers=headers)
+    assert response.status_code == 201, response.get_json()
+    undo_id = response.get_json()["change"]["id"]
+    assert client.post(f"/api/changes/{undo_id}/approve", headers=headers).status_code == 200
+    done = client.post(f"/api/changes/{undo_id}/apply", headers=headers, json={"confirm_hostname": "ACC-SW1"})
+    assert done.status_code == 200, done.get_json()
+    assert done.get_json()["status"] == "success"
+
+
 def test_undo_then_redo_through_the_api(
     client, app, checkpoints_on, admin_user, admin_headers, access_switch, ssh_factory
 ):

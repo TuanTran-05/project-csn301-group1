@@ -634,6 +634,8 @@ def _authorize_device_access(actor: User, device: Device) -> None:
     role = _role_name(actor)
     if role == "ADMIN":
         return
+    if role == "OPERATOR" and workflow.operator_has_project_edit(actor, device):
+        return
     if role not in {"TEACHER", "STUDENT"}:
         raise ForbiddenError("This role cannot manage configuration changes.")
     if not _groups_for_device(actor, device, role):
@@ -692,8 +694,8 @@ def approve(change_id: int, user_id: int | None) -> ChangeRequest:
     workflow.approve_allowed(change, user_id)
     if _role_name(actor) == "TEACHER":
         _authorize_device_access(actor, device_service.get_device(change.device_id))
-    elif _role_name(actor) != "ADMIN":
-        raise ForbiddenError("Only an Admin or the assigned Teacher can approve changes.")
+    elif _role_name(actor) not in {"ADMIN", "OPERATOR"}:
+        raise ForbiddenError("Only an Admin, project Operator, or assigned Teacher can approve changes.")
     if change.status != "pending_approval":
         raise InvalidStateError(
             f"Only a change in 'pending_approval' can be approved; "
@@ -860,7 +862,9 @@ def apply(
     device = device_service.get_device(change.device_id)
 
     from ..governance.access import require
-    require(actor, "config.deploy", change.group_id, device)
+    project_operator = workflow.operator_has_project_edit(actor, device)
+    if not project_operator:
+        require(actor, "config.deploy", change.group_id, device)
     if role == "STUDENT" and change.status != "approved":
         if change.requested_by_id != actor.id:
             raise ForbiddenError("Students may only apply their own changes.")
@@ -903,6 +907,8 @@ def apply(
             },
         )
     elif role == "TEACHER":
+        _authorize_device_access(actor, device)
+    elif role == "OPERATOR":
         _authorize_device_access(actor, device)
     elif role not in {"ADMIN", "STUDENT"}:
         raise ForbiddenError("This role cannot apply configuration changes.")

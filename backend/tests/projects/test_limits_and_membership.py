@@ -44,8 +44,9 @@ def test_share_candidates_search_and_leave(client, alice_headers, bob_headers, v
     pid = project["id"]
     found = client.get(f"/api/projects/{pid}/share-candidates?q=ve", headers=alice_headers).get_json()["items"]
     assert [u["username"] for u in found] == ["vera"]
-    # an Operator is only offered Viewer accounts
-    assert client.get(f"/api/projects/{pid}/share-candidates?q=bo", headers=alice_headers).get_json()["items"] == []
+    # an Operator is offered Viewer and Operator accounts
+    found = client.get(f"/api/projects/{pid}/share-candidates?q=bo", headers=alice_headers).get_json()["items"]
+    assert [u["username"] for u in found] == ["bob"]
     assert client.get(f"/api/projects/{pid}/share-candidates?q=v", headers=alice_headers).get_json()["items"] == []
     assert client.get(f"/api/projects/{pid}/share-candidates?q=ve", headers=bob_headers).status_code == 404
 

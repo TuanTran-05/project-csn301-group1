@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError as PydanticValidationError
 
-from ..auth.service import current_user, roles_required
+from ..auth.service import current_user
 from ..errors import ValidationError
 from ..extensions import limiter
 from ..projects.scope import change_project, current_project
@@ -104,7 +104,7 @@ def apply(change_id: int):
 
 
 @bp.post("/<int:change_id>/cancel")
-@roles_required("ADMIN")
+@jwt_required()
 def cancel(change_id: int):
     project = current_project(need="editor")
     service.get_change(change_id, project.id)  # 404 for another project's change

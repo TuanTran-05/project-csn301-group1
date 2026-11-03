@@ -59,7 +59,7 @@ def create_session():
 @jwt_required()
 def export_message_configurations(message_id: int):
     """Package the configurations in one assistant reply for manual lab import."""
-    project = current_project()
+    project = current_project(need="editor")
     message = _chat_advice(message_id, project.id, current_user())
     if message is None:
         raise NotFoundError("The chat suggestion was not found in this project.")
@@ -121,11 +121,7 @@ def export_message_configurations(message_id: int):
 
 
 def _chat_advice(message_id: int, project_id: int, user, write: bool = False):
-    """An assistant reply in one of ``user``'s own sessions of the project.
-
-    With ``write`` the session must be the user's own even for ADMIN, so
-    nobody acts on a suggestion from someone else's conversation.
-    """
+    """An assistant reply in one of the current project's shared sessions."""
     message = (
         db.session.query(ChatMessage)
         .join(ChatSession, ChatSession.id == ChatMessage.session_id)
@@ -146,14 +142,13 @@ def _chat_advice(message_id: int, project_id: int, user, write: bool = False):
 def _require_ai_management_operator():
     """The project and user for an AI Management apply.
 
-    Only an OPERATOR with edit rights on the project may push an AI
-    suggestion to devices. A VIEWER is read-only everywhere and ADMIN uses
-    the regular Preview -> Approve -> Apply pipeline instead.
+    An ADMIN or an OPERATOR with edit rights on the project may push an AI
+    suggestion to devices. A VIEWER is read-only everywhere.
     """
     project = current_project(need="editor")
     user = current_user()
-    if user is None or user.role != "OPERATOR":
-        raise ForbiddenError("Only an Operator can approve an AI chat suggestion here.")
+    if user is None or user.role not in {"ADMIN", "OPERATOR"}:
+        raise ForbiddenError("Only an Admin or project Operator can approve an AI chat suggestion here.")
     return project, user
 
 

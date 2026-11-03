@@ -26,8 +26,7 @@ def test_shared_project_allows_legacy_role_chat(app, db, client, project, role):
         "message": "Xin chào", "session_id": session.json["id"],
     })
     assert response.status_code == 200
-    # Operators and Viewers get advice from the AI; it never runs anything for them.
-    assert response.json["intent"] == "advice"
+    assert response.json["intent"] == "chat"
     messages = client.get("/api/chat/messages", headers=headers, query_string={"session_id": session.json["id"]})
     assert messages.status_code == 200
     assert [message["role"] for message in messages.json["items"]] == ["user", "assistant"]

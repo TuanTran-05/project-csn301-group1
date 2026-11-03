@@ -42,17 +42,21 @@ Tài khoản Operator và Viewer đều thấy project lab mặc định (projec
 
 Operator có thể nhập “Tạo project mới” trong chat. Hệ thống tạo project và hỏi số thiết bị mạng (2–25), sau đó hiển thị các sơ đồ hình sao, vòng, campus hoặc hub and spoke phù hợp với số lượng. Chọn một phương án sẽ tạo các thiết bị ở dạng kế hoạch và mở canvas topology để Operator thêm, sửa hoặc xóa. Thiết bị phải được cấp IP và thông tin truy cập trước khi có thể cấu hình thật.
 
-Project là phạm vi chia sẻ của nhóm: Operator thêm tài khoản Viewer từ tab “Nhóm / chia sẻ”. Viewer xem topology và dùng chat tư vấn; chỉ người có quyền sửa project mới thay đổi sơ đồ.
+Project là phạm vi chia sẻ của nhóm: Operator có thể thêm tài khoản Viewer hoặc Operator từ tab “Nhóm / chia sẻ”. Viewer chỉ xem topology và dùng chat tư vấn; Operator được thêm có quyền editor để cùng chỉnh sửa thiết bị và sơ đồ. Chỉ chủ project hoặc ADMIN mới quản lý thành viên và cài đặt project.
 
-### Phiên chat là riêng của từng người
+### Phiên chat dùng chung trong project
 
-Thành viên dùng chung thiết bị và topology của project, nhưng **mỗi người có phiên chat riêng**. Phiên thuộc về người tạo ra nó (`chat_sessions.created_by_id`):
+Thành viên của một project **dùng chung các phiên chat** của project đó: ai có quyền vào project đều đọc và tiếp tục được phiên của người khác, kể cả Viewer. `chat_sessions.created_by_id` chỉ ghi lại người tạo phiên.
 
-- `GET /api/chat/sessions` chỉ trả về phiên của chính người gọi, kể cả Admin.
-- `GET /api/chat/messages` và `POST /api/ai/chat` không có `session_id`, hoặc với `session_id` của người khác, sẽ dùng phiên gần nhất của chính người gọi (tạo mới nếu chưa có). Viewer không thể đọc hay ghi vào phiên của Operator và ngược lại.
-- Admin được đọc mọi phiên trong project theo `session_id` để kiểm tra (audit), nhưng không ghi vào phiên của người khác.
-- Chỉ áp dụng / tải cấu hình từ gợi ý AI nằm trong phiên của chính mình.
-- Phiên cũ không có người tạo (`created_by_id` NULL, từ trước thay đổi này) chỉ Admin còn đọc được.
+- `GET /api/chat/sessions` trả về mọi phiên của project.
+- `GET /api/chat/messages` và `POST /api/ai/chat` không có `session_id`, hoặc với `session_id` không thuộc project, sẽ dùng phiên mới nhất của project (tạo mới nếu chưa có).
+- Áp dụng / tải cấu hình từ gợi ý AI cần quyền editor, và gợi ý có thể nằm trong phiên của thành viên khác.
+
+**Ngoại lệ là lab mặc định.** Mọi tài khoản đều vào được lab này mà không cần ai thêm, nên ở đây phiên chat vẫn riêng theo người: mỗi người chỉ thấy và ghi vào phiên của mình; Admin được đọc mọi phiên theo `session_id` để kiểm tra (audit) nhưng không ghi vào phiên của người khác; phiên cũ không có người tạo (`created_by_id` NULL) chỉ Admin còn đọc được.
+
+### Chính sách duyệt cấu hình với Operator
+
+Operator là owner/editor của project chạy được các lệnh trên thiết bị của project đó như Admin: lệnh chỉ-đọc, tạo, duyệt và áp cấu hình, undo/redo, **kể cả thiết bị production**. Quyền này không gồm quản lý người dùng, chính sách hệ thống và công cụ sửa nháp (`/api/draft-history`, `/api/pending-history`), vẫn chỉ dành cho Admin. Với các Operator này, ba quy định sau không áp dụng: `production_admin_only`, `independent_approval` (họ được tự duyệt thay đổi của chính mình) và yêu cầu có lịch đặt thiết bị (reservation). Các kiểm tra khác như baseline, cửa sổ bảo trì và xác nhận hostname vẫn áp dụng.
 
 ### Bảng quyền theo vai trò
 
@@ -62,13 +66,14 @@ Quyền thực tế = vai trò tài khoản ∩ quyền trên project (`owner` /
 |---|---|---|---|
 | Xem mọi project | ✓ | chỉ project của mình / được chia sẻ / lab mặc định | chỉ project được chia sẻ / lab mặc định |
 | Tạo project (kể cả “Tạo project mới” trong chat) | ✓ | ✓ | ✗ |
-| Chia sẻ project | ✓ | chỉ thêm tài khoản Viewer, trên project mình sở hữu | ✗ |
+| Chia sẻ project | ✓ | trên project mình sở hữu: thêm Viewer hoặc Operator (Operator mặc định được quyền editor; API nhận `access: viewer` nếu ghi rõ) | ✗ |
 | Sửa topology / thiết bị / áp thiết kế AI | ✓ | khi là owner/editor | ✗ |
-| Chat tư vấn AI (không chạy lệnh) | — | ✓ | ✓ |
-| Chat AI chạy lệnh / tạo Preview → Approve → Apply | ✓ | ✗ | ✗ |
-| Duyệt và áp cấu hình AI lên PNETLab (AI Management) | ✗ (dùng pipeline Preview/Approve/Apply) | khi là owner/editor và project bật AI Management | ✗ |
-| Tải file cấu hình từ gợi ý AI | ✓ | ✓ (gợi ý trong phiên của mình) | ✓ (gợi ý trong phiên của mình) |
-| Đọc phiên chat | mọi phiên (audit) | phiên của mình | phiên của mình |
+| Chat AI tư vấn và chạy lệnh chỉ-đọc (`show`, `ping`, `traceroute`) | ✓ | ✓ | ✓ |
+| Xem cấu hình bằng `show run` (gõ trong chat hoặc gọi API, chạy không qua AI, các dòng chứa mật khẩu/khóa được ẩn) | ✓ | ✓ | ✓ |
+| Chat AI tạo cấu hình / Preview → Approve → Apply | ✓ | khi là owner/editor | ✗ |
+| Duyệt và áp cấu hình AI lên PNETLab (AI Management) | ✓ | khi là owner/editor và project bật AI Management | ✗ |
+| Tải file cấu hình từ gợi ý AI | ✓ | khi là owner/editor | ✗ |
+| Đọc phiên chat | mọi phiên | mọi phiên của project (lab mặc định: phiên của mình) | mọi phiên của project (lab mặc định: phiên của mình) |
 | Quản lý người dùng | ✓ | ✗ | ✗ |
 
 ## Cấp quyền ban đầu

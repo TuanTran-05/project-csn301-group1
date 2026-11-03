@@ -1400,9 +1400,10 @@ document.addEventListener("alpine:init", () => {
       try {
         await this.authFetch(`/api/projects/${this.currentProjectId}/members`, {
           method: "POST",
+          // Operators have no access picker: the server decides from the target's role.
           body: JSON.stringify({
             username: this.shareForm.username.trim(),
-            access: this.shareForm.access,
+            ...(this.currentUser?.role === "OPERATOR" ? {} : { access: this.shareForm.access }),
           }),
         });
         this.shareForm = { username: "", access: "viewer" };

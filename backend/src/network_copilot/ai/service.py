@@ -46,7 +46,12 @@ from .topology import build_addressing, build_topology
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a network operations assistant for a Cisco lab.
+# A pipe stays out: filtered output is not on the read-only allowlist.
+_RUNNING_CONFIG_REQUEST = re.compile(
+    r"\s*show\s+run(?:ning-config)?(?:\s+(?P<rest>[^|]*))?\s*", re.IGNORECASE
+)
+
+SYSTEM_PROMPT ="""You are a network operations assistant for a Cisco lab.
 
 Reply with a single JSON object and nothing else. The schema is:
 {
@@ -532,12 +537,25 @@ class AIService:
         return operation
 
     @staticmethod
-    def _require_admin(user_id: int | None) -> None:
+    def _require_project_config_access(
+        user_id: int | None, project_id: int | None
+    ) -> None:
         user = db.session.get(User, user_id) if user_id is not None else None
-        if user is None or user.role != "ADMIN":
+        if user is None or not user.is_active:
+            raise ForbiddenError("An active account is required to create a configuration change.")
+        if user.role == "ADMIN":
+            return
+        from ..projects.model import Project
+        from ..projects.service import access_level
+
+        project = db.session.get(Project, project_id) if project_id is not None else None
+        if (
+            user.role != "OPERATOR"
+            or project is None
+            or access_level(user, project) not in {"owner", "editor"}
+        ):
             raise ForbiddenError(
-                "Only an ADMIN may create a configuration change. "
-                "Ask an administrator to review this request."
+                "Only an Admin or an Operator with project edit access may create a configuration change."
             )
 
     # -- intent handlers --------------------------------------------------
@@ -565,6 +583,65 @@ class AIService:
                 }
             )
         return results
+
+    @staticmethod
+    def running_config_request(
+        message: str,
+        user_id: int | None,
+        project_id: int | None,
+        group_id: int | None = None,
+    ) -> dict | None:
+        """Answer a typed "show run [device]" without involving the model.
+
+        Returns None for any other message. The model must never receive a
+        running-config, so this runs on the user's own words: the output only
+        lives in the reply's payload, which _recent_history leaves out, and
+        execute_readonly has already masked its credential lines.
+        """
+        match = _RUNNING_CONFIG_REQUEST.fullmatch(message)
+        if match is None:
+            return None
+
+        devices = device_service.list_devices(project_id=project_id, deployable=True)
+        words = {
+            word.strip(".,:;?!").lower() for word in (match.group("rest") or "").split()
+        }
+        named = [device for device in devices if device.hostname.lower() in words]
+        if not words and len(devices) == 1:
+            named = devices
+        if len(named) != 1:
+            return {
+                "intent": "chat",
+                "explanation": "Bạn muốn xem cấu hình của thiết bị nào? Ví dụ: show run R1.",
+                "requires_approval": False,
+                "diagram": None,
+            }
+
+        device = named[0]
+        execution = command_service.execute_readonly(
+            device_id=device.id,
+            command="show running-config",
+            user_id=user_id,
+            source="chat",
+            project_id=project_id,
+            group_id=group_id,
+        )
+        return {
+            "intent": "monitor",
+            "device": device.hostname,
+            "explanation": (
+                f"Cấu hình đang chạy của {device.hostname}. "
+                "Các dòng chứa mật khẩu hoặc khóa đã được ẩn."
+            ),
+            "results": [{
+                "command": execution.command,
+                "status": execution.status,
+                "output": execution.output,
+                "parsed": [],
+                "duration_ms": execution.duration_ms,
+            }],
+            "requires_approval": False,
+        }
 
     def _handle_monitor(
         self,
@@ -737,7 +814,7 @@ class AIService:
             }
 
         if action.intent == "configure":
-            self._require_admin(user_id)
+            self._require_project_config_access(user_id, project_id)
             return self._handle_configure(action, user_id, project_id, group_id)
 
         operation = self._readonly_operation(action)

@@ -64,10 +64,13 @@ Open <http://127.0.0.1:5000/projects>.
   `POST .../ssh-default/apply {"scope": "missing" | "all"}`, and
   `"use_project_ssh": true` on `POST/PUT /api/devices`.
 - **Sharing.** The owner shares a project with a username as `viewer` (read) or
-  `editor` (devices and diagram). Sharing never grants more than the user's
-  global role: a `VIEWER` account stays read-only everywhere. An ADMIN can see
-  and manage every project. ADMINs create accounts at `POST /api/users` or in
-  the page's account panel.
+  `editor` (devices and diagram). A global `VIEWER` stays read-only, but can
+  view the topology, participate in the shared project chat and run allowlisted
+  read-only commands such as `show`, `ping` and `traceroute`. An `OPERATOR` can configure devices and
+  edit the project when they own it or have `editor` access; project access does
+  not grant global user-administration rights. An ADMIN can manage every
+  project. ADMINs create accounts at `POST /api/users` or in the page's account
+  panel.
 - **Selecting a project.** API calls name the project with the `X-Project-Id`
   header (or `?project_id=`). If the caller has exactly one project it is used
   automatically; with several and no header the API answers
@@ -528,7 +531,7 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | POST | `/api/projects/<pid>/topology/links` | editor | Add a link (ports optional: free ones are chosen) |
 | PUT/DELETE | `/api/projects/<pid>/topology/links/<id>` | editor | Edit / delete a link |
 | POST | `/api/projects/<pid>/topology/config-plan` | editor | Commands the design produces (no side effects) |
-| POST | `/api/projects/<pid>/topology/config-preview` | ADMIN | Freeze them as a change batch |
+| POST | `/api/projects/<pid>/topology/config-preview` | editor | Freeze them as a change batch |
 | GET/POST | `/api/users` | ADMIN | List / create accounts |
 | GET/PUT | `/api/users/<id>` | ADMIN | Read / edit role, profile, active flag |
 | POST | `/api/users/<id>/reset-password` | ADMIN | Set a new password (revokes their tokens) |
@@ -544,30 +547,32 @@ injected through `SSH_CLIENT_FACTORY` and `AI_PROVIDER_INSTANCE`.
 | GET | `/api/devices/<id>/backups/<backup_id>` | editor | One backup, with config |
 | POST | `/api/commands/execute-readonly` | any | Run an allowlisted command |
 | GET | `/api/commands/history` | any | Past executions |
-| POST | `/api/changes/preview` | ADMIN | Create a preview |
+| POST | `/api/changes/preview` | editor | Create a preview |
 | GET | `/api/changes` | any | List changes |
 | GET | `/api/changes/<id>` | any | One change |
-| POST | `/api/changes/<id>/approve` | ADMIN | Approve |
-| POST | `/api/changes/<id>/apply` | ADMIN | Backup → apply → verify (10 req/min) |
-| POST | `/api/chat/messages/<id>/config-files` | project viewer | Download an explicitly approved ZIP of suggested configs |
-| POST | `/api/chat/messages/<id>/apply-configurations` | Operator/Viewer, owner-enabled PNETLab | Per-suggestion approval and live apply to isolated devices |
-| POST | `/api/chat/batches/<id>/apply` · `/cancel` | submitting Operator/Viewer | Confirm a high-risk AI Management apply / cancel it |
-| POST | `/api/changes/<id>/cancel` | ADMIN | Cancel |
+| POST | `/api/changes/<id>/approve` | editor | Approve within project scope |
+| POST | `/api/changes/<id>/apply` | editor | Backup → apply → verify (10 req/min) |
+| POST | `/api/chat/messages/<id>/config-files` | editor | Download an explicitly approved ZIP of suggested configs |
+| POST | `/api/chat/messages/<id>/apply-configurations` | editor, owner-enabled PNETLab | Per-suggestion approval and live apply to isolated devices |
+| POST | `/api/chat/batches/<id>/apply` · `/cancel` | editor | Confirm/apply or cancel a project-scoped batch |
+| POST | `/api/changes/<id>/cancel` | editor | Cancel |
 | GET | `/api/change-batches` | any | List frozen multi-device batches |
 | GET | `/api/change-batches/<id>` | any | One batch with every child result |
-| POST | `/api/change-batches/<id>/approve` | ADMIN | Approve all frozen children |
-| POST | `/api/change-batches/<id>/apply` | ADMIN | Apply all children; high risk requires typed confirmation |
-| POST | `/api/change-batches/<id>/cancel` | ADMIN | Cancel the batch |
+| POST | `/api/change-batches/<id>/approve` | editor | Approve all frozen children |
+| POST | `/api/change-batches/<id>/apply` | editor | Apply all children; high risk requires typed confirmation |
+| POST | `/api/change-batches/<id>/cancel` | editor | Cancel the batch |
 | GET | `/api/audit-logs` | ADMIN | Filterable audit trail of the current project (`?scope=all` for every project) |
 | POST | `/api/ai/chat` | any* | AI copilot (20 req/min/user), scoped to the current project |
 
-\* `configure` intents additionally require `ADMIN`.
+\* `configure` intents require ADMIN or an OPERATOR with owner/editor access to
+the current project. VIEWER accounts may only execute the allowlisted read-only
+monitoring commands.
 
 Everything below `/api/devices`, `/api/commands`, `/api/changes`,
 `/api/change-batches`, `/api/chat`, `/api/ai`, `/api/dashboard` and
 `/api/audit-logs` acts on the current project (see *Selecting a project*). The
 role column above is the minimum **project access** (viewer < editor < owner);
-the change workflow keeps its global ADMIN requirement on top.
+global ADMIN retains access to all projects and user administration.
 
 ### Undo / redo of applied configuration
 

@@ -25,6 +25,13 @@ def devices(records, user=None):
 def can_read_change(user, change):
     if role(user) == "ADMIN":
         return True
+    if role(user) in {"OPERATOR", "VIEWER"}:
+        from ..projects.model import Project
+        from ..projects.service import access_level
+
+        project = db.session.get(Project, change.device.project_id) if change.device else None
+        if project is not None and access_level(user, project) is not None:
+            return True
     if (
         getattr(change, "ai_management_approved", False)
         and change.requested_by_id == user.id

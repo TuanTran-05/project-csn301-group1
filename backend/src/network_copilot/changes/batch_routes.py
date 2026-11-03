@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
-from ..auth.service import current_user, roles_required
+from ..auth.service import current_user
 from ..errors import ValidationError
 from ..extensions import limiter
 from ..projects.scope import change_project, current_project
@@ -29,7 +29,7 @@ def get_batch(batch_id: int):
 
 
 @bp.post("/<int:batch_id>/approve")
-@roles_required("ADMIN", "TEACHER")
+@jwt_required()
 def approve(batch_id: int):
     project = change_project()
     batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
@@ -39,7 +39,7 @@ def approve(batch_id: int):
 
 
 @bp.post("/<int:batch_id>/apply")
-@roles_required("ADMIN", "TEACHER", "STUDENT")
+@jwt_required()
 @limiter.limit("10 per minute")
 def apply(batch_id: int):
     project = change_project()
@@ -59,7 +59,7 @@ def apply(batch_id: int):
 
 
 @bp.post("/<int:batch_id>/cancel")
-@roles_required("ADMIN")
+@jwt_required()
 def cancel(batch_id: int):
     project = current_project(need="editor")
     batch_service.get_batch(batch_id, project.id)  # 404 for another project's batch
