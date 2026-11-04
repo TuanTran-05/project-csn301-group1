@@ -46,6 +46,8 @@ from .topology import build_addressing, build_topology
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_MISMATCH = "The AI returned an action that does not match the required schema."
+
 # A pipe stays out: filtered output is not on the read-only allowlist.
 _RUNNING_CONFIG_REQUEST = re.compile(
     r"\s*show\s+run(?:ning-config)?(?:\s+(?P<rest>[^|]*))?\s*", re.IGNORECASE
@@ -502,10 +504,7 @@ class AIService:
             for error in exc.errors():
                 field = ".".join(str(part) for part in error["loc"]) or "_root"
                 details.setdefault(field, []).append(error["msg"])
-            raise ValidationError(
-                "The AI returned an action that does not match the required schema.",
-                details,
-            ) from exc
+            raise ValidationError(SCHEMA_MISMATCH, details) from exc
 
     # -- guards -----------------------------------------------------------
     def _block(

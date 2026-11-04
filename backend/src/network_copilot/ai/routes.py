@@ -22,7 +22,7 @@ from ..projects.model import Project
 from ..audit.service import record_event
 from . import design_assistant
 from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
-from .service import AIService
+from .service import SCHEMA_MISMATCH, AIService
 
 bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 
@@ -96,7 +96,25 @@ def _chat_reply(user, session_id, project_id, content, payload):
 
 
 # A follow-up that reads or targets a real device leaves the design thread.
-_DEVICE_COMMAND = re.compile(r"^\s*(?:show|sh|ping|traceroute|tracert|do)\b", re.IGNORECASE)
+# Anywhere in the (accent-folded) message: a CLI read command, or a verb that
+# asks to run or check something on a device ("chạy show run trên sw1").
+_DEVICE_COMMAND = re.compile(
+    r"(?<![\w-])(?:show|sh|ping|traceroute|tracert|debug|chay|run|thuc\s+thi|execute|"
+    r"kiem\s+tra|check|verify)(?![\w-])"
+)
+
+
+def _after_design(session_id: int) -> bool:
+    """Whether the session's last assistant reply is a design suggestion."""
+    from ..chat.model import ChatMessage
+
+    last = (
+        db.session.query(ChatMessage)
+        .filter_by(session_id=session_id, role="assistant")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    return last is not None and (last.payload or {}).get("intent") == "advice"
 
 
 def _continues_design(session_id: int, project_id: int, message: str) -> bool:
@@ -107,26 +125,31 @@ def _continues_design(session_id: int, project_id: int, message: str) -> bool:
     that names a device of the project, or is a show/ping command, is about
     the real network and keeps going there.
     """
-    from ..chat.model import ChatMessage
+    from ..chat.onboarding import _fold
     from ..devices.model import Device
 
-    last = (
-        db.session.query(ChatMessage)
-        .filter_by(session_id=session_id, role="assistant")
-        .order_by(ChatMessage.id.desc())
-        .first()
-    )
-    if last is None or (last.payload or {}).get("intent") != "advice":
+    if not _after_design(session_id):
         return False
-    if _DEVICE_COMMAND.match(message):
+
+    text = _fold(message)
+    if _DEVICE_COMMAND.search(text):
         return False
-    text = message.casefold()
-    hostnames = (
-        hostname.casefold()
+    return not any(
+        re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text)
         for (hostname,) in db.session.query(Device.hostname).filter(Device.project_id == project_id)
         if hostname
+        for name in _device_names(hostname)
     )
-    return not any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for name in hostnames)
+
+
+def _device_names(hostname: str) -> set[str]:
+    """What a member may call a device: SWITCH-SW1 is also "sw1" (its last part)."""
+    name = hostname.casefold()
+    names = {name}
+    parts = [part for part in re.split(r"[-_.]", name) if part]
+    if len(parts) > 1 and re.search(r"\d", parts[-1]):
+        names.add(parts[-1])
+    return names
 
 
 @bp.post("/chat")
@@ -234,10 +257,18 @@ def chat():
     ):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
-        result = AIService().handle(
-            data.message, user_id, session_id=data.session_id, project_id=project.id,
-            group_id=data.group_id,
-        )
+        try:
+            result = AIService().handle(
+                data.message, user_id, session_id=data.session_id, project_id=project.id,
+                group_id=data.group_id,
+            )
+        except ValidationError as exc:
+            # A design follow-up that still reached the device prompt: the model
+            # answered with a design, which that schema refuses. Ask the advisor.
+            if not (exc.message == SCHEMA_MISMATCH and not project_read_only
+                    and user.role != "VIEWER" and _after_design(data.session_id)):
+                raise
+            result = AIService().advise(data.message, data.session_id, project.id)
     if isinstance(result.get("diagram"), dict):
         from ..topology.chat_import import complete_diagram_addresses
 
