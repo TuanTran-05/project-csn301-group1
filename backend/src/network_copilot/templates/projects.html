@@ -586,6 +586,8 @@
                       <span x-show="!(pnetExport.job && pnetExport.job.summary && pnetExport.job.summary.ssh_user)">Mở lab này trên PNETLab bằng tài khoản của bạn, bật node, rồi khởi tạo SSH ở tab Thiết bị.</span>
                       <span x-show="pnetExport.job && pnetExport.job.summary && pnetExport.job.summary.ssh_user"
                         x-text="pnetExport.job && pnetExport.job.summary ? `Đã bật ${pnetExport.job.summary.started} node; SSH sẵn sàng trên ${pnetExport.job.summary.ssh_ok}/${pnetExport.job.summary.ssh_total} thiết bị (tài khoản ${pnetExport.job.summary.ssh_user}).` : ''"></span>
+                      <span x-show="pnetExport.job && pnetExport.job.summary && pnetExport.job.summary.ssh_user"
+                        x-text="`Node đang chạy trong phiên PNETLab của tài khoản ${pnetExport.form.username}: mở lab bằng tài khoản khác sẽ thấy node tắt (phiên riêng), nhưng thiết bị vẫn chạy và NetAI vẫn SSH được.`"></span>
                     </p>
                   </div>
                 </div>
