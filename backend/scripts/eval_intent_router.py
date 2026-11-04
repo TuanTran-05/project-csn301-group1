@@ -9,10 +9,18 @@ Nothing is written to the database and no device is contacted.
     .venv/bin/python scripts/eval_intent_router.py
 """
 
+import os
 import sys
+from pathlib import Path
 
-from network_copilot.ai import intent
-from network_copilot.app import create_app
+from dotenv import load_dotenv
+
+# A plain "python" run does not read backend/.env (Flask and the service do).
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(ENV_FILE)
+
+from network_copilot.ai import intent  # noqa: E402  (after the environment is loaded)
+from network_copilot.app import create_app  # noqa: E402
 
 DEVICES = [{"hostname": "ROUTER-R1", "kind": "router"}, {"hostname": "SWITCH-SW1", "kind": "switch"}]
 
@@ -34,10 +42,16 @@ CONVERSATION = [
 
 
 def main() -> int:
+    if not os.environ.get("AI_API_KEY"):
+        print(f"AI_API_KEY is not set: add it to {ENV_FILE} (the file the NetAI service uses), "
+              "or export it in this shell, then run again.", file=sys.stderr)
+        return 2
     app = create_app()
     wrong = 0
     with app.app_context():
         provider = intent._provider()
+        print(f"Provider {type(provider).__name__}, model "
+              f"{getattr(provider, 'model', '?')}\n")
         history = []
         for message, expected, after_design in CONVERSATION:
             context = {"devices": DEVICES, "conversation": history[-intent.HISTORY_TURNS:],
