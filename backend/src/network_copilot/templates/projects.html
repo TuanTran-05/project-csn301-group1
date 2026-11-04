@@ -33,6 +33,7 @@
            :href="currentProjectId ? '/projects?project_id=' + currentProjectId + '&tab=topology' + (chatSessionId ? '&session_id=' + chatSessionId : '') : '/projects?tab=topology'">Sơ đồ mạng</a>
         <a class="nav-link nav-dashboard" href="/dashboard">Dashboard</a>
         <a class="nav-link nav-chat" href="/">Chat</a>
+        {% include "_lang_switch.html" %}
         {% include "_account_menu.html" %}
       </nav>
     </header>
@@ -1411,6 +1412,8 @@
     </div>
   </div>
 
+  <script src="{{ url_for('static', filename='js/i18n-dict.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/i18n.js') }}" defer></script>
   <script defer src="{{ url_for('static', filename='js/network_diagram.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/design_aids.js') }}"></script>
