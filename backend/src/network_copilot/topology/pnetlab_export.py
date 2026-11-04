@@ -13,9 +13,13 @@ device its management address and SSH through the console (the same work as
 Thiết bị -> Khởi tạo), with the lab login of the form (g1/group1 by default).
 """
 
+import ipaddress
 import logging
 import re
+import shutil
+import subprocess
 import time
+from urllib.parse import urlparse
 
 from flask import current_app
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,7 +152,12 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
             warnings.append(f"{device.hostname}: template {template} is not available on this PNETLab; left out.")
         entry = {"device_id": device.id, "hostname": device.hostname, "template": template,
                  "left": left, "top": top, "ready": ready, "used": set(), "managed": bool(device.managed),
-                 "management_ip": device.management_ip}
+                 "management_ip": device.management_ip,
+                 # A designed device (from the chat or the canvas) has no management
+                 # address yet: the bring-up gives it one, so it is cabled to Cloud0 too.
+                 "auto_ip": bool(request.start_and_bootstrap and device.managed
+                                 and device.lifecycle == "planned"
+                                 and device.device_type in BOOTSTRAPPED)}
         nodes.append(entry)
         by_device[device.id] = ("node", entry)
 
@@ -181,7 +190,7 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
     management = []
     if request.management_cloud:
         for entry in nodes:
-            if not (entry["ready"] and entry["managed"] and entry["management_ip"]):
+            if not (entry["ready"] and entry["managed"] and (entry["management_ip"] or entry["auto_ip"])):
                 continue
             index = next(i for i in range(64) if i not in entry["used"])
             entry["used"].add(index)
@@ -264,6 +273,7 @@ def preview(project, payload: dict) -> dict:
             f"PNETLab trả lời không như mong đợi ({type(exc).__name__}); xem log máy chủ."
         ) from exc
     result = plan(project, request, available)
+    _propose_addresses(project, request, result)
     if folder_problem:
         result["warnings"].insert(0, f"Không dùng được thư mục {folder} với tài khoản này: {folder_problem}. "
                                      "Chọn thư mục tài khoản được phép ghi.")
@@ -272,6 +282,93 @@ def preview(project, payload: dict) -> dict:
         result["warnings"].insert(0, f"{result['lab_path']} already exists; choose another lab name.")
         result["blocked"] = True
     return result
+
+
+# -- management addresses for designed devices ------------------------------------------
+
+def _answers_ping(address: str) -> bool:
+    """Whether something on the LAN already uses ``address`` (one ICMP echo)."""
+    ping = shutil.which("ping")
+    if ping is None:
+        return False
+    try:
+        return subprocess.run([ping, "-c", "1", "-W", "1", address], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=3).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def free_lab_addresses(project, count: int, avoid=()) -> list[str]:
+    """``count`` management addresses no device of *any* project holds, and nothing answers.
+
+    Every project shares the one lab LAN, so an address another project gave
+    a device (or the PNETLab host, the gateway, the NetAI server: they answer
+    a ping) would be a duplicate there.
+    """
+    from ..errors import ConflictError
+    from .templates import FIRST_SUGGESTED_HOST
+
+    if count <= 0:
+        return []
+    network = ipaddress.ip_network(project.management_network, strict=False)
+    used = {ip for (ip,) in db.session.query(Device.management_ip) if ip} | {str(a) for a in avoid if a}
+    probe = bool(current_app.config.get("PNETLAB_EXPORT_PING_CHECK", True))
+    hosts = list(network.hosts())
+    ordered = hosts[FIRST_SUGGESTED_HOST - 1:] + hosts[:FIRST_SUGGESTED_HOST - 1]
+    free, probed = [], 0
+    for address in map(str, ordered):
+        if address in used:
+            continue
+        if probe:
+            probed += 1
+            if probed > count + 40:
+                break
+            if _answers_ping(address):
+                continue
+        free.append(address)
+        if len(free) == count:
+            return free
+    raise ConflictError(f"No free management address left in {network} for the new nodes.")
+
+
+def _pnetlab_host(request: ExportRequest) -> str | None:
+    host = urlparse(request.url if "://" in request.url else f"http://{request.url}").hostname
+    try:
+        return str(ipaddress.ip_address(host))
+    except (TypeError, ValueError):
+        return None
+
+
+def _propose_addresses(project, request: ExportRequest, built: dict) -> None:
+    """Show, in the preview, the address each designed device would get."""
+    waiting = [n for n in built["nodes"] if n.get("auto_ip") and not n.get("management_ip") and n["ready"]]
+    if not waiting:
+        return
+    try:
+        addresses = free_lab_addresses(project, len(waiting), avoid=[_pnetlab_host(request)])
+    except AppError as exc:
+        built["warnings"].append(exc.message)
+        return
+    for entry, address in zip(waiting, addresses):
+        entry["management_ip"] = address
+        entry["ip_proposed"] = True
+
+
+def _provision_designed(project, request: ExportRequest, built: dict, by_host: dict) -> None:
+    """Give each designed (planned) device of the new lab its management address."""
+    from ..devices import service as device_service
+
+    waiting = [n for n in built["nodes"] if n.get("auto_ip") and n["hostname"] in by_host]
+    new = iter(free_lab_addresses(project, sum(1 for n in waiting if not n.get("management_ip")),
+                                  avoid=[_pnetlab_host(request)]))
+    for entry in waiting:
+        address = entry.get("management_ip") or next(new)
+        try:
+            device_service.provision_device(entry["device_id"], {"management_ip": address}, project)
+        except AppError as exc:
+            by_host[entry["hostname"]].update(ssh="skipped", ssh_message=f"No management IP: {exc.message}")
+            continue
+        by_host[entry["hostname"]]["management_ip"] = address
 
 
 def _project_devices(project):
@@ -450,6 +547,12 @@ def _bring_up(project, request, built, results, node_ids, writer, path, progress
 
     username, password = _lab_login(request)
     by_host = {r["hostname"]: r for r in results}
+    try:
+        _provision_designed(project, request, built, by_host)
+    except AppError as exc:  # no free address: the rows say so, the lab stays
+        for entry in built["nodes"]:
+            if entry.get("auto_ip") and entry["hostname"] in by_host:
+                by_host[entry["hostname"]].update(ssh="skipped", ssh_message=exc.message)
     targets = []
     for entry in built["nodes"]:
         node_id = node_ids.get(entry["hostname"])
@@ -466,6 +569,7 @@ def _bring_up(project, request, built, results, node_ids, writer, path, progress
         device.environment = "pnetlab"
         store_device_credential(device.id, username, password, None, commit=False)
         targets.append({"device_id": device.id, "node_id": str(node_id)})
+        result["management_ip"] = device.management_ip
         result.update(ssh="pending", ssh_message="Waiting for the node to boot.")
     db.session.commit()
 

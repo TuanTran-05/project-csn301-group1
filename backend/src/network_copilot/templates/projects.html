@@ -546,13 +546,14 @@
                   <div x-show="pnetExport.plan">
                     <p class="hint">Lab sẽ tạo: <strong x-text="pnetExport.plan ? pnetExport.plan.lab_path : ''"></strong></p>
                     <table class="data-table">
-                      <thead><tr><th>Thiết bị</th><th>Template PNETLab</th><th>Số cổng</th><th>Cổng quản trị → Cloud0</th><th></th></tr></thead>
+                      <thead><tr><th>Thiết bị</th><th>Template PNETLab</th><th>Số cổng</th><th>IP quản trị</th><th>Cổng quản trị → Cloud0</th><th></th></tr></thead>
                       <tbody>
                         <template x-for="node in (pnetExport.plan ? pnetExport.plan.nodes : [])" :key="node.hostname">
                           <tr :class="{ muted: !node.ready }">
                             <td x-text="node.hostname"></td>
                             <td><span class="pill" x-text="node.template"></span></td>
                             <td x-text="node.ethernet"></td>
+                            <td x-text="node.management_ip ? node.management_ip + (node.ip_proposed ? ' (tự cấp)' : '') : '—'"></td>
                             <td x-text="(pnetExport.plan.management.find((m) => m.hostname === node.hostname) || {}).index ?? '—'"></td>
                             <td x-text="node.ready ? '' : 'không có template'"></td>
                           </tr>
@@ -577,7 +578,7 @@
                     <p class="hint" x-show="pnetExport.job && pnetExport.job.current"
                       x-text="pnetExport.job && pnetExport.job.current ? 'Đang làm: ' + (pnetExport.job.current.message || '') : ''"></p>
                     <template x-for="item in (pnetExport.job ? pnetExport.job.devices : [])" :key="item.hostname">
-                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span><span x-show="item.cloud0 && item.cloud0.length" x-text="' · Cloud0: ' + (item.cloud0 || []).join(', ')"></span><span x-show="pnetExportSsh(item)" x-text="' · ' + pnetExportSsh(item)"></span></p>
+                      <p class="hint"><strong x-text="item.hostname"></strong>: <span x-text="item.status === 'created' ? 'đã tạo node' : item.status"></span><span x-show="item.management_ip" x-text="' · IP ' + (item.management_ip || '')"></span><span x-show="item.cloud0 && item.cloud0.length" x-text="' · Cloud0: ' + (item.cloud0 || []).join(', ')"></span><span x-show="pnetExportSsh(item)" x-text="' · ' + pnetExportSsh(item)"></span></p>
                     </template>
                     <p class="ok-text" x-show="pnetExport.job && pnetExport.job.status === 'done'">
                       Đã tạo <strong x-text="pnetExport.job && pnetExport.job.summary ? pnetExport.job.summary.lab_path : ''"></strong>

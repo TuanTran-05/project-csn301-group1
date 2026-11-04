@@ -466,3 +466,68 @@ def test_start_and_bootstrap_takes_the_project_owner(client, admin_headers, base
     client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body())
     client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body(lab_name="other", start_and_bootstrap=True))
     assert needs == ["editor", "owner"]
+
+
+# -- designed devices (from the chat or the canvas) get a management address -------------
+
+def _designed(project, hostname, role):
+    """A device as the chat diagram import creates it: planned, no management IP."""
+    from network_copilot.devices.model import Device
+
+    device = Device(project_id=project.id, hostname=hostname, management_ip=None, lifecycle="planned",
+                    device_type="cisco_ios", role=role, kind="router" if role == "core" else "switch",
+                    ssh_port=22, status="unknown", environment="pnetlab")
+    db.session.add(device)
+    db.session.commit()
+    return device
+
+
+def test_designed_devices_get_a_free_management_ip_and_ssh(client, admin_headers, base, project, app,
+                                                          fake_pnetlab, monkeypatch):
+    from conftest import _create_device
+    from network_copilot.devices.model import Device
+    from network_copilot.projects.model import Project
+    from network_copilot.topology import bootstrap
+
+    router, switch = _designed(project, "R1", "core"), _designed(project, "SW1", "access")
+    # .10 is taken in *another* project: the lab LAN is shared, so it is skipped too.
+    other = Project(name="Other", owner_id=project.owner_id, management_network=project.management_network,
+                    environment="pnetlab")
+    db.session.add(other)
+    db.session.commit()
+    _create_device("ELSEWHERE", "172.16.3.10", "core", project=other)
+    # And .11 answers a ping: something on the LAN already uses it.
+    app.config["PNETLAB_EXPORT_PING_CHECK"] = True
+    monkeypatch.setattr("network_copilot.topology.pnetlab_export._answers_ping", lambda ip: ip == "172.16.3.11")
+    seen = []
+    monkeypatch.setattr(bootstrap, "run", lambda project, payload, progress=None: seen.append(payload) or {
+        "devices": [{"device_id": t["device_id"], "status": "ok", "message": "SSH answers."}
+                    for t in payload["devices"]]})
+
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
+                       json=body(start_and_bootstrap=True)).get_json()
+    assert {n["hostname"]: (n["management_ip"], n.get("ip_proposed")) for n in plan["nodes"]} == {
+        "R1": ("172.16.3.12", True), "SW1": ("172.16.3.13", True)}
+    assert {m["hostname"] for m in plan["management"]} == {"R1", "SW1"}  # cabled to Cloud0
+
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers,
+                      json=body(start_and_bootstrap=True)).get_json()["job"]
+    assert job["status"] == "done", job
+    rows = {d["hostname"]: d for d in job["devices"]}
+    assert rows["R1"]["ssh"] == "ok" and rows["SW1"]["ssh"] == "ok"
+    assert rows["R1"]["management_ip"] == "172.16.3.12" and rows["R1"]["cloud0"]
+    db.session.expire_all()  # the job committed in its own session
+    router, switch = db.session.get(Device, router.id), db.session.get(Device, switch.id)
+    assert (router.lifecycle, router.management_ip) == ("provisioned", "172.16.3.12")
+    assert (switch.lifecycle, switch.management_ip) == ("provisioned", "172.16.3.13")
+    assert len(seen) == 1 and len(seen[0]["devices"]) == 2
+
+
+def test_without_bootstrap_a_designed_device_is_left_planned(client, admin_headers, base, project, fake_pnetlab):
+    router = _designed(project, "R1", "core")
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert plan["nodes"][0]["management_ip"] is None and not plan["management"]
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body()).get_json()["job"]
+    assert job["status"] == "done", job
+    db.session.refresh(router)
+    assert router.lifecycle == "planned" and router.management_ip is None

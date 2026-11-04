@@ -75,6 +75,9 @@ class Config:
     # How long to keep trying a console while the started nodes boot.
     PNETLAB_BOOT_TIMEOUT = int(os.environ.get("PNETLAB_BOOT_TIMEOUT", "900"))
     PNETLAB_BOOT_RETRY_SECONDS = float(os.environ.get("PNETLAB_BOOT_RETRY_SECONDS", "30"))
+    # Before a designed device gets a management address, ping it: an answer
+    # means something on the lab LAN already uses it.
+    PNETLAB_EXPORT_PING_CHECK = _bool("PNETLAB_EXPORT_PING_CHECK", True)
     # A failed post-change verification is re-read this many more times,
     # this many seconds apart: links and trunks take a moment to come up.
     VERIFICATION_RETRIES = int(os.environ.get("VERIFICATION_RETRIES", "2"))
@@ -150,6 +153,7 @@ class TestConfig(Config):
     BOOTSTRAP_PANOS_RETRY_SECONDS = 0
     PNETLAB_BOOT_TIMEOUT = 0
     PNETLAB_BOOT_RETRY_SECONDS = 0
+    PNETLAB_EXPORT_PING_CHECK = False
 
 
 class ForeignKeyTestConfig(TestConfig):
