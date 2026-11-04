@@ -1,3 +1,5 @@
+import re
+
 from flask import Blueprint, current_app, g, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from pydantic import ValidationError as PydanticValidationError
@@ -91,6 +93,40 @@ def _chat_reply(user, session_id, project_id, content, payload):
                     "session_id": session_id,
                     "chat_message_id": saved.id if saved else None,
                     **payload}), 200
+
+
+# A follow-up that reads or targets a real device leaves the design thread.
+_DEVICE_COMMAND = re.compile(r"^\s*(?:show|sh|ping|traceroute|tracert|do)\b", re.IGNORECASE)
+
+
+def _continues_design(session_id: int, project_id: int, message: str) -> bool:
+    """Whether ``message`` follows up the design the assistant just proposed.
+
+    "đặt dải ip là 172.20.5.0/24" after a suggested diagram changes that
+    diagram; sent to the device-action prompt it fails its schema. A message
+    that names a device of the project, or is a show/ping command, is about
+    the real network and keeps going there.
+    """
+    from ..chat.model import ChatMessage
+    from ..devices.model import Device
+
+    last = (
+        db.session.query(ChatMessage)
+        .filter_by(session_id=session_id, role="assistant")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if last is None or (last.payload or {}).get("intent") != "advice":
+        return False
+    if _DEVICE_COMMAND.match(message):
+        return False
+    text = message.casefold()
+    hostnames = (
+        hostname.casefold()
+        for (hostname,) in db.session.query(Device.hostname).filter(Device.project_id == project_id)
+        if hostname
+    )
+    return not any(re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text) for name in hostnames)
 
 
 @bp.post("/chat")
@@ -192,7 +228,10 @@ def chat():
         data.message, user_id, project.id, data.group_id
     )) is not None:
         result = typed
-    elif not project_read_only and user.role != "VIEWER" and requests_network_design(data.message):
+    elif not project_read_only and user.role != "VIEWER" and (
+        requests_network_design(data.message)
+        or _continues_design(data.session_id, project.id, data.message)
+    ):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:
         result = AIService().handle(
