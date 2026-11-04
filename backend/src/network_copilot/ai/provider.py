@@ -297,8 +297,11 @@ GEMINI_NAMES = {"gemini", "google", "google-genai"}
 ANTHROPIC_NAMES = {"anthropic", "claude"}
 
 
-def build_provider():
-    """Resolve the provider from app config, honouring a test override."""
+def build_provider(model: str | None = None):
+    """Resolve the provider from app config, honouring a test override.
+
+    ``model`` overrides AI_MODEL (the intent router may use a cheaper one).
+    """
     from flask import current_app
 
     override = current_app.config.get("AI_PROVIDER_INSTANCE")
@@ -307,7 +310,7 @@ def build_provider():
 
     name = (current_app.config.get("AI_PROVIDER") or "").strip().lower()
     api_key = current_app.config.get("AI_API_KEY")
-    model = current_app.config.get("AI_MODEL")
+    model = model or current_app.config.get("AI_MODEL")
 
     if api_key:
         if name in GEMINI_NAMES:
