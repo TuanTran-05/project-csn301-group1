@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 from fakes.fake_ai_provider import FakeAIProvider
 
-from conftest import default_project_id as _pid
+from conftest import _create_device, default_project_id as _pid
 from network_copilot.ai.schemas import AIAction
 from network_copilot.ai.service import AIService
 from network_copilot.changes.model import ChangeRequest
@@ -849,6 +849,69 @@ def test_operator_network_diagram_request_does_not_start_project_setup(
     assert response.status_code == 200, response.get_json()
     assert response.get_json()["diagram"]["title"] == "Tiệm net"
     assert "flow" not in response.get_json()
+
+
+def _operator_headers(client, db, hostnames=()):
+    from network_copilot.auth.model import User
+    from network_copilot.projects.model import Project
+
+    user = User(username="design-operator", role="OPERATOR")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.flush()
+    project = Project(name="Design Lab", owner_id=user.id,
+                      management_network="172.20.0.0/24", environment="pnetlab")
+    db.session.add(project)
+    db.session.commit()
+    for index, hostname in enumerate(hostnames):
+        _create_device(hostname, f"172.20.0.{10 + index}", "core", project=project)
+    token = client.post("/api/auth/login", json={
+        "username": "design-operator", "password": "StrongPass123!"}).get_json()["access_token"]
+    return {"Authorization": f"Bearer {token}", "X-Project-Id": str(project.id)}
+
+
+SUGGESTED = {
+    "title": "1 router, 1 switch, 6 PC",
+    "nodes": [{"id": "r1", "label": "R1", "kind": "router"},
+              {"id": "sw1", "label": "SW1", "kind": "switch"}],
+    "links": [{"source": "r1", "target": "sw1", "label": "LAN"}],
+}
+
+
+def test_a_follow_up_to_a_suggested_design_changes_that_design(client, app, db):
+    headers = _operator_headers(client, db)
+    provider = FakeAIProvider(responses={"explanation": "Đề xuất sơ đồ.", "diagram": SUGGESTED})
+    app.config["AI_PROVIDER_INSTANCE"] = provider
+    first = client.post("/api/ai/chat", headers=headers, json={
+        "message": "hãy xây 1 hệ thống mạng gồm 1 router, 1 switch và 6 pc"}).get_json()
+    assert first["intent"] == "advice", first
+
+    # No design word in it: it is the follow-up of the diagram just suggested.
+    second = client.post("/api/ai/chat", headers=headers, json={
+        "message": "đặt dải ip là 172.20.5.0/24", "session_id": first["session_id"]})
+    assert second.status_code == 200, second.get_json()
+    assert second.get_json()["intent"] == "advice"
+    context = provider.prompts[-1]["context"]
+    assert context["previous_diagram"]["title"] == SUGGESTED["title"]
+    assert "configurations" not in context["previous_diagram"]
+
+
+def test_a_device_command_after_a_design_leaves_the_design_thread(client, app, db):
+    from network_copilot.ai import routes
+    from network_copilot.chat.model import ChatMessage
+
+    headers = _operator_headers(client, db, hostnames=("CORE-R1",))
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(
+        responses={"explanation": "Đề xuất sơ đồ.", "diagram": SUGGESTED})
+    first = client.post("/api/ai/chat", headers=headers, json={
+        "message": "thiết kế mạng gồm 1 router và 1 switch"}).get_json()
+    session_id, project_id = first["session_id"], int(headers["X-Project-Id"])
+    assert db.session.query(ChatMessage).filter_by(session_id=session_id, role="assistant").count() == 1
+
+    assert routes._continues_design(session_id, project_id, "đặt dải ip là 172.20.5.0/24")
+    assert routes._continues_design(session_id, project_id, "thêm 1 switch nữa")
+    assert not routes._continues_design(session_id, project_id, "show ip route")
+    assert not routes._continues_design(session_id, project_id, "cấu hình OSPF trên core-r1")
 
 
 def test_chat_endpoint_creates_a_preview_for_configure(
