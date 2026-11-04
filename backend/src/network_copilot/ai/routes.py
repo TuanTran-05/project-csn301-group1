@@ -1,3 +1,4 @@
+import logging
 import re
 
 from flask import Blueprint, current_app, g, jsonify, request
@@ -20,9 +21,11 @@ from ..projects.scope import current_project
 from ..projects import service as project_service
 from ..projects.model import Project
 from ..audit.service import record_event
-from . import design_assistant
+from . import design_assistant, intent
 from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
 from .service import SCHEMA_MISMATCH, AIService
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 
@@ -102,6 +105,25 @@ _DEVICE_COMMAND = re.compile(
     r"(?<![\w-])(?:show|sh|ping|traceroute|tracert|debug|chay|run|thuc\s+thi|execute|"
     r"kiem\s+tra|check|verify)(?![\w-])"
 )
+
+
+# A message that starts as a CLI command is a read on a device: no need to ask.
+_CLI_LINE = re.compile(r"^\s*(?:show|sh|ping|traceroute|tracert)\b", re.IGNORECASE)
+
+
+def _wants_design(message: str, session_id: int, project_id: int) -> bool:
+    """Whether the message is for the design advisor (only asked for members who may design).
+
+    The model decides (ai/intent.py) when it is on and answers; otherwise the
+    keyword rules do: a design request, or a follow-up of the design just suggested.
+    """
+    if intent.enabled() and not _CLI_LINE.match(message):
+        route = intent.classify(message, session_id, project_id, _after_design(session_id))
+        if route is not None:
+            g.chat_route = route.intent
+            logger.info("Chat message routed as %s %s", route.intent, route.devices or "")
+            return route.intent == "design"
+    return requests_network_design(message) or _continues_design(session_id, project_id, message)
 
 
 def _after_design(session_id: int) -> bool:
@@ -251,9 +273,8 @@ def chat():
         data.message, user_id, project.id, data.group_id
     )) is not None:
         result = typed
-    elif not project_read_only and user.role != "VIEWER" and (
-        requests_network_design(data.message)
-        or _continues_design(data.session_id, project.id, data.message)
+    elif not project_read_only and user.role != "VIEWER" and _wants_design(
+        data.message, data.session_id, project.id
     ):
         result = AIService().advise(data.message, data.session_id, project.id)
     else:

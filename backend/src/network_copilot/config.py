@@ -116,6 +116,12 @@ class Config:
     # Gemini Flash is the default: cheap enough to leave the copilot enabled.
     AI_PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
     AI_MODEL = os.environ.get("AI_MODEL", "gemini-2.5-flash")
+    # Before each chat message, a short model call decides whether it is a
+    # design, a read on a device, a configuration or a question (ai/intent.py).
+    # Off: the keyword rules alone route messages.
+    AI_INTENT_ROUTER = _bool("AI_INTENT_ROUTER", True)
+    # Model for that call; empty: AI_MODEL. A fast, cheap one is enough.
+    AI_ROUTER_MODEL = os.environ.get("AI_ROUTER_MODEL", "")
     AI_API_KEY = os.environ.get("AI_API_KEY")
 
     TESTING = False
@@ -154,6 +160,9 @@ class TestConfig(Config):
     PNETLAB_BOOT_TIMEOUT = 0
     PNETLAB_BOOT_RETRY_SECONDS = 0
     PNETLAB_EXPORT_PING_CHECK = False
+    # Existing chat tests script one model answer per message; the router's
+    # own tests turn it on.
+    AI_INTENT_ROUTER = False
 
 
 class ForeignKeyTestConfig(TestConfig):
