@@ -800,8 +800,13 @@ def test_network_design_request_returns_a_diagram_for_admin(
     assert "patient network design tutor" in provider.prompts[0]["system_prompt"]
 
 
+@pytest.mark.parametrize("message", [
+    "tôi muốn tạo sơ đồ tiệm net bao gồm 30 pcs",
+    # No "thiết kế" or "sơ đồ": a build verb and counted devices are enough.
+    "hãy xây 1 hệ thống mạng gồm 1 router, 1 switch kết nối với router và 6 pc ket noi voi switch",
+])
 def test_operator_network_diagram_request_does_not_start_project_setup(
-    client, app, db
+    client, app, db, message
 ):
     from network_copilot.auth.model import User
     from network_copilot.projects.model import Project
@@ -838,7 +843,7 @@ def test_operator_network_diagram_request_does_not_start_project_setup(
 
     response = client.post(
         "/api/ai/chat", headers=headers,
-        json={"message": "tôi muốn tạo sơ đồ tiệm net bao gồm 30 pcs"},
+        json={"message": message},
     )
 
     assert response.status_code == 200, response.get_json()

@@ -36,17 +36,27 @@ def requests_network_design(message: str) -> bool:
     )):
         return True
 
-    action = r"(?:tao|ve|thiet\s+ke|xay\s+dung|lap\s+dat|create|draw|design|build|set\s+up)"
+    action = r"(?:tao|ve|thiet\s+ke|xay(?:\s+dung)?|dung|lap\s+dat|create|draw|design|build|set\s+up)"
     venue = r"(?:tiem\s+net|phong\s+net|phong\s+may|internet\s+cafe|cyber\s+cafe|computer\s+lab)"
     if re.search(rf"\b{action}\b(?:\s+\w+){{0,3}}\s+\b{venue}\b", text):
         return True
 
     # Keep a generic "network" target close to the design verb so requests
-    # such as "create a VLAN on the guest network" remain device actions.
-    return bool(re.search(
-        rf"\b{action}\b\s+(?:(?:mot|a|an|new)\s+)?(?:mang|network)\b",
+    # such as "create a VLAN on the guest network" remain device actions;
+    # only an article or a count and "he thong" ("a 1-system network") may sit between.
+    if re.search(
+        rf"\b{action}\b\s+(?:(?:mot|a|an|new|\d+)\s+)?(?:(?:he\s+thong|system)\s+)?(?:mang|network)\b",
         text,
-    ))
+    ):
+        return True
+
+    # "xây ... 1 router, 1 switch và 6 pc": a build verb and counted devices of
+    # two kinds or more describe a network to draw, not a device to configure.
+    kinds = set(re.findall(rf"\b\d+\s*({DEVICE_KINDS})\b", text))
+    return len(kinds) >= 2 and bool(re.search(rf"\b{action}\b", text))
+
+
+DEVICE_KINDS = r"router|switch|pcs?|may\s+tinh|laptop|server|firewall|asa|access\s+point"
 
 
 def requested_device_count(message: str) -> int | None:
