@@ -900,7 +900,7 @@ def test_a_device_command_after_a_design_leaves_the_design_thread(client, app, d
     from network_copilot.ai import routes
     from network_copilot.chat.model import ChatMessage
 
-    headers = _operator_headers(client, db, hostnames=("CORE-R1",))
+    headers = _operator_headers(client, db, hostnames=("CORE-R1", "SWITCH-SW1"))
     app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(
         responses={"explanation": "Đề xuất sơ đồ.", "diagram": SUGGESTED})
     first = client.post("/api/ai/chat", headers=headers, json={
@@ -910,8 +910,14 @@ def test_a_device_command_after_a_design_leaves_the_design_thread(client, app, d
 
     assert routes._continues_design(session_id, project_id, "đặt dải ip là 172.20.5.0/24")
     assert routes._continues_design(session_id, project_id, "thêm 1 switch nữa")
+    assert routes._continues_design(session_id, project_id, "đổi tên switch thành SW-CORE")
     assert not routes._continues_design(session_id, project_id, "show ip route")
     assert not routes._continues_design(session_id, project_id, "cấu hình OSPF trên core-r1")
+    # What g1 typed after a design: a command anywhere, a device by its short name.
+    assert not routes._continues_design(session_id, project_id, "chạy show running config trên sw1")
+    assert not routes._continues_design(session_id, project_id, "chạy show ip interface r1")
+    assert not routes._continues_design(session_id, project_id, "kiểm tra ospf")
+    assert not routes._continues_design(session_id, project_id, "cấu hình vlan 10 trên r1")
 
 
 def test_chat_endpoint_creates_a_preview_for_configure(
@@ -1377,3 +1383,27 @@ def test_a_too_long_message_says_so(client, admin_headers, app):
     response = client.post("/api/ai/chat", headers=admin_headers, json={"message": "x" * 8001})
     assert response.status_code == 422
     assert "quá dài" in response.get_json()["message"]
+
+
+def test_a_design_answer_on_the_device_prompt_falls_back_to_the_advisor(client, app, db, monkeypatch):
+    """A design follow-up that the router still sends to the device prompt."""
+    from network_copilot.ai import routes
+
+    headers = _operator_headers(client, db)
+    provider = FakeAIProvider(responses={"explanation": "Đề xuất sơ đồ.", "diagram": SUGGESTED})
+    app.config["AI_PROVIDER_INSTANCE"] = provider
+    first = client.post("/api/ai/chat", headers=headers, json={
+        "message": "thiết kế mạng gồm 1 router và 1 switch"}).get_json()
+    monkeypatch.setattr(routes, "_continues_design", lambda *args: False)
+    second = client.post("/api/ai/chat", headers=headers, json={
+        "message": "chạy thêm OSPF cho thiết kế này", "session_id": first["session_id"]})
+    assert second.status_code == 200, second.get_json()
+    assert second.get_json()["intent"] == "advice"
+
+
+def test_without_a_design_before_a_schema_mismatch_is_still_an_error(client, app, db):
+    headers = _operator_headers(client, db)
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses={"explanation": "x", "diagram": SUGGESTED})
+    response = client.post("/api/ai/chat", headers=headers, json={"message": "kiểm tra ospf"})
+    assert response.status_code == 422
+    assert "does not match the required schema" in response.get_json()["message"]
