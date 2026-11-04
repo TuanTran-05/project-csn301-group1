@@ -573,15 +573,25 @@ def _bring_up(project, request, built, results, node_ids, writer, path, progress
         result.update(ssh="pending", ssh_message="Waiting for the node to boot.")
     db.session.commit()
 
-    started = 0
-    for hostname, node_id in node_ids.items():
+    # An account may run only so many nodes at once (max_running_node_limit):
+    # the devices that get SSH start first, PCs and the rest after them.
+    wanted = {t["node_id"] for t in targets}
+    order = sorted(node_ids.items(), key=lambda item: str(item[1]) not in wanted)
+    total, started = len(targets), 0
+    for hostname, node_id in order:
         progress(hostname=hostname, phase="start", message="Starting node")
         try:
             writer.start_node(node_id)
             started += 1
             by_host[hostname]["started"] = True
         except PNETLabError as exc:
-            by_host[hostname].update(started=False, ssh_message=f"Could not start: {exc.message}")
+            reason = exc.message
+            if "max_running_node_limit" in reason:
+                reason = (f"tài khoản {request.username} đã chạm giới hạn số node chạy cùng lúc của "
+                          f"PNETLab (max_running_node_limit; lab này bật được {started} node, kể cả node "
+                          "đang chạy ở lab khác cũng tính). Tắt node ở lab cũ hoặc nhờ admin nâng giới hạn, "
+                          "rồi bật node và dùng Thiết bị -> Khởi tạo.")
+            by_host[hostname].update(started=False, ssh_message=f"Could not start: {reason}")
             targets = [t for t in targets if t["node_id"] != str(node_id)]
             if by_host[hostname].get("ssh") == "pending":
                 by_host[hostname]["ssh"] = "error"
@@ -629,7 +639,7 @@ def _bring_up(project, request, built, results, node_ids, writer, path, progress
             result["ssh_message"] += " (still booting? run Thiết bị -> Khởi tạo later)"
     return {"started": started, "ssh_user": username,
             "ssh_ok": sum(1 for r in results if r.get("ssh") == "ok"),
-            "ssh_total": len(targets)}
+            "ssh_total": total}
 
 
 __all__ = ["ExistingLabError", "interface_index", "plan", "preview", "run", "validate_request"]

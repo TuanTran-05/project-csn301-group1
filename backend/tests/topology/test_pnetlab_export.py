@@ -531,3 +531,57 @@ def test_without_bootstrap_a_designed_device_is_left_planned(client, admin_heade
     assert job["status"] == "done", job
     db.session.refresh(router)
     assert router.lifecycle == "planned" and router.management_ip is None
+
+
+def _limit_running(client, limit):
+    """Make the fake PNETLab refuse to start more than ``limit`` nodes."""
+    app_factory = client.application.config["PNETLAB_WRITER_FACTORY"]
+    started = []
+
+    def factory(request):
+        writer = app_factory(request)
+        send = writer.client._send
+
+        def limited(method, path, json=None, **kw):
+            if path.endswith("/nodes/start"):
+                if len(started) >= limit:
+                    return 400, {"code": 400, "status": "fail", "message": "max_running_node_limit"}, {}
+                started.append(json["id"])
+            return send(method, path, json=json, **kw)
+
+        writer.client._send = limited
+        return writer
+
+    client.application.config["PNETLAB_WRITER_FACTORY"] = factory
+    return started
+
+
+def _bootstrap_ok(monkeypatch):
+    from network_copilot.topology import bootstrap
+
+    monkeypatch.setattr(bootstrap, "run", lambda project, payload, progress=None: {
+        "devices": [{"device_id": t["device_id"], "status": "ok", "message": "SSH answers."}
+                    for t in payload["devices"]]})
+
+
+def test_devices_that_get_ssh_start_first_when_the_account_may_run_few_nodes(
+        client, admin_headers, base, cabled, fake_pnetlab, monkeypatch):
+    _bootstrap_ok(monkeypatch)
+    _limit_running(client, 3)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers,
+                      json=body(start_and_bootstrap=True)).get_json()["job"]
+    assert job["status"] == "done", job
+    rows = {d["hostname"]: d for d in job["devices"]}
+    # FW1 sorts first, but the three IOS devices (which get SSH) take the three slots.
+    assert {h: rows[h].get("ssh") for h in ("R1", "SW1", "SW2")} == {"R1": "ok", "SW1": "ok", "SW2": "ok"}
+    assert rows["FW1"]["started"] is False and "max_running_node_limit" in rows["FW1"]["ssh_message"]
+    assert (job["summary"]["ssh_ok"], job["summary"]["ssh_total"], job["summary"]["started"]) == (3, 3, 3)
+
+
+def test_the_ssh_total_counts_a_device_that_could_not_start(client, admin_headers, base, cabled,
+                                                           fake_pnetlab, monkeypatch):
+    _bootstrap_ok(monkeypatch)
+    _limit_running(client, 1)
+    job = client.post(f"{base}/export/pnetlab", headers=admin_headers,
+                      json=body(start_and_bootstrap=True)).get_json()["job"]
+    assert (job["summary"]["ssh_ok"], job["summary"]["ssh_total"]) == (1, 3)  # not "1/1"
