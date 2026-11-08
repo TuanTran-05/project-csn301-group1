@@ -109,6 +109,19 @@ def interface_index(template: str, name: str | None) -> int | None:
     return numbers[-1] if numbers else None
 
 
+def interface_name(template: str, index: int) -> str:
+    """The port a PNETLab interface index stands for: the inverse of interface_index."""
+    if template == "vpcs":
+        return "eth0"
+    if template == "asav":
+        return "Management0/0" if index == 0 else f"GigabitEthernet0/{index - 1}"
+    if template == "paloalto":
+        return "mgmt" if index == 0 else f"ethernet1/{index}"
+    if template == "viosl2":
+        return f"GigabitEthernet{index // 4}/{index % 4}"
+    return f"GigabitEthernet0/{index}"
+
+
 def _position(device, order: int) -> tuple[int, int]:
     if device.pos_x is not None and device.pos_y is not None:
         return max(int(device.pos_x), 0), max(int(device.pos_y), 0)
@@ -194,7 +207,20 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
                 continue
             index = next(i for i in range(64) if i not in entry["used"])
             entry["used"].add(index)
-            management.append({"hostname": entry["hostname"], "index": index})
+            management.append({"hostname": entry["hostname"], "index": index,
+                               "interface": interface_name(entry["template"], index)})
+
+    # What each node will lack, so the preview can say it next to the node:
+    # "unmanaged" (a VPCS PC: no SSH, NetAI cannot configure it) and
+    # "no_management" (managed, but nothing gives it a management address).
+    managed_names = {item["hostname"] for item in management}
+    for entry in nodes:
+        issues = []
+        if not entry["managed"]:
+            issues.append("unmanaged")
+        elif entry["ready"] and entry["hostname"] not in managed_names:
+            issues.append("no_management")
+        entry["issues"] = issues
         if management and not any(n["type"] == "pnet0" for n in networks):
             networks.insert(0, {"device_id": None, "hostname": None, "type": "pnet0",
                                 "name": CLOUD_NAME, "left": 60, "top": 40})

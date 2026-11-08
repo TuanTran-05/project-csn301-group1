@@ -513,29 +513,40 @@
               <template x-if="pnetExport">
                 <div class="card pnet-export">
                   <h4>Đẩy sơ đồ sang PNETLab</h4>
-                  <p class="hint">Tạo một <strong>lab mới</strong> trên PNETLab từ sơ đồ này: mỗi thiết bị thành một node (vIOS, vIOS-L2, ASAv, PA-VM, VPCS)
-                    đặt đúng vị trí, mỗi dây nối thành dây nối, cổng quản trị nối vào Cloud0. Với "Bật node và khởi tạo SSH", NetAI bật các node
-                    rồi cấu hình IP quản trị và SSH qua console khi chúng boot xong; bỏ tick thì node để tắt, chưa cấu hình. Không lab nào khác bị đụng tới; tên lab đã có sẽ bị từ chối.
-                    Nếu lỗi giữa chừng, hệ thống thử xoá lab vừa tạo dở; tài khoản không có quyền xoá thì đường dẫn lab được báo lại để admin xoá.
-                    Tên lab chỉ giữ chữ và số (PNETLab tự bỏ ký tự khác). Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
-                  <p class="hint warn-text">PNETLab chỉ cho một phiên đăng nhập mỗi tài khoản: mỗi lần NetAI đăng nhập (Xem trước, Tạo lab),
-                    trình duyệt đang mở PNETLab bằng <strong>cùng tài khoản</strong> sẽ bị đăng xuất. Mở lab bằng tài khoản của bạn,
-                    hoặc đăng nhập lại sau khi NetAI chạy xong.</p>
-                  <form class="form-grid" @submit.prevent="pnetExportPreview()">
-                    <label>URL PNETLab <input type="text" x-model="pnetExport.form.url" required placeholder="http://172.16.3.25 (địa chỉ nội bộ)" /></label>
-                    <label>Tài khoản <input type="text" x-model="pnetExport.form.username" required autocomplete="off" /></label>
-                    <label>Mật khẩu <input type="password" x-model="pnetExport.form.password" :required="!pnetExportUsesSavedPassword"
+                  <p class="hint">Tạo một <strong>lab mới</strong> trên PNETLab từ sơ đồ này. Lab khác không bị đụng tới.
+                    Bấm <strong>Xem trước</strong> để kiểm tra từng thiết bị rồi mới tạo lab.</p>
+                  <p class="hint warn-text">Trong lúc NetAI chạy, trình duyệt đang mở PNETLab bằng <strong>cùng tài khoản</strong> sẽ bị đăng xuất
+                    (PNETLab chỉ cho một phiên mỗi tài khoản). Đăng nhập lại sau khi xong.</p>
+                  <details class="pnet-export-help">
+                    <summary>Cách hoạt động</summary>
+                    <p class="hint">Mỗi thiết bị thành một node (vIOS, vIOS-L2, ASAv, PA-VM, VPCS) đặt đúng vị trí, mỗi dây nối thành dây nối,
+                      cổng quản trị nối vào Cloud0. Với "Bật node và khởi tạo SSH", NetAI bật các node rồi cấu hình IP quản trị và SSH qua console
+                      khi chúng boot xong; bỏ tick thì node để tắt, chưa cấu hình. Tên lab đã có sẽ bị từ chối; tên lab chỉ giữ chữ và số.
+                      Nếu lỗi giữa chừng, hệ thống thử xoá lab vừa tạo dở; tài khoản không có quyền xoá thì đường dẫn lab được báo lại để admin xoá.
+                      Nên dùng tài khoản PNETLab riêng cho NetAI.</p>
+                  </details>
+                  <form class="form-grid" @submit.prevent="pnetExportPreview()" @input="pnetExportFormChanged()" @change="pnetExportFormChanged()">
+                    <div class="pnet-login-summary" x-show="pnetExportLoginFolded">
+                      <span>Đăng nhập PNETLab: <strong x-text="pnetExport.form.username"></strong> @ <span x-text="pnetExport.form.url"></span> (đã lưu)</span>
+                      <button type="button" class="link-btn" @click="pnetExport.editLogin = true">Đổi</button>
+                    </div>
+                    <label x-show="!pnetExportLoginFolded">URL PNETLab <input type="text" x-model="pnetExport.form.url" required placeholder="http://172.16.3.25 (địa chỉ nội bộ)" /></label>
+                    <label x-show="!pnetExportLoginFolded">Tài khoản <input type="text" x-model="pnetExport.form.username" required autocomplete="off" /></label>
+                    <label x-show="!pnetExportLoginFolded">Mật khẩu <input type="password" x-model="pnetExport.form.password" :required="!pnetExportUsesSavedPassword"
                       autocomplete="new-password" :placeholder="pnetExportUsesSavedPassword ? '•••••••• (đã lưu)' : ''" /></label>
                     <label>Thư mục <input type="text" x-model="pnetExport.form.folder" required placeholder="/Courses/CSN301-StudentLab/Group-1"
                       title="Thư mục tài khoản PNETLab được phép ghi (không phải thư mục gốc /)" /></label>
                     <label>Tên lab mới <input type="text" x-model="pnetExport.form.lab_name" required maxlength="64"
                       title="PNETLab chỉ giữ chữ và số trong tên lab: ký tự khác sẽ bị bỏ" /></label>
-                    <label class="check"><input type="checkbox" x-model="pnetExport.form.management_cloud" /> Nối cổng quản trị của thiết bị vào Cloud0</label>
                     <label class="check"><input type="checkbox" x-model="pnetExport.form.start_and_bootstrap" /> Bật node và khởi tạo SSH qua console (lưu tài khoản này cho thiết bị)</label>
                     <label x-show="pnetExport.form.start_and_bootstrap">Tài khoản SSH <input type="text" x-model="pnetExport.form.ssh_username" autocomplete="off" placeholder="g1" /></label>
                     <label x-show="pnetExport.form.start_and_bootstrap">Mật khẩu SSH <input type="password" x-model="pnetExport.form.ssh_password" autocomplete="new-password" placeholder="để trống: mật khẩu mặc định (group1)" /></label>
-                    <label class="check"><input type="checkbox" x-model="pnetExport.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
-                    <label class="check"><input type="checkbox" x-model="pnetExport.form.remember" /> Ghi nhớ đăng nhập PNETLab cho project này</label>
+                    <details class="pnet-export-more">
+                      <summary>Tuỳ chọn khác</summary>
+                      <label class="check"><input type="checkbox" x-model="pnetExport.form.management_cloud" /> Nối cổng quản trị của thiết bị vào Cloud0</label>
+                      <label class="check"><input type="checkbox" x-model="pnetExport.form.verify_tls" /> Kiểm tra chứng chỉ HTTPS</label>
+                      <label class="check"><input type="checkbox" x-model="pnetExport.form.remember" /> Ghi nhớ đăng nhập PNETLab cho project này</label>
+                    </details>
                     <div class="form-actions">
                       <button type="submit" class="primary-btn" :disabled="pnetExport.loading">Xem trước</button>
                       <button type="button" @click="pnetExport = null">Đóng</button>
@@ -545,17 +556,20 @@
 
                   <div x-show="pnetExport.plan">
                     <p class="hint">Lab sẽ tạo: <strong x-text="pnetExport.plan ? pnetExport.plan.lab_path : ''"></strong></p>
+                    <p class="hint" x-text="pnetExportSummary"></p>
+                    <p class="hint warn-text" x-show="pnetExportUnmanagedCount"
+                      x-text="pnetExportUnmanagedCount + ' thiết bị là máy đầu cuối (VPCS): NetAI không SSH và không cấu hình được. Nếu cần NetAI cấu hình, đổi thiết bị đó thành router hoặc switch trên sơ đồ rồi bấm Xem trước lại.'"></p>
                     <table class="data-table">
-                      <thead><tr><th>Thiết bị</th><th>Template PNETLab</th><th>Số cổng</th><th>IP quản trị</th><th>Cổng quản trị → Cloud0</th><th></th></tr></thead>
+                      <thead><tr><th>Thiết bị</th><th>Template PNETLab</th><th>Số cổng</th><th>IP quản trị</th><th>Cổng quản trị → Cloud0</th><th>Lưu ý</th></tr></thead>
                       <tbody>
                         <template x-for="node in (pnetExport.plan ? pnetExport.plan.nodes : [])" :key="node.hostname">
-                          <tr :class="{ muted: !node.ready }">
+                          <tr :class="{ muted: !node.ready, 'row-warn': node.ready && (node.issues || []).length }">
                             <td x-text="node.hostname"></td>
                             <td><span class="pill" x-text="node.template"></span></td>
                             <td x-text="node.ethernet"></td>
                             <td x-text="node.management_ip ? node.management_ip + (node.ip_proposed ? ' (tự cấp)' : '') : '—'"></td>
-                            <td x-text="(pnetExport.plan.management.find((m) => m.hostname === node.hostname) || {}).index ?? '—'"></td>
-                            <td x-text="node.ready ? '' : 'không có template'"></td>
+                            <td x-text="pnetExportManagementPort(node)"></td>
+                            <td x-text="pnetExportNodeNote(node)"></td>
                           </tr>
                         </template>
                       </tbody>
@@ -563,7 +577,6 @@
                     <p class="hint">
                       <span x-text="pnetExport.plan ? pnetExport.plan.cables.length : 0"></span> dây nối,
                       <span x-text="pnetExport.plan ? pnetExport.plan.networks.length : 0"></span> network (Cloud0, segment).
-                      Cổng quản trị là chỉ số cổng PNETLab (0 = Gi0/0 / Management0/0).
                     </p>
                     <template x-for="warning in (pnetExport.plan ? pnetExport.plan.warnings : [])" :key="warning">
                       <p class="hint warn-text" x-text="'⚠ ' + warning"></p>
@@ -616,6 +629,9 @@
                       <svg class="canvas-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" /></svg>
                     </button>
                   </span>
+                  <button type="button" class="topology-pnet-btn" x-show="canEdit" @click="togglePnetExport()"
+                          :title="pnetExport ? 'Đóng khung Đẩy sang PNETLab' : 'Tạo một lab mới trên PNETLab từ sơ đồ này'"
+                          x-text="pnetExport ? 'Đóng khung PNETLab' : 'Đẩy sang PNETLab'"></button>
                   <details class="topology-export-menu">
                     <summary class="topology-export-btn" title="Tải sơ đồ">Tải SVG <span aria-hidden="true">⌄</span></summary>
                     <div class="topology-export-options">
@@ -642,7 +658,6 @@
                         </span>
                       </span>
                       <button type="button" @click="openBlueprints()" x-show="canEdit" title="Tạo nhanh mô hình mẫu">Mô hình mẫu</button>
-                      <button type="button" @click="openPnetExport()" x-show="canEdit && !pnetExport" title="Tạo một lab mới trên PNETLab từ sơ đồ này">Đẩy sang PNETLab</button>
                       <button type="button" @click="addNote('note')" x-show="canEdit">Thêm ghi chú</button>
                       <button type="button" @click="addNote('group')" x-show="canEdit">Thêm nhóm</button>
                       <button type="button" @click="openVersions()">Phiên bản</button>

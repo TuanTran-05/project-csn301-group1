@@ -7,7 +7,8 @@ from network_copilot.extensions import db
 from network_copilot.integrations.pnetlab import PNETLabClient
 from network_copilot.integrations.pnetlab_writer import PNETLabWriter
 from network_copilot.topology.model import TopologyLink
-from network_copilot.topology.pnetlab_export import interface_index
+from network_copilot.devices.model import Device
+from network_copilot.topology.pnetlab_export import interface_index, interface_name
 
 LOGIN = {"url": "http://172.16.3.25", "username": "ai.tool", "password": "Lab-Pass-123"}
 
@@ -118,6 +119,36 @@ def body(**extra):
 ])
 def test_interface_names_map_to_pnetlab_indexes(template, name, index):
     assert interface_index(template, name) == index
+
+
+@pytest.mark.parametrize("template, name, index", [
+    ("vios", "GigabitEthernet0/2", 2), ("viosl2", "GigabitEthernet1/0", 4), ("viosl2", "GigabitEthernet1/3", 7),
+    ("asav", "GigabitEthernet0/1", 2), ("asav", "Management0/0", 0), ("vpcs", "eth0", 0),
+    ("paloalto", "ethernet1/3", 3), ("paloalto", "mgmt", 0),
+])
+def test_indexes_name_the_port_back(template, name, index):
+    assert interface_name(template, index) == name
+    assert interface_index(template, name) == index
+
+
+def test_preview_names_management_ports_and_flags_what_netai_cannot_manage(
+    client, admin_headers, base, cabled, project, fake_pnetlab
+):
+    db.session.add(Device(project_id=project.id, hostname="PC9", device_type="generic", role="host",
+                          kind="pc", managed=False, environment="pnetlab"))
+    db.session.commit()
+
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+
+    ports = {m["hostname"]: m["interface"] for m in plan["management"]}
+    assert ports["SW2"] == "GigabitEthernet0/1" and ports["FW1"] == "Management0/0"
+    issues = {n["hostname"]: n["issues"] for n in plan["nodes"]}
+    assert issues["PC9"] == ["unmanaged"]
+    assert issues["R1"] == [] and issues["SW1"] == []
+
+    without_cloud = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers,
+                                json=body(management_cloud=False)).get_json()
+    assert {n["hostname"]: n["issues"] for n in without_cloud["nodes"]}["R1"] == ["no_management"]
 
 
 def test_preview_plans_without_building(client, admin_headers, base, cabled, fake_pnetlab):
