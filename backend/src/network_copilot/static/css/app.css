@@ -2073,6 +2073,11 @@ a:focus-visible {
 .users-page .danger-btn { color: var(--danger-text); border-color: var(--danger-bg); }
 .users-page section { margin-bottom: 24px; }
 .data-table tr.muted td { color: var(--text-muted); }
+.data-table tr.row-warn td { background: var(--warn-bg); }
+.pnet-export-help, .pnet-export-more { grid-column: 1 / -1; margin: 4px 0; }
+.pnet-export-help summary, .pnet-export-more summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
+.pnet-export-more[open] { display: flex; flex-direction: column; gap: 6px; }
+.pnet-login-summary { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 
 
 /* -- Chat: empty state, typing, jump, device quick-insert -- */
@@ -3220,6 +3225,19 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   white-space: nowrap;
 }
 .app-shell .topology-export-menu { position: relative; flex: 0 0 auto; }
+.app-shell .topology-toolbar .topology-pnet-btn {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid #103e65;
+  border-radius: 8px;
+  background: #fff;
+  color: #103e65;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.app-shell .topology-toolbar .topology-pnet-btn:hover { background: #eaf1f8; }
 .app-shell .topology-export-menu > summary { list-style: none; cursor: pointer; }
 .app-shell .topology-export-menu > summary::-webkit-details-marker { display: none; }
 .app-shell .topology-export-menu[open] > summary { background: #0c3558; }
@@ -3519,6 +3537,7 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   .app-shell .topology-toolbar .zoom-box button { height: 32px; min-width: 31px; padding: 0 7px; }
   .app-shell .topology-toolbar .zoom-box .zoom-value { min-width: 47px; }
   .app-shell .topology-toolbar .topology-export-btn { min-height: 36px; padding: 0 10px; }
+  .app-shell .topology-toolbar .topology-pnet-btn { min-height: 36px; padding: 0 10px; }
   .app-shell .topology-more-actions > summary { width: 34px; height: 34px; }
   .app-shell .topology-wrap { padding: 9px; }
   .app-shell .topology-canvas { height: 54vh; min-height: 360px; }

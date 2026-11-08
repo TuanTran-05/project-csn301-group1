@@ -1276,6 +1276,19 @@ document.addEventListener("alpine:init", () => {
     // push the topology to PNETLab as a new lab
     // ------------------------------------------------------------------
 
+    // The toolbar button: open the panel and bring it into view, or close it.
+    togglePnetExport() {
+      if (this.pnetExport) {
+        this.pnetExport = null;
+        return;
+      }
+      this.openPnetExport();
+      this.$nextTick(() => {
+        const panel = document.querySelector(".pnet-export");
+        if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    },
+
     openPnetExport() {
       const slug = ((this.project && this.project.name) || "netai")
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
@@ -1286,7 +1299,7 @@ document.addEventListener("alpine:init", () => {
         form: { url: "", username: "", password: "", verify_tls: true, folder: "",
                 lab_name: `${slug}${stamp}`, management_cloud: true, remember: true,
                 start_and_bootstrap: true, ssh_username: "", ssh_password: "" },
-        saved: null, plan: null, loading: false, error: "", job: null, confirm: "",
+        saved: null, editLogin: false, plan: null, loading: false, error: "", job: null, confirm: "",
       };
       const panel = this.pnetExport;
       this.authFetch(this.topologyUrl("/pnetlab-login")).then((data) => {
@@ -1299,6 +1312,50 @@ document.addEventListener("alpine:init", () => {
         if (!panel.form.username) panel.form.username = data.saved.username;
         panel.form.verify_tls = data.saved.verify_tls;
       }).catch(() => {});
+    },
+
+    // A saved login folds to one line; "Đổi" opens the fields again.
+    get pnetExportLoginFolded() {
+      const panel = this.pnetExport;
+      return !!(panel && panel.saved && !panel.editLogin && this.pnetExportUsesSavedPassword);
+    },
+
+    // A preview describes the form as it was: once the form changes, ask for a new one.
+    pnetExportFormChanged() {
+      const panel = this.pnetExport;
+      if (panel && panel.plan && !panel.loading) {
+        panel.plan = null;
+        panel.error = "Thông tin đã thay đổi: bấm Xem trước lại.";
+      }
+    },
+
+    get pnetExportUnmanagedCount() {
+      const plan = this.pnetExport && this.pnetExport.plan;
+      if (!plan) return 0;
+      return plan.nodes.filter((n) => n.ready && (n.issues || []).includes("unmanaged")).length;
+    },
+
+    get pnetExportSummary() {
+      const plan = this.pnetExport && this.pnetExport.plan;
+      if (!plan) return "";
+      const ready = plan.nodes.filter((n) => n.ready);
+      const managed = ready.filter((n) => !(n.issues || []).length).length;
+      return `${ready.length} node sẽ được tạo; NetAI quản lý được ${managed}/${ready.length} thiết bị qua SSH.`;
+    },
+
+    pnetExportManagementPort(node) {
+      const plan = this.pnetExport && this.pnetExport.plan;
+      const item = plan && plan.management.find((m) => m.hostname === node.hostname);
+      if (!item) return "—";
+      return (item.interface || String(item.index)).replace(/^GigabitEthernet/, "Gi");
+    },
+
+    pnetExportNodeNote(node) {
+      if (!node.ready) return "không có template";
+      const issues = node.issues || [];
+      if (issues.includes("unmanaged")) return "Máy đầu cuối (VPCS): NetAI không cấu hình được";
+      if (issues.includes("no_management")) return "Chưa có IP quản trị: NetAI chưa kết nối được";
+      return "";
     },
 
     get pnetExportUsesSavedPassword() {
@@ -1337,6 +1394,7 @@ document.addEventListener("alpine:init", () => {
         });
       } catch (err) {
         panel.error = this.describeError(err);
+        panel.editLogin = true; // show the login fields, the saved one may be what failed
       } finally {
         panel.loading = false;
       }
