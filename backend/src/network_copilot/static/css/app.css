@@ -2244,6 +2244,8 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .project-ai-actions { align-items: center; margin-top: 12px; }
 .project-ai-empty { margin: 0 0 16px; }
 .project-ai-empty p { margin: 8px 0 12px; }
+.ai-diagram-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.ai-diagram-actions .ok-text a { margin-left: 6px; }
 .ai-config-card { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
 .ai-config-card h4 { margin: 0 0 8px; }
 .ai-config-card summary { cursor: pointer; }

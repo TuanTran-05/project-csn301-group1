@@ -244,8 +244,39 @@ def mark_imported(project, message) -> None:
     message.payload = payload
 
 
-def import_diagram(project, message_id: int, source_project_id: int | None = None) -> dict:
-    """Import one project assistant message atomically and idempotently."""
+def _clear_project_diagram(project) -> list[int]:
+    """Remove every device, cable and design object of the project.
+
+    Notes and saved versions stay. Nothing is committed: the caller adds the new
+    diagram in the same transaction, so a failure brings the old one back.
+    """
+    from .model import (
+        DesignAccessPort, DesignLoopback, DesignOspf, DesignStaticRoute, DesignSubif, DesignSvi, DesignVlan,
+    )
+
+    device_ids = [
+        device_id for (device_id,) in db.session.query(Device.id).filter_by(project_id=project.id)
+    ]
+    for device_id in device_ids:
+        device_service._assert_no_active_batch(device_id)
+        device_service._assert_no_teaching_records(device_id)
+    for model in (DesignAccessPort, DesignSvi, DesignSubif, DesignLoopback, DesignStaticRoute, DesignOspf, DesignVlan):
+        db.session.query(model).filter_by(project_id=project.id).delete()
+    db.session.query(TopologyLink).filter_by(project_id=project.id).delete()
+    device_service.purge_devices(device_ids, commit=False)
+    return device_ids
+
+
+def import_diagram(
+    project, message_id: int, source_project_id: int | None = None,
+    replace: bool = False, user=None,
+) -> dict:
+    """Import one project assistant message atomically and idempotently.
+
+    ``replace`` first clears the project's diagram (after saving it as an
+    automatic version, so it can be restored) and then adds this one, even when
+    this message was imported before.
+    """
     message, diagram = get_suggestion(source_project_id or project.id, message_id)
 
     completed, _ = complete_diagram_addresses(project, diagram.model_dump())
@@ -254,10 +285,25 @@ def import_diagram(project, message_id: int, source_project_id: int | None = Non
     payload["diagram"] = completed
     message.payload = payload
 
-    if _was_imported(project, message):
+    if not replace and _was_imported(project, message):
         mark_imported(project, message)
         db.session.commit()
         return {"created": False, "message_id": message.id, "devices": [], "links": []}
+
+    backup_id = None
+    removed: list[int] = []
+    if replace and db.session.query(Device.id).filter_by(project_id=project.id).first() is not None:
+        from . import versions
+
+        # _store commits, so the message payload above is saved with it.
+        backup = versions._store(project, user, "Trước khi thay bằng sơ đồ Chat", None, auto=True)
+        backup_id = backup.id
+        message.payload = payload
+        try:
+            removed = _clear_project_diagram(project)
+        except Exception:
+            db.session.rollback()
+            raise
 
     device_count = db.session.query(Device.id).filter_by(project_id=project.id).count()
     link_count = db.session.query(TopologyLink.id).filter_by(project_id=project.id).count()
@@ -340,6 +386,8 @@ def import_diagram(project, message_id: int, source_project_id: int | None = Non
     return {
         "created": True,
         "message_id": message.id,
+        "replaced": len(removed),
+        "backup_id": backup_id,
         "title": diagram.title,
         "devices": [device.to_dict() for device in devices_by_source.values()],
         "links": [link.to_dict() for link in links],

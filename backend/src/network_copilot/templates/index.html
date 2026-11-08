@@ -157,6 +157,21 @@
                       </template>
                     </ul>
                   </details>
+                  <div class="ai-diagram-actions" x-show="canManageProjectConfiguration && projectDeviceCount && savedChatMessageId(message)">
+                    <button type="button" :disabled="chatDiagramBusy"
+                      title="Xoá thiết bị và dây hiện có trong sơ đồ mạng rồi thay bằng sơ đồ này. Sơ đồ cũ được lưu thành một phiên bản để khôi phục."
+                      @click="replaceProjectDiagram(message)">
+                      <span x-text="chatDiagramBusy ? 'Đang thay sơ đồ…' : 'Thay sơ đồ mạng hiện tại bằng sơ đồ này'"></span>
+                    </button>
+                    <template x-if="chatDiagramResult[savedChatMessageId(message)]">
+                      <span class="ok-text">
+                        <span x-text="chatDiagramResult[savedChatMessageId(message)]"></span>
+                        <a :href="'/projects?project_id=' + currentProjectId + '&tab=topology'">Mở sơ đồ mạng</a>
+                      </span>
+                    </template>
+                    <span class="error-text" x-show="chatDiagramError[savedChatMessageId(message)]"
+                      x-text="chatDiagramError[savedChatMessageId(message)]"></span>
+                  </div>
                 </figure>
               </template>
 

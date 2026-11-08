@@ -88,16 +88,24 @@ def import_chat_diagram(project_id: int):
         from ..errors import ValidationError
 
         raise ValidationError("'message_id' must be a positive integer.")
-    result = chat_import.import_diagram(project, message_id)
+    replace = payload.get("replace", False)
+    if not isinstance(replace, bool):
+        from ..errors import ValidationError
+
+        raise ValidationError("'replace' must be true or false.")
+    user = current_user()
+    result = chat_import.import_diagram(project, message_id, replace=replace, user=user)
     if result["created"]:
         record_event(
-            action="topology.chat_diagram_import",
+            action="topology.chat_diagram_replace" if replace else "topology.chat_diagram_import",
             result="success",
-            user_id=current_user().id,
+            user_id=user.id,
             details={
                 "message_id": message_id,
                 "devices": len(result["devices"]),
                 "links": len(result["links"]),
+                "removed_devices": result.get("replaced", 0),
+                "backup_version": result.get("backup_id"),
             },
         )
     return jsonify(result), 201 if result["created"] else 200
