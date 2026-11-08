@@ -82,6 +82,37 @@ document.addEventListener("alpine:init", () => {
     messagePageSize: 50,
     draftMessage: "",
     sending: false,
+    // Devices in the current project, from the project list.
+    get projectDeviceCount() {
+      return (this.currentProject && this.currentProject.device_count) || 0;
+    },
+
+    async replaceProjectDiagram(message) {
+      const messageId = this.savedChatMessageId(message);
+      const project = this.currentProject;
+      if (!messageId || !project || this.chatDiagramBusy || !this.canManageProjectConfiguration) return;
+      const question = `Thay sơ đồ mạng hiện tại (${this.projectDeviceCount} thiết bị) bằng sơ đồ này?\n\n` +
+        "Thiết bị cũ sẽ bị xoá khỏi project, kèm lịch sử thay đổi cấu hình, bản lưu cấu hình nền và tài khoản SSH đã lưu của chúng.\n" +
+        "Sơ đồ cũ được lưu thành một phiên bản (Sơ đồ mạng → menu ⋮ → Phiên bản), nhưng phiên bản chỉ khôi phục được thiết bị và dây nối.\n" +
+        "Lab đã tạo trên PNETLab không bị xoá theo; sau khi thay, hãy tạo lab mới.";
+      if (!window.confirm(question)) return;
+      this.chatDiagramBusy = true;
+      this.chatDiagramError = { ...this.chatDiagramError, [messageId]: "" };
+      try {
+        const result = await this.authFetch(`/api/projects/${project.id}/topology/import/chat-diagram`, {
+          method: "POST",
+          body: JSON.stringify({ message_id: messageId, replace: true }),
+        });
+        const text = `Đã thay sơ đồ mạng: ${result.devices.length} thiết bị, ${result.links.length} đường nối.`;
+        this.chatDiagramResult = { ...this.chatDiagramResult, [messageId]: text };
+        await this.loadProjects();
+      } catch (error) {
+        this.chatDiagramError = { ...this.chatDiagramError, [messageId]: error.message || "Không thay được sơ đồ mạng." };
+      } finally {
+        this.chatDiagramBusy = false;
+      }
+    },
+
     _messagesRefreshGeneration: 0,
     _messagesPollPending: false,
     _messagesPollInFlight: false,
@@ -90,6 +121,11 @@ document.addEventListener("alpine:init", () => {
     topologyChoiceError: "",
     chatConfigBusy: false,
     chatConfigError: "",
+    // "Thay sơ đồ mạng hiện tại bằng sơ đồ này" on a chat diagram; result and
+    // error are kept per saved message id.
+    chatDiagramBusy: false,
+    chatDiagramResult: {},
+    chatDiagramError: {},
     // "Thiết kế mạng" mode: the next messages ask the AI for a whole L2/L3
     // design of the current project instead of a normal answer.
     designMode: (() => {
