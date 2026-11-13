@@ -131,6 +131,25 @@ def test_indexes_name_the_port_back(template, name, index):
     assert interface_index(template, name) == index
 
 
+def test_preview_keeps_the_canvas_shape_when_a_device_sits_above_the_origin(
+    client, admin_headers, base, cabled, fake_pnetlab
+):
+    # The router was dragged above the canvas origin, over the switches.
+    places = {"r1": (400, -60), "sw1": (400, 70), "sw2": (200, 255), "fw": (600, 255)}
+    for key, (x, y) in places.items():
+        cabled[key].pos_x, cabled[key].pos_y = x, y
+    db.session.commit()
+
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+
+    where = {n["hostname"]: (n["left"], n["top"]) for n in plan["nodes"]}
+    assert min(top for _, top in where.values()) >= 140      # room for Cloud0, nothing below 0
+    assert where["R1"][1] < where["SW1"][1] < where["SW2"][1] == where["FW1"][1]
+    # Moved as one piece: the gaps between devices are the canvas gaps.
+    assert where["SW1"][1] - where["R1"][1] == 130
+    assert where["FW1"][0] - where["SW2"][0] == 400 and where["R1"][0] == where["SW1"][0]
+
+
 def test_preview_names_management_ports_and_flags_what_netai_cannot_manage(
     client, admin_headers, base, cabled, project, fake_pnetlab
 ):
