@@ -122,10 +122,31 @@ def interface_name(template: str, index: int) -> str:
     return f"GigabitEthernet0/{index}"
 
 
+# The lab's top-left corner keeps room for Cloud0 (placed at 60, 40).
+_LAB_MARGIN_LEFT = 120
+_LAB_MARGIN_TOP = 140
+
+
 def _position(device, order: int) -> tuple[int, int]:
     if device.pos_x is not None and device.pos_y is not None:
-        return max(int(device.pos_x), 0), max(int(device.pos_y), 0)
+        return int(device.pos_x), int(device.pos_y)
     return 120 + (order % 6) * 160, 120 + (order // 6) * 140
+
+
+def _positions(devices) -> dict[int, tuple[int, int]]:
+    """Each device's place in the lab, the canvas layout moved as one piece.
+
+    The canvas lets a device sit left of or above its origin (negative
+    coordinates). Clamping each one to 0 broke the drawing: a router dragged
+    above the switch landed at the edge, and PNETLab put it below everything.
+    Shifting every device by the same amount keeps the shape.
+    """
+    raw = {device.id: _position(device, order) for order, device in enumerate(devices)}
+    if not raw:
+        return raw
+    shift_x = max(0, _LAB_MARGIN_LEFT - min(x for x, _ in raw.values()))
+    shift_y = max(0, _LAB_MARGIN_TOP - min(y for _, y in raw.values()))
+    return {key: (x + shift_x, y + shift_y) for key, (x, y) in raw.items()}
 
 
 # -- the plan ------------------------------------------------------------------------
@@ -142,9 +163,10 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
     )
     warnings: list[str] = []
     nodes, networks, by_device = [], [], {}
-    for order, device in enumerate(devices):
+    places = _positions(devices)
+    for device in devices:
         mapping = _template_for(device)
-        left, top = _position(device, order)
+        left, top = places[device.id]
         if mapping is None:
             warnings.append(f"{device.hostname}: no PNETLab equivalent for a {device.kind}; left out.")
             continue
