@@ -195,7 +195,10 @@ def deployment_allowed(change, user_id):
     if role(user) != "ADMIN" and not project_operator and change.group_id is None and not ai_management:
         raise ForbiddenError("A non-Admin deployment requires an explicit group scope.")
     if (device.environment != "virtual" or not device.isolated) and not change.baseline_hash:
-        raise InvalidStateError("Capture a device baseline before previewing a physical or shared-lab change.")
+        raise InvalidStateError(
+            f"Chưa có cấu hình nền của {device.hostname}: lúc tạo thay đổi NetAI không SSH được vào "
+            "thiết bị để lưu. Kiểm tra thiết bị đang chạy, hủy thay đổi này rồi gửi lại yêu cầu."
+        )
     if not ai_management and not project_operator:
         require(user, "config.deploy", change.group_id, device)
     if change.source == "restore" and not project_operator:

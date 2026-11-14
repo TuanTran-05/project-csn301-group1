@@ -112,6 +112,12 @@ def create_batch_preview(
             "A batch can only target devices of a single project; pass a project."
         )
 
+    # Before anything is added to the session: saving a baseline commits.
+    from ..backups.service import ensure_baseline
+
+    for device, _ in resolved.values():
+        ensure_baseline(device)
+
     batch = ChangeBatch(
         project_id=project_ids.pop(),
         requested_by_id=user_id,
