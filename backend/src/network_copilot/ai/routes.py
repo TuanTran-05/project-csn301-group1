@@ -21,7 +21,7 @@ from ..projects.scope import current_project
 from ..projects import service as project_service
 from ..projects.model import Project
 from ..audit.service import record_event
-from . import design_assistant, intent
+from . import design_assistant, port_choice, intent
 from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
 from .service import SCHEMA_MISMATCH, AIService
 
@@ -273,6 +273,10 @@ def chat():
         data.message, user_id, project.id, data.group_id
     )) is not None:
         result = typed
+    elif not project_read_only and user.role != "VIEWER" and (
+        choice := port_choice.ask(data.message, project)
+    ) is not None:
+        result = choice
     elif not project_read_only and user.role != "VIEWER" and _wants_design(
         data.message, data.session_id, project.id
     ):

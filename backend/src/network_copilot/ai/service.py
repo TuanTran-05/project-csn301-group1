@@ -754,13 +754,26 @@ class AIService:
                 f"{explanation} (Bỏ lệnh kiểm tra không nằm trong danh sách "
                 f"chỉ-đọc: {', '.join(dict.fromkeys(dropped))}.)"
             )
-        batch = batch_service.create_batch_preview(
-            user_id=user_id,
-            operations=operations,
-            description=explanation[:255] if explanation else None,
-            source="ai",
-            project_id=project_id,
-        )
+        from ..changes.management_guard import ManagementInterfaceError
+
+        try:
+            batch = batch_service.create_batch_preview(
+                user_id=user_id,
+                operations=operations,
+                description=explanation[:255] if explanation else None,
+                source="ai",
+                project_id=project_id,
+            )
+        except ManagementInterfaceError as exc:
+            # Say it in the conversation, like any other answer: the user only
+            # has to name the port and ask again.
+            db.session.rollback()
+            return {
+                "intent": "chat",
+                "explanation": exc.message,
+                "requires_approval": False,
+                "diagram": None,
+            }
         record_event(
             action="ai.action",
             result="success",
