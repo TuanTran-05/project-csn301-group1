@@ -30,8 +30,9 @@ def lab3(app):
     return {"r1": r1, "s1": s1, "pc1": pcs[0], "pc2": pcs[1]}
 
 
-def _chat(client, headers, message):
-    return client.post("/api/ai/chat", headers=headers, json={"message": message})
+def _chat(client, headers, message, language=None):
+    body = {"message": message, **({"language": language} if language else {})}
+    return client.post("/api/ai/chat", headers=headers, json=body)
 
 
 # -- asking for the port --------------------------------------------------------
@@ -58,6 +59,7 @@ def test_an_address_request_without_a_port_asks_with_the_cabled_ports(client, ad
 @pytest.mark.parametrize("message", [
     "Đặt IP cho PC1 trên cổng Gi0/0: 172.20.5.163/28, gateway 172.20.5.161",
     "Đặt IP cho PC1 172.20.5.163/28 — dùng cổng PC1 Gi0/0",
+    "Set IP for PC1 172.20.5.163/28 — use port PC1 Gi0/0",
     "Đặt IP quản lý cho EIU-S1 là 172.20.5.162/28 trên VLAN 10",
     "Tạo subinterface cho EIU-R1 với IP 172.20.5.161/28",
     "show ip interface brief trên PC1",
@@ -153,3 +155,37 @@ def test_a_model_plan_touching_vlan1_becomes_a_chat_answer(client, admin_headers
     body = response.get_json()
     assert body["intent"] == "chat" and "IP quản lý" in body["explanation"]
     assert db.session.query(ChangeBatch).count() == 0
+
+
+# -- the VI / EN switch -------------------------------------------------------------
+
+def test_the_question_follows_the_english_switch(client, admin_headers, app, lab3):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses={"intent": "chat", "explanation": "x"})
+
+    body = _chat(client, admin_headers, "Set IP for PC1 172.20.5.163/28", language="en").get_json()
+
+    assert body["explanation"].startswith("Which port")
+    assert [d["hostname"] for d in body["port_choice"]["devices"]] == ["PC1"]
+
+
+def test_the_refusal_follows_the_english_switch(client, admin_headers, app, lab3):
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses={
+        "intent": "configure",
+        "operations": [{
+            "device_hostnames": ["PC1"], "execution_mode": "config",
+            "commands": ["interface Vlan1", "ip address 172.20.5.163 255.255.255.240"],
+            "verification_commands": [],
+        }],
+        "explanation": "Set the address.",
+    })
+
+    body = _chat(client, admin_headers, "Set IP for PC1 on Vlan1 172.20.5.163/28", language="en").get_json()
+
+    assert body["intent"] == "chat" and "management address" in body["explanation"]
+    assert db.session.query(ChangeBatch).count() == 0
+
+
+def test_an_unknown_language_is_refused(client, admin_headers, app, lab3):
+    response = _chat(client, admin_headers, PC_REQUEST, language="fr")
+
+    assert response.status_code in (400, 422)

@@ -110,11 +110,28 @@ def check(device, commands: list[str]) -> None:
             _refuse(device, interface, command)
 
 
+def _language() -> str:
+    """The page's VI / EN choice, when the change comes from the chat."""
+    from flask import g, has_app_context
+
+    return (g.get("ui_language") if has_app_context() else None) or "vi"
+
+
 def _refuse(device, interface: str, command: str) -> None:
+    if _language() == "en":
+        text = (
+            f"No change created for {device.hostname}: the command \"{command}\" touches {interface}, "
+            f"the port holding the management address NetAI uses to reach the device. NetAI would "
+            f"lose its connection and the device would have to be fixed on the console. Name the "
+            f"port to configure, for example \"on port Gi0/0 to the switch\"."
+        )
+    else:
+        text = (
+            f"Không tạo thay đổi cho {device.hostname}: lệnh \"{command}\" đụng vào {interface}, "
+            f"cổng đang giữ IP quản lý mà NetAI dùng để kết nối tới thiết bị. Làm vậy NetAI sẽ mất "
+            f"kết nối và phải sửa tay trên console. Hãy ghi rõ cổng cần cấu hình, ví dụ "
+            f"\"trên cổng Gi0/0 nối với switch\"."
+        )
     raise ManagementInterfaceError(
-        f"Không tạo thay đổi cho {device.hostname}: lệnh \"{command}\" đụng vào {interface}, "
-        f"cổng đang giữ IP quản lý mà NetAI dùng để kết nối tới thiết bị. Làm vậy NetAI sẽ mất "
-        f"kết nối và phải sửa tay trên console. Hãy ghi rõ cổng cần cấu hình, ví dụ "
-        f"\"trên cổng Gi0/0 nối với switch\".",
-        {"device": device.hostname, "interface": interface, "command": command},
+        text, {"device": device.hostname, "interface": interface, "command": command},
     )

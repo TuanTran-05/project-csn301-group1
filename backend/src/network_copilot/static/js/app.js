@@ -203,7 +203,8 @@ document.addEventListener("alpine:init", () => {
     },
 
     // Send the original request again with the chosen ports spelled out, so it
-    // is clear enough to go to the model ("… — dùng cổng PC1 Gi0/0, PC2 Gi0/0").
+    // is clear enough to go to the model ("… — dùng cổng PC1 Gi0/0, PC2 Gi0/0",
+    // "… — use port …" when the page is in English).
     submitPortChoice(message) {
       const choice = message.payload && message.payload.port_choice;
       if (!choice || this.sending || this.portChoiceSent(message)) return;
@@ -212,7 +213,8 @@ document.addEventListener("alpine:init", () => {
         .map((device) => `${device.hostname} ${short(this.portChoiceValue(message, device))}`)
         .join(", ");
       this.portChoiceDone = { ...this.portChoiceDone, [this.portChoiceKey(message)]: true };
-      return this.useSuggestion(`${choice.message.trim()} — dùng cổng ${ports}`);
+      const english = window.netaiI18n && window.netaiI18n.lang === "en";
+      return this.useSuggestion(`${choice.message.trim()} — ${english ? "use port" : "dùng cổng"} ${ports}`);
     },
 
     useSuggestion(text) {
@@ -1747,6 +1749,7 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify({
             message: text,
             session_id: this.currentSessionId,
+            language: (window.netaiI18n && window.netaiI18n.lang) || "vi",
             ...(this.designMode && this.canManageProjectConfiguration ? { mode: "design" } : {}),
           }),
         });

@@ -33,7 +33,7 @@ _SET_ADDRESS = re.compile(
 _SAYS_WHERE = re.compile(
     r"\b(?:gigabitethernet|fastethernet|tengigabitethernet|ethernet|gig|gi|fa|te|eth|e|g)"
     r"\s?\d+(?:/\d+)+(?:\.\d+)?\b"
-    r"|\b(?:interface|cổng|cong|port|svi|trên|tren)\s+vlan\s?\d+\b"
+    r"|\b(?:interface|cổng|cong|port|svi|trên|tren|on)\s+vlan\s?\d+\b"
     r"|\binterface\s+\S+"
     r"|\bsub-?interface|\bloopback",
     re.I,
@@ -56,7 +56,15 @@ def _named(message: str, devices: list[Device]) -> list[Device]:
     return found
 
 
-def ask(message: str, project) -> dict | None:
+_QUESTION = {
+    "vi": ("Bạn muốn đặt IP trên cổng nào? Mình đã chọn sẵn cổng đang nối dây trên sơ đồ cho "
+           "từng thiết bị. Kiểm tra lại rồi bấm Tiếp tục."),
+    "en": ("Which port should the address go on? The cabled port on the diagram is already "
+           "picked for each device. Check it, then click Continue."),
+}
+
+
+def ask(message: str, project, language: str = "vi") -> dict | None:
     """The question to ask, or None when the request is clear enough as it is."""
     if not _SET_ADDRESS.search(message) or not _IP.search(message) or _SAYS_WHERE.search(message):
         return None
@@ -99,10 +107,7 @@ def ask(message: str, project) -> dict | None:
         return None
     return {
         "intent": "chat",
-        "explanation": (
-            "Bạn muốn đặt IP trên cổng nào? Mình đã chọn sẵn cổng đang nối dây trên sơ đồ cho "
-            "từng thiết bị. Kiểm tra lại rồi bấm Tiếp tục."
-        ),
+        "explanation": _QUESTION.get(language, _QUESTION["vi"]),
         "requires_approval": False,
         "diagram": None,
         "port_choice": {"message": message, "devices": choices},

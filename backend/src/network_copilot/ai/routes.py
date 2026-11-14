@@ -204,6 +204,7 @@ def chat():
         data.session_id, project.id, user, write=True
     ).id
     g.chat_session_id = data.session_id
+    g.ui_language = data.language or "vi"
 
     # Only what creates something is refused here. Merely mentioning the topology
     # must not block a diagnostic; a configure intent is refused by AIService.
@@ -274,7 +275,7 @@ def chat():
     )) is not None:
         result = typed
     elif not project_read_only and user.role != "VIEWER" and (
-        choice := port_choice.ask(data.message, project)
+        choice := port_choice.ask(data.message, project, g.ui_language)
     ) is not None:
         result = choice
     elif not project_read_only and user.role != "VIEWER" and _wants_design(
