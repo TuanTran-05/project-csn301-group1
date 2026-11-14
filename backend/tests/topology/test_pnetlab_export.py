@@ -3,6 +3,8 @@ the session API calls captured from the CSN301 server's web UI."""
 
 import pytest
 
+from conftest import _create_device
+
 from network_copilot.extensions import db
 from network_copilot.integrations.pnetlab import PNETLabClient
 from network_copilot.integrations.pnetlab_writer import PNETLabWriter
@@ -616,3 +618,37 @@ def test_the_ssh_total_counts_a_device_that_could_not_start(client, admin_header
     job = client.post(f"{base}/export/pnetlab", headers=admin_headers,
                       json=body(start_and_bootstrap=True)).get_json()["job"]
     assert (job["summary"]["ssh_ok"], job["summary"]["ssh_total"]) == (1, 3)  # not "1/1"
+
+
+def test_a_switch_port_past_gi0_3_is_renamed_to_the_iosv_l2_name(client, admin_headers, base, cabled, project,
+                                                                  fake_pnetlab):
+    # IOSv-L2 has Gi0/0-3, then Gi1/0-3: a cable drawn on "Gi0/5" lands on Gi1/1.
+    link = TopologyLink(project_id=project.id, device_a_id=cabled["sw1"].id, interface_a="GigabitEthernet0/5",
+                        device_b_id=cabled["r1"].id, interface_b="GigabitEthernet0/3", link_type="physical")
+    db.session.add(link)
+    db.session.commit()
+
+    plan = client.post(f"{base}/export/pnetlab/preview", headers=admin_headers, json=body()).get_json()
+    assert any("SW1 GigabitEthernet0/5 → Gi1/1" in warning for warning in plan["warnings"])
+
+    response = client.post(f"{base}/export/pnetlab", headers=admin_headers, json=body())
+    assert response.status_code == 202, response.get_json()
+    db.session.refresh(link)
+    assert link.interface_a == "GigabitEthernet1/1"     # what the switch really has
+    assert link.interface_b == "GigabitEthernet0/3"     # the vIOS router keeps its name
+    assert fake_pnetlab.wired("SW1")["Gi1/1"]
+
+
+def test_a_new_cable_on_a_pnetlab_switch_gets_the_next_iosv_l2_port(app, project):
+    from network_copilot.topology.templates import next_free_interface
+
+    switch = _create_device("S1", "172.16.3.30", "access", project=project)
+    switch.environment = "pnetlab"
+    peers = [_create_device(f"P{n}", f"172.16.3.{40 + n}", "access", project=project) for n in range(4)]
+    for n, peer in enumerate(peers):
+        db.session.add(TopologyLink(project_id=project.id, device_a_id=switch.id,
+                                    interface_a=f"GigabitEthernet0/{n}", device_b_id=peer.id,
+                                    interface_b="GigabitEthernet0/0", link_type="physical"))
+    db.session.commit()
+
+    assert next_free_interface(project.id, switch) == "GigabitEthernet1/0"

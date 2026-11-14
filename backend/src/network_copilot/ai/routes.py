@@ -117,8 +117,15 @@ def _wants_design(message: str, session_id: int, project_id: int) -> bool:
     The model decides (ai/intent.py) when it is on and answers; otherwise the
     keyword rules do: a design request, or a follow-up of the design just suggested.
     """
+    after_design = _after_design(session_id)
+    if after_design and _about_real_network(project_id, message) and not requests_network_design(message):
+        # Right after a suggested diagram, the model router tends to read
+        # "đặt IP cho PC1 …" as a change to that diagram. A message that names
+        # a device of the project (or runs a show/ping) is about the real
+        # network: send it there, as the keyword rules below already do.
+        return False
     if intent.enabled() and not _CLI_LINE.match(message):
-        route = intent.classify(message, session_id, project_id, _after_design(session_id))
+        route = intent.classify(message, session_id, project_id, after_design)
         if route is not None:
             g.chat_route = route.intent
             logger.info("Chat message routed as %s %s", route.intent, route.devices or "")
@@ -147,16 +154,20 @@ def _continues_design(session_id: int, project_id: int, message: str) -> bool:
     that names a device of the project, or is a show/ping command, is about
     the real network and keeps going there.
     """
+    if not _after_design(session_id):
+        return False
+    return not _about_real_network(project_id, message)
+
+
+def _about_real_network(project_id: int, message: str) -> bool:
+    """Whether the message runs a show/ping or names a device of the project."""
     from ..chat.onboarding import _fold
     from ..devices.model import Device
 
-    if not _after_design(session_id):
-        return False
-
     text = _fold(message)
     if _DEVICE_COMMAND.search(text):
-        return False
-    return not any(
+        return True
+    return any(
         re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text)
         for (hostname,) in db.session.query(Device.hostname).filter(Device.project_id == project_id)
         if hostname

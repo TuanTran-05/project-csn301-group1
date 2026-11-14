@@ -52,6 +52,23 @@ SCHEMA_MISMATCH = "The AI returned an action that does not match the required sc
 _RUNNING_CONFIG_REQUEST = re.compile(
     r"\s*show\s+run(?:ning-config)?(?:\s+(?P<rest>[^|]*))?\s*", re.IGNORECASE
 )
+# The same request in plain words: "xem cấu hình đang chạy của PC1",
+# "cho mình xem running config trên R1", "show the running config of S1".
+_RUNNING_CONFIG_PHRASE = re.compile(
+    r"\s*(?:(?:cho|giúp|giup)\s+(?:tôi|toi|mình|minh|em)\s+)?"
+    r"(?:xem|hiện|hien|hiển\s*thị|hien\s*thi|in\s+ra|show|display|view)\s+(?:lại\s+|lai\s+|the\s+)?"
+    r"(?:cấu\s*hình|cau\s*hinh|running[-\s]?config(?:uration)?|config(?:uration)?)"
+    r"(?:\s+(?:đang\s+chạy|dang\s+chay|hiện\s+tại|hien\s+tai|hiện\s+hành|hien\s+hanh|running))?"
+    r"(?:\s+(?P<rest>[^|]*))?\s*",
+    re.IGNORECASE,
+)
+# Words that may sit around the hostname in such a phrase. Anything else
+# ("cấu hình VLAN", "interface Gi0/0") is a narrower question for the model.
+_RUNNING_CONFIG_FILLER = {
+    "của", "cua", "trên", "tren", "thiết", "thiet", "bị", "bi", "máy", "may", "router",
+    "switch", "giúp", "giup", "giùm", "gium", "với", "voi", "nhé", "nhe", "nha", "đi", "di",
+    "ạ", "a", "of", "on", "for", "the", "device", "please", "mình", "minh", "tôi", "toi",
+}
 
 SYSTEM_PROMPT ="""You are a network operations assistant for a Cisco lab.
 
@@ -624,14 +641,21 @@ class AIService:
         execute_readonly has already masked its credential lines.
         """
         match = _RUNNING_CONFIG_REQUEST.fullmatch(message)
+        phrased = match is None
+        if phrased:
+            match = _RUNNING_CONFIG_PHRASE.fullmatch(message)
         if match is None:
             return None
 
         devices = device_service.list_devices(project_id=project_id, deployable=True)
         words = {
             word.strip(".,:;?!").lower() for word in (match.group("rest") or "").split()
-        }
+        } - {""}
         named = [device for device in devices if device.hostname.lower() in words]
+        if phrased:
+            hostnames = {device.hostname.lower() for device in named}
+            if words - hostnames - _RUNNING_CONFIG_FILLER:
+                return None
         if not words and len(devices) == 1:
             named = devices
         if len(named) != 1:

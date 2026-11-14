@@ -170,8 +170,9 @@ def _register_request_hooks(app: Flask) -> None:
             from .governance.access import role
             user = request_user()
             if user and role(user) != "ADMIN":
-                from .governance.redaction import redact_output
-                response.set_data(app.json.dumps(redact_output(response.get_json())))
+                from .governance.redaction import may_read_commands, redact_output
+                response.set_data(app.json.dumps(
+                    redact_output(response.get_json(), commands=may_read_commands(user))))
         for header, value in SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
         request_id = getattr(g, "request_id", None)
