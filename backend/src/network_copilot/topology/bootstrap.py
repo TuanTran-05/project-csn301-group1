@@ -461,6 +461,11 @@ def _verify(device, result: dict, panos: bool = False, account: str | None = Non
         reachable, detail = device_service.check_reachability(device)
         if reachable:
             result.update(status="ok", message="Configured on the console; SSH answers.")
+            # Save the first baseline now, so the first change from the chat
+            # can be approved without a trip to the device panel.
+            from ..backups.service import ensure_baseline
+
+            result["baseline"] = ensure_baseline(device)
             return result
     result.update(status="configured", message=f"Configured on the console, but SSH failed: {detail}")
     return result

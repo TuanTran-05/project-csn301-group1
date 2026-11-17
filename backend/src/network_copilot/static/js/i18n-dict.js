@@ -754,6 +754,7 @@ window.NETAI_I18N = {
   ],
 
   patterns: [
+    ["Chưa có cấu hình nền của {s}: lúc tạo thay đổi NetAI không SSH được vào thiết bị để lưu. Kiểm tra thiết bị đang chạy, hủy thay đổi này rồi gửi lại yêu cầu.", "{s} has no saved baseline: NetAI could not reach it over SSH to save one when the change was created. Check that the device is running, cancel this change and send the request again."],
     ["Thay sơ đồ mạng hiện tại ({n} thiết bị) bằng sơ đồ này?", "Replace the current network diagram ({n} devices) with this one?"],
     ["Đã thay sơ đồ mạng: {n} thiết bị, {n} đường nối.", "Network diagram replaced: {n} devices, {n} links."],
     ["{n} thiết bị", "{n} devices"],

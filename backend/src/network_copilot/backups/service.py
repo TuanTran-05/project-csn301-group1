@@ -14,6 +14,41 @@ BACKUP_COMMAND = "show running-config"
 PANOS_BACKUP_COMMAND = "show config running"
 
 
+def needs_baseline(device: Device) -> bool:
+    """Whether a change to the device is approved only against a saved baseline.
+
+    The same rule as governance.workflow.deployment_allowed: every device but
+    an isolated virtual one.
+    """
+    return device.environment != "virtual" or not device.isolated
+
+
+def ensure_baseline(device: Device) -> bool:
+    """Save the device's first baseline if it has none; True when one exists.
+
+    Without it a change to a PNETLab or physical device stops at approval
+    with "capture a baseline", which a new user cannot guess. So NetAI saves
+    one itself, when the device first answers on SSH (after the console
+    bootstrap) and again, if still missing, before it previews a change.
+    A device that cannot be reached is left as it is: the change is still
+    refused at approval, exactly as before.
+    """
+    if not needs_baseline(device) or not device.managed:
+        return True
+    if db.session.query(ConfigBackup.id).filter_by(device_id=device.id).first() is not None:
+        return True
+    from ..governance.model import DeviceLease
+
+    if db.session.get(DeviceLease, device.id) is not None:
+        return False
+    try:
+        capture_backup(device, reason="approval_baseline")
+    except Exception as exc:  # unreachable, no login yet: leave it to the manual button
+        logger.warning("Could not save a baseline for %s: %s", device.hostname, exc)
+        return False
+    return True
+
+
 def backup_command_for(device: Device) -> str:
     return PANOS_BACKUP_COMMAND if device.device_type == "paloalto_panos" else BACKUP_COMMAND
 
