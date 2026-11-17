@@ -121,6 +121,10 @@ document.addEventListener("alpine:init", () => {
     topologyChoiceError: "",
     chatConfigBusy: false,
     chatConfigError: "",
+    // "Bạn muốn đặt IP trên cổng nào?": picks per answered message, and which
+    // of those questions were already answered (keyed by portChoiceKey).
+    portChoicePicks: {},
+    portChoiceDone: {},
     // "Thay sơ đồ mạng hiện tại bằng sơ đồ này" on a chat diagram; result and
     // error are kept per saved message id.
     chatDiagramBusy: false,
@@ -175,6 +179,42 @@ document.addEventListener("alpine:init", () => {
         prompts.unshift("Tạo project mới");
       }
       return prompts;
+    },
+
+    portChoiceKey(message) {
+      return String(this.savedChatMessageId(message) || message.id);
+    },
+
+    portChoiceValue(message, device) {
+      const picks = this.portChoicePicks[this.portChoiceKey(message)] || {};
+      return picks[device.hostname] || device.suggested;
+    },
+
+    setPortChoice(message, hostname, iface) {
+      const key = this.portChoiceKey(message);
+      this.portChoicePicks = {
+        ...this.portChoicePicks,
+        [key]: { ...(this.portChoicePicks[key] || {}), [hostname]: iface },
+      };
+    },
+
+    portChoiceSent(message) {
+      return Boolean(this.portChoiceDone[this.portChoiceKey(message)]);
+    },
+
+    // Send the original request again with the chosen ports spelled out, so it
+    // is clear enough to go to the model ("… — dùng cổng PC1 Gi0/0, PC2 Gi0/0",
+    // "… — use port …" when the page is in English).
+    submitPortChoice(message) {
+      const choice = message.payload && message.payload.port_choice;
+      if (!choice || this.sending || this.portChoiceSent(message)) return;
+      const short = (name) => String(name).replace(/^GigabitEthernet/i, "Gi").replace(/^FastEthernet/i, "Fa");
+      const ports = choice.devices
+        .map((device) => `${device.hostname} ${short(this.portChoiceValue(message, device))}`)
+        .join(", ");
+      this.portChoiceDone = { ...this.portChoiceDone, [this.portChoiceKey(message)]: true };
+      const english = window.netaiI18n && window.netaiI18n.lang === "en";
+      return this.useSuggestion(`${choice.message.trim()} — ${english ? "use port" : "dùng cổng"} ${ports}`);
     },
 
     useSuggestion(text) {
@@ -1709,6 +1749,7 @@ document.addEventListener("alpine:init", () => {
           body: JSON.stringify({
             message: text,
             session_id: this.currentSessionId,
+            language: (window.netaiI18n && window.netaiI18n.lang) || "vi",
             ...(this.designMode && this.canManageProjectConfiguration ? { mode: "design" } : {}),
           }),
         });

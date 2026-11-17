@@ -695,6 +695,8 @@ window.NETAI_I18N = {
     ["lỗi SSH", "SSH error"],
     ["Không đẩy được sơ đồ sang PNETLab.", "Could not push the diagram to PNETLab."],
     ["Sơ đồ này đã được thêm vào canvas project trước đó.", "This diagram was already added to the project canvas."],
+    ["Tiếp tục", "Continue"],
+    ["Đã gửi lại yêu cầu kèm cổng đã chọn.", "Sent the request again with the chosen ports."],
     ["Thay sơ đồ mạng hiện tại bằng sơ đồ này", "Replace the current network diagram with this one"],
     ["Đang thay sơ đồ…", "Replacing the diagram…"],
     ["Xoá thiết bị và dây hiện có trong sơ đồ mạng rồi thay bằng sơ đồ này. Sơ đồ cũ được lưu thành một phiên bản để khôi phục.", "Deletes the devices and links in the network diagram and replaces them with this one. The old diagram is saved as a version you can restore."],

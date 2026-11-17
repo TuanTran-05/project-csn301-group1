@@ -243,6 +243,31 @@
                 </section>
               </template>
 
+              <template x-if="message.role === 'assistant' && message.payload && message.payload.port_choice">
+                <div class="port-choice-card">
+                  <template x-for="device in message.payload.port_choice.devices" :key="device.hostname">
+                    <fieldset class="port-choice-row" :disabled="portChoiceSent(message)">
+                      <legend x-text="device.hostname"></legend>
+                      <template x-for="option in device.options" :key="option.interface">
+                        <label class="port-choice-option">
+                          <input type="radio" :name="'port-' + portChoiceKey(message) + '-' + device.hostname"
+                            :value="option.interface"
+                            :checked="portChoiceValue(message, device) === option.interface"
+                            @change="setPortChoice(message, device.hostname, option.interface)" />
+                          <strong x-text="option.short"></strong>
+                          <span class="hint" x-text="'→ ' + option.peer + ' ' + option.peer_interface"></span>
+                        </label>
+                      </template>
+                    </fieldset>
+                  </template>
+                  <div class="port-choice-actions">
+                    <button type="button" class="primary-btn" :disabled="sending || portChoiceSent(message)"
+                      @click="submitPortChoice(message)">Tiếp tục</button>
+                    <span class="hint" x-show="portChoiceSent(message)">Đã gửi lại yêu cầu kèm cổng đã chọn.</span>
+                  </div>
+                </div>
+              </template>
+
               <template x-if="message.payload && message.payload.flow === 'topology_options'">
                 <div class="topology-choice-list">
                   <template x-for="option in message.payload.options" :key="option.key">

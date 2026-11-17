@@ -2251,6 +2251,11 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
 .project-ai-empty p { margin: 8px 0 12px; }
 .ai-diagram-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
 .ai-diagram-actions .ok-text a { margin-left: 6px; }
+.port-choice-card { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.port-choice-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.port-choice-row legend { font-weight: 600; padding: 0 4px; }
+.port-choice-option { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.port-choice-actions { display: flex; align-items: center; gap: 12px; }
 .ai-config-card { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
 .ai-config-card h4 { margin: 0 0 8px; }
 .ai-config-card summary { cursor: pointer; }

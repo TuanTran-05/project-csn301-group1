@@ -21,7 +21,7 @@ from ..projects.scope import current_project
 from ..projects import service as project_service
 from ..projects.model import Project
 from ..audit.service import record_event
-from . import design_assistant, intent
+from . import design_assistant, port_choice, intent
 from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
 from .service import SCHEMA_MISMATCH, AIService
 
@@ -204,6 +204,7 @@ def chat():
         data.session_id, project.id, user, write=True
     ).id
     g.chat_session_id = data.session_id
+    g.ui_language = data.language or "vi"
 
     # Only what creates something is refused here. Merely mentioning the topology
     # must not block a diagnostic; a configure intent is refused by AIService.
@@ -273,6 +274,10 @@ def chat():
         data.message, user_id, project.id, data.group_id
     )) is not None:
         result = typed
+    elif not project_read_only and user.role != "VIEWER" and (
+        choice := port_choice.ask(data.message, project, g.ui_language)
+    ) is not None:
+        result = choice
     elif not project_read_only and user.role != "VIEWER" and _wants_design(
         data.message, data.session_id, project.id
     ):

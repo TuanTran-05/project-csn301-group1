@@ -429,6 +429,10 @@ def prepare_change(
     body, requires_confirmation = validate_commands(commands, device)
     if not panos:
         validate_execution_mode(body, execution_mode)
+    if execution_mode == "config" and not panos:
+        from .management_guard import check as check_management_interface
+
+        check_management_interface(device, body)
     if device.device_type == "cisco_ios" and device.environment == "pnetlab" and execution_mode == "config":
         body = _with_trunk_encapsulation(body)
         # PNETLab nodes got their SSH key from the console bootstrap, which

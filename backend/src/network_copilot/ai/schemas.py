@@ -306,3 +306,6 @@ class ChatRequest(BaseModel):
     group_id: int | None = None
     # "design": answer with a whole L2/L3 design for the project to apply.
     mode: Literal["design"] | None = None
+    # The VI / EN switch of the page: texts NetAI writes itself (not the
+    # model) follow it.
+    language: Literal["vi", "en"] | None = None
