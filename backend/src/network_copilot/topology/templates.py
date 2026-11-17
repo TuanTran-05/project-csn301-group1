@@ -162,7 +162,25 @@ def next_free_interface(project_id: int, device: Device) -> str:
             used.add(canon(link.interface_b))
     for port in db.session.query(DesignAccessPort).filter_by(device_id=device.id):
         used.add(canon(port.interface))
+    if _becomes_iosv_l2(project_id, device):
+        # PNETLab runs it as IOSv-L2: four ports per slot (Gi0/0-3, Gi1/0-3, ...).
+        index = 0
+        while f"GigabitEthernet{index // 4}/{index % 4}".lower() in used:
+            index += 1
+        return f"GigabitEthernet{index // 4}/{index % 4}"
     number = 0
     while f"{prefix}{number}".lower() in used:
         number += 1
     return f"{prefix}{number}"
+
+
+def _becomes_iosv_l2(project_id: int, device: Device) -> bool:
+    """Whether the switch is (or will be) an IOSv-L2 node of a PNETLab lab."""
+    if device.kind not in ("switch", "l3_switch") or device.device_type != "cisco_ios":
+        return False
+    if device.environment == "pnetlab":
+        return True
+    from ..projects.model import Project
+
+    project = db.session.get(Project, project_id)
+    return project is not None and project.environment == "pnetlab"

@@ -847,5 +847,6 @@ window.NETAI_I18N = {
     ["Thiết kế {s}: {s} → {s}", "Design {s}: {s} → {s}"],
     ["Ghi chú {s} → {s}", "Note {s} → {s}"],
     ["{s}: đổi {s}", "{s}: changed {s}"],
+    ["Switch IOSv-L2 chỉ có 4 cổng mỗi slot nên sơ đồ sẽ đổi tên cổng cho khớp PNETLab: {s}.", "IOSv-L2 switches have 4 ports per slot, so the diagram renames these ports to match PNETLab: {s}."],
   ],
 };

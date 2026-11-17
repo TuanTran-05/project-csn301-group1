@@ -196,7 +196,7 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
         nodes.append(entry)
         by_device[device.id] = ("node", entry)
 
-    cables = []
+    cables, renames = [], []
     for link in links:
         a, b = by_device.get(link.device_a_id), by_device.get(link.device_b_id)
         label = f"{_hostname(devices, link.device_a_id)} {link.interface_a} - {_hostname(devices, link.device_b_id)} {link.interface_b}"
@@ -217,10 +217,18 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
                 break
             entry["used"].add(index)
             ends.append({"hostname": entry["hostname"], "interface": interface, "index": index})
+            if entry["template"] == "viosl2" and (normalize_label(interface) or interface) != interface_name("viosl2", index):
+                renames.append(f"{entry['hostname']} {interface} → {_short_port(interface_name('viosl2', index))}")
         if None in ends:
             warnings.append(f"{label}: interface name not understood or used twice; left out.")
             continue
-        cables.append({"label": label, "a": ends[0], "b": ends[1]})
+        cables.append({"label": label, "a": ends[0], "b": ends[1], "link_id": link.id})
+
+    if renames:
+        warnings.append(
+            "Switch IOSv-L2 chỉ có 4 cổng mỗi slot nên sơ đồ sẽ đổi tên cổng cho khớp PNETLab: "
+            + ", ".join(renames) + "."
+        )
 
     management = []
     if request.management_cloud:
@@ -256,6 +264,35 @@ def plan(project, request: ExportRequest, available: set[str] | None = None) -> 
         "nodes": nodes, "networks": networks, "cables": cables,
         "management": management, "warnings": warnings,
     }
+
+
+def _short_port(name: str) -> str:
+    return name.replace("GigabitEthernet", "Gi")
+
+
+def _rename_switch_ports(built: dict) -> None:
+    """Give the diagram's links the port names the IOSv-L2 switches really have.
+
+    IOSv-L2 has four ports per slot, so a seventh cable drawn as "Gi0/6" lands
+    on Gi1/2 in PNETLab. Left as it was, the diagram (and every change the AI
+    writes from it) would name a port the switch does not have.
+    """
+    templates = {entry["hostname"]: entry["template"] for entry in built["nodes"]}
+    renamed = False
+    for cable in built["cables"]:
+        link = db.session.get(TopologyLink, cable.get("link_id")) if cable.get("link_id") else None
+        if link is None:
+            continue
+        for end, field in ((cable["a"], "interface_a"), (cable["b"], "interface_b")):
+            if "network" in end or templates.get(end["hostname"]) != "viosl2":
+                continue
+            real = interface_name("viosl2", end["index"])
+            if (normalize_label(end["interface"]) or end["interface"]) != real:
+                setattr(link, field, real)
+                end["interface"] = real
+                renamed = True
+    if renamed:
+        db.session.commit()
 
 
 def _hostname(devices, device_id) -> str:
@@ -556,6 +593,7 @@ def run(project, payload: dict, progress=None) -> dict:
             ) from exc
         raise PNETLabError(f"{message} The half-built lab {path} was deleted.") from exc
 
+    _rename_switch_ports(built)
     if CLOUD_NAME in network_ids:
         _record_cloud_ports(writer, results, node_ids, network_ids[CLOUD_NAME])
     summary = {"lab_path": path, "cables": cabled, "networks": len(network_ids),

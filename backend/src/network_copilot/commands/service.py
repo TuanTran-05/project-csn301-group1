@@ -5,6 +5,7 @@ the policy engine first and records the outcome either way.
 """
 
 import logging
+import re
 
 from ..audit.service import record_event
 from ..devices import service as device_service
@@ -19,6 +20,15 @@ from .policy import CommandDecision, default_policy, policy_for_source
 from ..governance.redaction import redact_output
 
 logger = logging.getLogger(__name__)
+
+
+_PING = re.compile(r"^\s*ping\b", re.I)
+# IOS / IOS-XE / ASA: "Success rate is 0 percent (0/5)"; Linux-like: "100% packet loss".
+_NO_REPLY = re.compile(r"success\s+rate\s+is\s+0\s+percent|\b100(?:\.0+)?%\s+packet\s+loss", re.I)
+
+
+def _ping_got_no_reply(command: str, output: str | None) -> bool:
+    return bool(_PING.match(command or "")) and bool(_NO_REPLY.search(output or ""))
 
 
 def _record(
@@ -130,11 +140,15 @@ def execute_readonly(
         raise type(exc)(friendly_error(exc, device.hostname)) from exc
 
     device_service.set_device_status(device, "online")
+    # SSH worked, but a ping that got no reply at all did not: say so, rather
+    # than labelling "Success rate is 0 percent" a success.
+    unreachable = _ping_got_no_reply(decision.normalized_command, result.output)
     execution = _record(
         device_id=device.id,
         user_id=user_id,
         command=decision.normalized_command,
-        status="success",
+        status="failed" if unreachable else "success",
+        reason="No reply: the destination did not answer." if unreachable else None,
         output=redact_output(result.output),
         duration_ms=result.duration_ms,
         source=source,

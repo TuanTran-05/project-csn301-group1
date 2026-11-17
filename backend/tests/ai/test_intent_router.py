@@ -87,9 +87,10 @@ def test_g1s_conversation_reaches_the_right_pipeline_each_time(client, app, oper
     assert chat.router_context()["last_reply_was_design"] is True
     assert chat.provider.prompts[1]["context"]["previous_diagram"]["title"] == DIAGRAM["title"]
 
-    # A read on a real device, named by its short name: the operations pipeline.
-    reply = chat.say("chạy show running config trên sw1", {"intent": "read", "devices": ["SWITCH-SW1"]}, CHAT)
-    assert OPERATIONS in chat.prompts()[1]
+    # A read on a real device, named by its short name: the operations pipeline,
+    # without asking the router (right after a design it tends to say "design").
+    reply = chat.say("chạy show running config trên sw1", CHAT)
+    assert len(chat.provider.prompts) == 1 and OPERATIONS in chat.prompts()[0]
     assert reply["intent"] == "chat"
 
     # A plain CLI line needs no classification at all.
@@ -153,3 +154,24 @@ def test_the_router_cannot_unlock_design_for_a_project_viewer(client, app, db, o
     chat = Chat(client, app, {**viewer_headers, "X-Project-Id": str(project_id)})
     chat.say("kiểm tra trạng thái sw1", CHAT)
     assert len(chat.provider.prompts) == 1 and OPERATIONS in chat.prompts()[0]
+
+
+def test_a_device_request_right_after_a_diagram_reaches_the_operations_pipeline(client, app, operator):
+    # Lab 3: the diagram was suggested, then "đặt IP cho …" came back as
+    # "AI chưa tạo được sơ đồ hợp lệ" because the router called it design.
+    chat = Chat(client, app, operator)
+    chat.say("vẽ sơ đồ gồm router và switch", {"intent": "design"}, DESIGN)
+
+    reply = chat.say("đặt IP cho SWITCH-SW1 trên cổng Gi0/1 172.20.5.162/28", CHAT)
+
+    assert len(chat.provider.prompts) == 1 and OPERATIONS in chat.prompts()[0]
+    assert reply["intent"] == "chat"
+
+
+def test_a_diagram_change_naming_a_device_still_goes_to_the_design(client, app, operator):
+    chat = Chat(client, app, operator)
+    chat.say("vẽ sơ đồ gồm router và switch", {"intent": "design"}, DESIGN)
+
+    reply = chat.say("vẽ lại sơ đồ mạng, thêm 1 switch nối với ROUTER-R1", {"intent": "design"}, DESIGN)
+
+    assert reply["intent"] == "advice"
