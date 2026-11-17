@@ -1284,8 +1284,14 @@ document.addEventListener("alpine:init", () => {
       }
       this.openPnetExport();
       this.$nextTick(() => {
+        // Scroll only the project's content column. scrollIntoView would also
+        // scroll the page itself, pushing the top bar away and showing the
+        // dark page background under the fixed-height layout.
         const panel = document.querySelector(".pnet-export");
-        if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        const column = panel && panel.closest(".project-main");
+        if (!column) return;
+        const offset = panel.getBoundingClientRect().top - column.getBoundingClientRect().top;
+        column.scrollTo({ top: column.scrollTop + offset - 12, behavior: "smooth" });
       });
     },
 
