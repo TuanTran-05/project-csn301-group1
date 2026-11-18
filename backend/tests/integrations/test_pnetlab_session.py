@@ -135,6 +135,30 @@ def test_session_api_logs_in_opens_the_lab_and_reads_it(server):
     assert len(fake.calls) == calls
 
 
+def test_point_to_point_cables_become_node_to_node_entries():
+    # A cable drawn straight between two nodes has no network: each end names its peer.
+    nodes = {
+        "1": {"id": 1, "ethernets": {"0": {"name": "Gi0/0", "network_id": 0, "remote_id": 2, "remote_if": 1},
+                                     "1": {"name": "Gi0/1", "network_id": 0}}},
+        "2": {"id": 2, "ethernets": {"0": {"name": "e0/0", "network_id": 0},
+                                     "1": {"name": "e0/1", "network_id": 0, "remote_id": 1, "remote_if": 0}}},
+    }
+    entries = pnetlab.session_links(nodes)
+    assert entries == [{"source": "node1", "source_type": "node", "source_label": "Gi0/0",
+                        "destination": "node2", "destination_type": "node", "destination_label": "e0/1"}]
+
+
+def test_import_preview_keeps_point_to_point_cables(client, admin_headers, project, server, monkeypatch):
+    nodes = {k: {**v, "ethernets": dict(v["ethernets"])} for k, v in NODES.items()}
+    nodes["1"]["ethernets"]["16"] = {"name": "e0/1", "network_id": 0, "remote_id": 2, "remote_if": "16"}
+    nodes["2"]["ethernets"]["16"] = {"name": "e0/1", "network_id": 0, "remote_id": 1, "remote_if": "16"}
+    monkeypatch.setitem(globals(), "NODES", nodes)
+    base = f"/api/projects/{project.id}/topology/import/pnetlab"
+    body = client.post(f"{base}/preview", headers=admin_headers, json=SOURCE).get_json()
+    assert {(l["interface_a"], l["interface_b"]) for l in body["links"]} == {
+        ("Ethernet0/0", "Ethernet0/0"), ("Ethernet0/1", "Ethernet0/1")}
+
+
 def test_a_lab_already_open_in_the_session_is_reused(server):
     server["server"] = FakeServer(open_lab=LAB)
     c = pnet_client()

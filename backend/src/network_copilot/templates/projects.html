@@ -293,6 +293,10 @@
                         Dây nối đã tạo: <span x-text="pnet.result ? pnet.result.links.filter((l) => l.status === 'created').length : 0"></span>.
                         Xem ở tab Sơ đồ mạng.
                       </p>
+                      <template x-for="(link, i) in (pnet.result ? pnet.result.links.filter((l) => l.status !== 'created') : [])" :key="'pl' + i">
+                        <p class="hint">Dây <strong x-text="link.a + ' ↔ ' + link.b"></strong>: bỏ qua
+                          <span x-text="link.message ? '— ' + link.message : ''"></span></p>
+                      </template>
                     </div>
                   </div>
 
