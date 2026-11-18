@@ -61,7 +61,7 @@ Preview  →  Approve  →  Apply (backup trước)  →  Verify (kiểm tra sau
  │  └────────┘ └──────────┘ └───────────┘ │ apply    │ │ PNETLab   │   │
  │  ┌────────────┐ ┌──────────┐ ┌───────┐ └──────────┘ └───────────┘   │
  │  │ governance │ │ commands │ │ audit │  ┌────────────┐ ┌─────────┐  │
- │  │ grants,    │ │ policy   │ │ redact│  │ monitoring │ │ backups │  │
+ │  │ risk,      │ │ policy   │ │ redact│  │ monitoring │ │ backups │  │
  │  │ risk, lease│ │ allowlist│ └───────┘  │ APScheduler│ │checkpts │  │
  │  └────────────┘ └──────────┘            └────────────┘ └─────────┘  │
  │  ssh/ (Paramiko, Netmiko PAN-OS): kết nối SSH; integrations/: console telnet│
@@ -584,25 +584,24 @@ curl -s -X POST http://<server>:5000/api/devices/<id>/test-connection \
 <a id="rbac"></a>
 ## 7. Phân quyền người dùng
 
-Hệ thống phân quyền theo **3 lớp chồng nhau**. Quyền thực tế là **giao** của các lớp:
+Project dùng **3 vai trò**: `ADMIN`, `OPERATOR`, `VIEWER`. Quyền thực tế là **giao** của hai lớp:
 
 ```text
-Quyền thực tế = Vai trò tài khoản (global role)
+Quyền thực tế = Vai trò tài khoản (global role: ADMIN / OPERATOR / VIEWER)
               ∩ Mức truy cập trên project (owner / editor / viewer)
-              ∩ (với TEACHER/STUDENT) Grant theo phạm vi group / thiết bị / môi trường / thời hạn
 ```
 
 ### 7.1. Lớp 1: Vai trò tài khoản (`users.role`)
 
 | Role | Ý nghĩa | Ghi chú |
 |---|---|---|
-| `ADMIN` | Quản trị toàn hệ thống | **Tối đa 1** tài khoản (unique index `uq_single_admin`; DB mới có thể chưa có ADMIN nào). Chuyển giao bằng `POST /api/admin/transfer`. Thấy mọi project, quản lý user, policy. |
+| `ADMIN` | Quản trị toàn hệ thống | **Tối đa 1** tài khoản (unique index `uq_single_admin`; DB mới có thể chưa có ADMIN nào). Thấy mọi project, quản lý user, policy. (`POST /api/admin/transfer` chỉ chuyển quyền cho tài khoản TEACHER nên không dùng trong project này.) |
 | `OPERATOR` | Kỹ sư vận hành | Tạo project; cấu hình thiết bị trên project mình **sở hữu** hoặc được chia sẻ quyền **editor**. |
 | `VIEWER` | Người xem | Luôn bị hạ xuống `viewer` trên mọi project; chỉ xem, chat tư vấn, chạy lệnh đọc. |
-| `TEACHER` | Giảng viên (governance) | Quản lý group, tạo Student, duyệt cấu hình theo grant được cấp. |
-| `STUDENT` | Sinh viên (governance) | Tạo/triển khai cấu hình theo grant; **không bao giờ được duyệt**. |
 
-Trang `/users` hiện tạo `ADMIN`/`OPERATOR`/`VIEWER`. `TEACHER`/`STUDENT` dùng qua các API governance (`/api/groups`, `/api/permissions`…), xem [`docs/scoped-backend.md`](scoped-backend.md).
+Tài khoản được tạo tại trang `/users` với một trong ba role trên.
+
+> **Phạm vi:** Mã nguồn còn chứa module governance (role `TEACHER`/`STUDENT`, group, grant, bài tập, lịch đặt thiết bị) từ một hướng mở rộng trước đây. **Project của nhóm không sử dụng module này**: không tạo tài khoản `TEACHER`/`STUDENT` và không dùng các API `/api/groups`, `/api/permissions`, `/api/reservations`. Với `ADMIN` và `OPERATOR` có quyền owner/editor, backend bỏ qua các kiểm tra grant/group.
 
 **MFA:** Database có các cột MFA, nhưng tại commit này MFA **không được thực thi**. Login trả `mfa_setup_required: false`, token của ADMIN chưa bật MFA được cấp kèm cờ `mfa_pending` (`auth/routes.py`), và hàm kiểm tra token chung cho mọi endpoint (`app.py::token_revoked`) chấp nhận token có cờ này. Đã thử thực tế với `/api/auth/me`. Không nên tuyên bố hệ thống có MFA.
 
@@ -637,26 +636,7 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 | Audit log (`/api/audit-logs`) | ✓ (`?scope=all` xem mọi project) | ✗ | ✗ | ✗ |
 | Quản lý user, policy, draft/pending history | ✓ | ✗ | ✗ | ✗ |
 
-> Ma trận trên chỉ gồm các role của hệ project. Route audit cho phép `ADMIN`, `TEACHER`, `STUDENT` (`audit/routes.py`); với Teacher/Student, kết quả **được lọc theo phạm vi** group/quyền (`governance/visibility.py`), không phải toàn bộ audit.
-
-### 7.4. Lớp 3: Grant theo phạm vi (TEACHER/STUDENT)
-
-`governance/access.py` áp dụng nguyên tắc **deny by default**. Một grant gồm `user_id`, `action`, `group_id`, `device_id`, `environment`, `expires_at`, `delegable` và được đánh giá **như một phạm vi hoàn chỉnh**: không cộng quyền group A với thiết bị của group B.
-
-| Nhóm action | Action |
-|---|---|
-| Tài khoản/nhóm | `student.create`, `group.create` (mặc định của Teacher) |
-| Quan sát | `device.read`, `device.observe` |
-| Cấu hình | `config.create`, `config.validate`, `config.simulate`, `config.approve`, `config.deploy`, `config.restore` |
-| AI | `ai.use` |
-| Bài tập / lịch | `assignment.manage`, `device.reserve` |
-| Lab | `lab.template`, `lab.create`, `lab.start`, `lab.stop`, `lab.reset`, `lab.delete` |
-
-- STUDENT **bị cấm** các action `config.approve`, `student.create`, `group.create`, `assignment.manage`, `lab.template`, `lab.delete`.
-- Grant con mất hiệu lực khi grant cha hết hạn hoặc bị thu hồi, khi người cấp bị khóa, hoặc khi người cấp không còn quản lý group.
-- **Smart Approval:** chỉ áp dụng khi đủ tất cả điều kiện: đó là change của chính Student, Student có grant `config.deploy`, thiết bị thuộc group, group đó bật `is_auto_approve`, rủi ro **Low** và change không cần xác nhận gõ tay. Thiếu một điều kiện thì cần Teacher/ADMIN duyệt; kể cả khi đã được duyệt, quyền triển khai (`config.deploy`), hạn duyệt, baseline, maintenance và reservation vẫn được kiểm tra lại lúc apply.
-
-### 7.5. Phiên chat và quyền riêng tư
+### 7.4. Phiên chat và quyền riêng tư
 
 - Trong một project thường, **mọi thành viên dùng chung các phiên chat** (đọc và tiếp tục được phiên của người khác).
 - **Riêng project lab mặc định**: phiên chat là riêng của từng người. ADMIN được đọc để kiểm tra nhưng không ghi vào phiên của người khác.
@@ -691,7 +671,7 @@ Request ──► before_request: gán X-Request-ID; có header Authorization th
 <a id="flow-chat"></a>
 ### 8.3. Luồng chat và **cơ chế phân loại chat**
 
-Endpoint: `POST /api/ai/chat` (giới hạn 20 request/phút/user). Body: `message`, `session_id`, `mode` (tùy chọn `design`), `language` (`vi`/`en`), `group_id` (tùy chọn).
+Endpoint: `POST /api/ai/chat` (giới hạn 20 request/phút/user). Body: `message`, `session_id`, `mode` (tùy chọn `design`), `language` (`vi`/`en`).
 
 Code trong `ai/routes.py::chat` xét tin nhắn **theo đúng thứ tự dưới đây** và dừng ở nhánh đầu tiên khớp:
 
@@ -767,25 +747,21 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
 
 ```text
 ① PREVIEW
-   - Kiểm tra quyền vào, khác nhau theo đường đi:
-       · AI configure (/api/ai/chat): _require_project_config_access → chỉ ADMIN,
-         hoặc OPERATOR có quyền owner/editor trên project
-       · POST /api/changes/preview: change_project() → TEACHER/STUDENT chỉ cần quyền viewer
-         trên project (sau đó grant config.create theo thiết bị được kiểm tra trong
-         workflow.bind); các role khác cần quyền editor
+   - Kiểm tra quyền vào (cả đường AI configure qua /api/ai/chat và POST /api/changes/preview):
+     chỉ ADMIN, hoặc OPERATOR có quyền owner/editor trên project. VIEWER bị từ chối.
    - validate_commands: chặn ký tự nối lệnh ; | & ` $( > < và xuống dòng
                          lệnh nguy hiểm / VLAN hệ thống / ip access-group → requires_confirmation
    - management_guard (chỉ config mode, không áp dụng PAN-OS): từ chối thay đổi trên interface
      quản trị NẾU xác định được interface đó (xem 9.4)
-   - workflow.bind: kiểm tra grant, quota thay đổi đang chờ, assignment,
+   - workflow.bind: kiểm tra quota thay đổi đang chờ (pending_change_limit),
                     tính risk (low/high), lưu baseline_hash (hash running-config gần nhất)
    - đóng băng danh tính đích: target_hostname / management_ip / ssh_port / device_type
    - sinh verification_commands + rollback_commands (CHỈ gợi ý, không tự chạy)
    - trạng thái: pending_approval
 
 ② APPROVE (POST /api/changes/<id>/approve hoặc /api/change-batches/<id>/approve)
-   - approve_allowed: Student không được duyệt; independent_approval (Teacher không tự duyệt);
-     production chỉ ADMIN (hoặc OPERATOR có quyền edit project)
+   - approve_allowed: ADMIN, hoặc OPERATOR có quyền owner/editor trên project (kể cả thiết bị
+     production; OPERATOR được tự duyệt change do chính mình tạo). VIEWER không duyệt được
    - baseline_revision phải không đổi
    - approval_digest = SHA-256(commands, target, baseline, risk, environment, policy...)
    - trạng thái: approved (hết hạn sau approval_minutes, mặc định 60 phút)
@@ -793,8 +769,8 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
 ③ APPLY (POST /api/changes/<id>/apply, 10 req/phút)
    - requires_confirmation = true: change đơn gửi confirm_hostname = đúng hostname;
      batch 1 thiết bị gửi hostname, batch ≥ 2 thiết bị gửi "CONFIRM ALL"
-   - deployment_allowed: kiểm tra lại toàn bộ quyền, digest, hạn duyệt, maintenance window,
-     reservation (thiết bị thật), thiết bị không offline
+   - deployment_allowed: kiểm tra lại quyền, digest, hạn duyệt, maintenance window (nếu có),
+     thiết bị không offline
    - claim: tạo DeviceLease (khóa duy nhất mỗi thiết bị) + đổi trạng thái có điều kiện → running
    - a. BACKUP "show running-config" (PAN-OS: "show config running") → config_backups
         (backup lỗi thì không cấu hình gì)
@@ -952,12 +928,10 @@ Guard này **không bảo đảm** phát hiện mọi thao tác làm mất kết
 
 | Trường | Mặc định | Ý nghĩa |
 |---|---|---|
-| `independent_approval` | `true` | Teacher không tự duyệt change của mình |
-| `production_admin_only` | `true` | Change production chỉ ADMIN duyệt (hoặc OPERATOR có quyền edit project) |
+| `independent_approval`, `production_admin_only` | `true` | Thuộc module governance; **không ảnh hưởng** ADMIN và OPERATOR có quyền owner/editor |
 | `approval_minutes` | `60` | Hạn hiệu lực của một lần duyệt |
 | `ai_daily_limit` | `100` | Số tin nhắn đi qua `AIService.handle()` mỗi user mỗi ngày. **Không** đếm lời gọi Intent Router, tư vấn thiết kế (`advise`, `mode=design`) hay phân tích troubleshoot, nên không phải giới hạn tổng số request hay chi phí gửi tới provider |
 | `pending_change_limit` | `20` | Số change đang chờ/chạy tối đa mỗi user |
-| `lab_limit`, `lab_runtime_minutes` | `5`, `120` | Hạn mức lab |
 | `forbidden_commands`, `high_risk_commands`, `physical_lab_low_risk_commands` | `[]` | Danh sách tiền tố lệnh do ADMIN bổ sung |
 
 ### 9.6. Rate limit (Flask-Limiter, theo user, chưa đăng nhập thì theo IP)
@@ -1141,6 +1115,7 @@ sudo systemctl restart network-copilot
 ```
 
 - Đọc migration mới trong `migrations/versions/` trước khi nâng cấp. Ví dụ migration `9e54c2bd3d7e` hủy các preview/approval cũ chưa chạy và vô hiệu hóa token cũ.
+- **Cảnh báo về role khi nâng cấp database cũ:** migration `9e54c2bd3d7e` chạy `UPDATE users SET role = 'STUDENT' WHERE role IN ('VIEWER', 'OPERATOR')`. Database tạo mới bằng `flask db upgrade` **không bị ảnh hưởng**, vì lúc đó chưa có user nào. Nhưng nếu nâng cấp một database **cũ hơn** migration này, mọi tài khoản OPERATOR/VIEWER sẽ thành STUDENT. Sau khi nâng cấp, ADMIN phải vào `/users` đặt lại role cho từng tài khoản. Kiểm tra bằng: `sqlite3 backend/network_copilot.db "SELECT username, role FROM users;"`
 - Không giữ `paramiko ≥ 5`: bản này đã bỏ KEX SHA-1 mà image IOSv cần dùng.
 
 [↑ Về mục lục](#top)
@@ -1312,6 +1287,7 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - Không nói "AI không bao giờ thấy dữ liệu nhạy cảm" hay "AI không thấy IP quản trị": chỉ ngữ cảnh inventory/topology được lọc; output troubleshoot (có thể chứa IP) và nội dung người dùng gõ vẫn được gửi đi.
 - Không nói management guard chặn mọi thao tác làm mất kết nối quản trị.
 - Không nói bootstrap console đi qua Preview → Approve → Apply.
+- Không trình bày role TEACHER/STUDENT, group hay Smart Approval: project không dùng module governance.
 
 [↑ Về mục lục](#top)
 
@@ -1360,7 +1336,6 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 
 - [`backend/README.md`](../backend/README.md): mô hình an toàn, toàn bộ API, cấu hình AI provider
 - [`docs/TONG_QUAN_PROJECT.md`](TONG_QUAN_PROJECT.md): tổng quan kiến trúc và module
-- [`docs/scoped-backend.md`](scoped-backend.md): Admin/Teacher/Student, grant, group, bài tập, lab
 - [`docs/database.md`](database.md): thiết kế database, ràng buộc, ER diagram
 - [`docs/pending-history-integration.md`](pending-history-integration.md), [`docs/history-extension-integration.md`](history-extension-integration.md): lịch sử nháp/pending
 - [`docs/roadmap.md`](roadmap.md): tính năng đã làm và giới hạn đã biết
