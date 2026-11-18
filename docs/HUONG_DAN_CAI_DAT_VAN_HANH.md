@@ -37,11 +37,13 @@
 
 **AI Network Copilot** là một backend Flask giúp quản trị mạng Cisco (IOS, ASA) và Palo Alto (PAN-OS) trong PNETLab hoặc trên thiết bị thật, qua SSH. Người dùng chat bằng tiếng Việt hoặc tiếng Anh: hỏi trạng thái thiết bị, nhờ phân tích lỗi, thiết kế sơ đồ mạng hoặc yêu cầu cấu hình.
 
-Nguyên tắc cốt lõi: **AI chỉ đề xuất, không bao giờ tự thực thi.** Mọi thay đổi cấu hình đi qua quy trình bắt buộc:
+Nguyên tắc cốt lõi: **AI chỉ đề xuất, không bao giờ tự thực thi.** Mọi thay đổi cấu hình qua change workflow đều đi theo quy trình bắt buộc:
 
 ```text
 Preview  →  Approve  →  Apply (backup trước)  →  Verify (kiểm tra sau)
 ```
+
+**Ngoại lệ:** *Bootstrap SSH qua console* (và bước khởi động node khi "Đẩy sang PNETLab") ghi cấu hình trực tiếp lên thiết bị **không qua change workflow**, vì lúc đó thiết bị chưa SSH được. Luồng này có preview riêng, chỉ owner/ADMIN được chạy và có ghi audit (xem [6.5](#bootstrap)).
 
 ### 1.1. Sơ đồ kiến trúc
 
@@ -62,7 +64,7 @@ Preview  →  Approve  →  Apply (backup trước)  →  Verify (kiểm tra sau
  │  │ grants,    │ │ policy   │ │ redact│  │ monitoring │ │ backups │  │
  │  │ risk, lease│ │ allowlist│ └───────┘  │ APScheduler│ │checkpts │  │
  │  └────────────┘ └──────────┘            └────────────┘ └─────────┘  │
- │                  ssh/ (Paramiko, Netmiko PAN-OS): nơi DUY NHẤT mở socket │
+ │  ssh/ (Paramiko, Netmiko PAN-OS): kết nối SSH; integrations/: console telnet│
  │                  SQLite (SQLAlchemy + Alembic), credentials mã hóa Fernet │
  └──────────────────────────────┬──────────────────────────────────────┘
                                 │ SSH TCP 22 (mạng quản trị, vd 172.16.3.0/24)
@@ -76,10 +78,10 @@ Preview  →  Approve  →  Apply (backup trước)  →  Verify (kiểm tra sau
 |---|---|
 | **Giao diện web** | Trang Chat/Copilot (`/`), Projects + canvas sơ đồ mạng (`/projects`), Dashboard (`/dashboard`), Quản lý user (`/users`). HTML + CSS + Alpine.js (vendored), không cần build frontend. |
 | **Flask API** | Toàn bộ REST API `/api/...`, xác thực JWT, giới hạn tần suất, ghi audit. |
-| **AI layer** (`ai/`) | Gọi LLM với **ngữ cảnh an toàn** (không có mật khẩu, IP quản trị hay running-config), ép output theo JSON schema, validate bằng Pydantic. |
+| **AI layer** (`ai/`) | Gọi LLM với ngữ cảnh do hệ thống **chủ động loại** mật khẩu, IP quản trị và running-config đầy đủ; ép output theo JSON schema, validate bằng Pydantic. |
 | **Policy engine** (`commands/policy.py`, `governance/`) | Allowlist lệnh đọc, phát hiện lệnh nguy hiểm, phân loại rủi ro, kiểm tra quyền. |
 | **Change workflow** (`changes/`) | Preview, duyệt, backup, áp dụng, xác minh, đề xuất rollback, batch nhiều thiết bị. |
-| **SSH layer** (`ssh/`) | Paramiko (IOS/ASA) và Netmiko (`paloalto_panos`). Là nơi duy nhất mở kết nối tới thiết bị. |
+| **SSH layer** (`ssh/`) | Paramiko (IOS/ASA) và Netmiko (`paloalto_panos`) cho mọi lệnh SSH. Ngoài ra `integrations/console.py` mở telnet console (bootstrap) và `integrations/pnetlab.py` gọi HTTP tới PNETLab. |
 | **Monitoring** | APScheduler poll trạng thái định kỳ (tắt mặc định). |
 | **Database** | SQLite qua SQLAlchemy 2, migration Alembic (`backend/migrations`). |
 
@@ -183,8 +185,12 @@ sudo apt install -y git python3 python3-venv python3-pip curl sqlite3
 
 ```bash
 git clone https://github.com/TuanTran-05/project-csn301-group1.git
-cd project-csn301-group1/backend
+cd project-csn301-group1
+git checkout 75f45b3d3f39fcc1680a2dbedc307656e975454c   # đúng commit mà tài liệu này mô tả
+cd backend
 ```
+
+Bỏ bước `git checkout` nếu muốn chạy bản mới nhất của `main`; khi đó cần đối chiếu lại tài liệu với code.
 
 ### Bước 2: Tạo môi trường ảo và cài dependency
 
@@ -259,7 +265,7 @@ python scripts/manage_users.py ensure-admin admin        # hỏi mật khẩu, k
 
 > `ensure-admin` sẽ **nâng quyền và kích hoạt lại** một tài khoản nếu username đó đã tồn tại (giữ nguyên mật khẩu cũ). Hãy chọn đúng username.
 
-Hệ thống chỉ có **duy nhất một ADMIN** (unique index `uq_single_admin`). Repository không chứa mật khẩu mặc định nào.
+Hệ thống cho phép **tối đa một ADMIN** (unique index `uq_single_admin`), nên `ensure-admin` không nâng được user thứ hai khi đã có ADMIN. Repository không chứa mật khẩu mặc định nào.
 
 ### Bước 6: Chạy server
 
@@ -315,9 +321,9 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 | `PNETLAB_BOOT_TIMEOUT` | `900` | Thời gian chờ node boot khi export và khởi động (giây). |
 | `PNETLAB_BOOT_RETRY_SECONDS` | `30` | Chu kỳ thử lại console khi node đang boot. |
 | `PNETLAB_EXPORT_PING_CHECK` | `true` | Ping IP quản trị trước khi cấp, để tránh trùng IP trên LAN lab. Ping không trả lời **không bảo đảm** IP còn trống (thiết bị có thể chặn ICMP). |
-| `BOOTSTRAP_PANOS_BOOT_SECONDS` | `900` | Chờ PA-VM boot khi bootstrap. |
-| `PANOS_COMMIT_TIMEOUT` | `600` | Timeout `commit` PAN-OS. |
 | `VERIFICATION_RETRIES` / `VERIFICATION_RETRY_SECONDS` | `2` / `5` | Số lần và khoảng cách đọc lại khi verify sau apply thất bại (link/trunk cần thời gian lên). |
+
+> **Hai giá trị không chỉnh được qua `.env`:** `BOOTSTRAP_PANOS_BOOT_SECONDS` (900s, chờ PA-VM boot) và `PANOS_COMMIT_TIMEOUT` (600s, timeout `commit` PAN-OS) là **Flask config key** được đọc bằng `current_app.config.get(..., mặc định)`, nhưng `Config` không nạp chúng từ biến môi trường. Thêm vào `.env` sẽ **không có tác dụng**; muốn đổi phải sửa `config.py` (thêm `os.environ.get`) hoặc truyền class cấu hình riêng vào `create_app()`.
 
 > **Lưu ý về `.env.example`:** `LAB_SSH_USERNAME` và `LAB_SSH_PASSWORD` xuất hiện **hai lần** (một lần có giá trị `g1`/`group1`, một lần để trống ở cuối file). Với python-dotenv, dòng sau ghi đè dòng trước, nên giá trị cuối cùng là **rỗng**. Hãy giữ một dòng duy nhất cho mỗi biến.
 
@@ -421,11 +427,13 @@ Cách A, `git clone` trực tiếp (node có Internet):
 
 ```bash
 git clone https://github.com/TuanTran-05/project-csn301-group1.git ~/network-copilot
+git -C ~/network-copilot checkout 75f45b3d3f39fcc1680a2dbedc307656e975454c
 ```
 
 Cách B, đóng gói từ máy dev (chỉ chứa file đã commit; `.venv`, `.env` và DB bị bỏ lại):
 
 ```bash
+git rev-parse HEAD          # xác nhận đúng commit cần triển khai trước khi đóng gói
 git archive --format=tar.gz -o network-copilot.tar.gz HEAD
 scp network-copilot.tar.gz user@172.16.3.28:~/
 ```
@@ -480,7 +488,7 @@ WorkingDirectory=/home/ubuntu/network-copilot/backend
 EnvironmentFile=/home/ubuntu/network-copilot/backend/.env
 # 1 worker + nhiều thread: job nền và SSE sống trong bộ nhớ tiến trình
 ExecStart=/home/ubuntu/network-copilot/backend/.venv/bin/gunicorn \
-  --worker-class gthread --workers 1 --threads 16 \
+  --worker-class gthread --workers 1 --threads 32 \
   --timeout 120 --bind 172.16.3.28:5000 wsgi:app
 Restart=on-failure
 
@@ -497,7 +505,7 @@ sudo journalctl -u network-copilot -f
 
 **Vì sao phải dùng `gthread`, 1 worker:**
 
-- Mỗi tab chat mở một stream SSE giữ một thread tối đa `REALTIME_MAX_SECONDS` (55s). Với worker đồng bộ thông thường, đặt `REALTIME_ENABLED=false`.
+- Mỗi tab chat mở một stream SSE giữ một thread tối đa `REALTIME_MAX_SECONDS` (55s). **Số thread phải lớn hơn hẳn `REALTIME_MAX_STREAMS`** (mặc định 20), nếu không các stream có thể chiếm hết thread và request thường phải chờ. Ví dụ trên dùng 32 thread cho 20 stream; hoặc giảm `REALTIME_MAX_STREAMS` (vd 8 với 16 thread). Với worker đồng bộ thông thường, đặt `REALTIME_ENABLED=false` (UI tự chuyển sang polling).
 - Job bootstrap console và export PNETLab lưu trong bộ nhớ của tiến trình. Nhiều worker thì request poll job có thể rơi vào worker khác và trả 404.
 - Bật `MONITORING_ENABLED=true` với nhiều worker sẽ khiến **mỗi worker chạy một scheduler riêng**, poll trùng lặp.
 
@@ -588,7 +596,7 @@ Quyền thực tế = Vai trò tài khoản (global role)
 
 | Role | Ý nghĩa | Ghi chú |
 |---|---|---|
-| `ADMIN` | Quản trị toàn hệ thống | **Chỉ có duy nhất 1** (chuyển giao bằng `POST /api/admin/transfer`). Thấy mọi project, quản lý user, policy. |
+| `ADMIN` | Quản trị toàn hệ thống | **Tối đa 1** tài khoản (unique index `uq_single_admin`; DB mới có thể chưa có ADMIN nào). Chuyển giao bằng `POST /api/admin/transfer`. Thấy mọi project, quản lý user, policy. |
 | `OPERATOR` | Kỹ sư vận hành | Tạo project; cấu hình thiết bị trên project mình **sở hữu** hoặc được chia sẻ quyền **editor**. |
 | `VIEWER` | Người xem | Luôn bị hạ xuống `viewer` trên mọi project; chỉ xem, chat tư vấn, chạy lệnh đọc. |
 | `TEACHER` | Giảng viên (governance) | Quản lý group, tạo Student, duyệt cấu hình theo grant được cấp. |
@@ -596,7 +604,7 @@ Quyền thực tế = Vai trò tài khoản (global role)
 
 Trang `/users` hiện tạo `ADMIN`/`OPERATOR`/`VIEWER`. `TEACHER`/`STUDENT` dùng qua các API governance (`/api/groups`, `/api/permissions`…), xem [`docs/scoped-backend.md`](scoped-backend.md).
 
-**MFA:** Database có các cột MFA, nhưng tại commit này MFA **không được thực thi**. Login trả `mfa_setup_required: false`, token của ADMIN chưa bật MFA được cấp kèm cờ `mfa_pending` và vẫn dùng được bình thường (đã thử gọi `/api/auth/me`). Không nên tuyên bố hệ thống có MFA.
+**MFA:** Database có các cột MFA, nhưng tại commit này MFA **không được thực thi**. Login trả `mfa_setup_required: false`, token của ADMIN chưa bật MFA được cấp kèm cờ `mfa_pending` (`auth/routes.py`), và hàm kiểm tra token chung cho mọi endpoint (`app.py::token_revoked`) chấp nhận token có cờ này. Đã thử thực tế với `/api/auth/me`. Không nên tuyên bố hệ thống có MFA.
 
 **Cơ chế token:** JWT chứa `token_version`. Đổi mật khẩu, đổi role hoặc vô hiệu hóa tài khoản sẽ tăng `token_version`, nên **mọi token cũ bị thu hồi ngay**. Role dùng để phân quyền luôn được **đọc từ database**, không lấy từ token, nên hạ quyền có hiệu lực tức thì. Không thể hạ quyền hoặc vô hiệu hóa ADMIN cuối cùng, và ADMIN không tự hạ quyền chính mình được.
 
@@ -625,8 +633,10 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 | AI Management (áp gợi ý chat lên PNETLab) | ✓ | khi project bật AI Management | ✗ | ✗ |
 | Bootstrap console, xuất PNETLab kèm khởi động node | ✓ | chỉ **owner** | ✗ | ✗ |
 | Xem lệnh trong change/batch | ✓ | ✓ | owner project | bị che |
-| Audit log | ✓ | ✗ | ✗ | ✗ |
+| Audit log (`/api/audit-logs`) | ✓ (`?scope=all` xem mọi project) | ✗ | ✗ | ✗ |
 | Quản lý user, policy, draft/pending history | ✓ | ✗ | ✗ | ✗ |
+
+> Ma trận trên chỉ gồm các role của hệ project. Route audit cho phép `ADMIN`, `TEACHER`, `STUDENT` (`audit/routes.py`); với Teacher/Student, kết quả **được lọc theo phạm vi** group/quyền (`governance/visibility.py`), không phải toàn bộ audit.
 
 ### 7.4. Lớp 3: Grant theo phạm vi (TEACHER/STUDENT)
 
@@ -643,7 +653,7 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 
 - STUDENT **bị cấm** các action `config.approve`, `student.create`, `group.create`, `assignment.manage`, `lab.template`, `lab.delete`.
 - Grant con mất hiệu lực khi grant cha hết hạn hoặc bị thu hồi, khi người cấp bị khóa, hoặc khi người cấp không còn quản lý group.
-- **Smart Approval:** chỉ áp dụng khi đủ tất cả điều kiện: đó là change của chính Student, Student có grant `config.deploy`, thiết bị thuộc group, group đó bật `is_auto_approve`, rủi ro **Low** và change không cần xác nhận gõ tay. Thiếu một điều kiện thì cần Teacher/ADMIN duyệt.
+- **Smart Approval:** chỉ áp dụng khi đủ tất cả điều kiện: đó là change của chính Student, Student có grant `config.deploy`, thiết bị thuộc group, group đó bật `is_auto_approve`, rủi ro **Low** và change không cần xác nhận gõ tay. Thiếu một điều kiện thì cần Teacher/ADMIN duyệt; kể cả khi đã được duyệt, quyền triển khai (`config.deploy`), hạn duyệt, baseline, maintenance và reservation vẫn được kiểm tra lại lúc apply.
 
 ### 7.5. Phiên chat và quyền riêng tư
 
@@ -697,22 +707,29 @@ Code trong `ai/routes.py::chat` xét tin nhắn **theo đúng thứ tự dưới
  3. OPERATOR + câu trả lời trước của trợ lý đang hỏi số thiết bị?
         └► Đưa ra các phương án star / ring / campus / hub-spoke  flow=topology_options
                                  │
- 4. mode = "design"? ────────────► design_assistant.propose()  (vẽ sơ đồ đề xuất)
+ 4. mode = "design"? ────────────► design_assistant.propose(): đề xuất thiết kế L2/L3
+                                    (VLAN, SVI, route, OSPF) trên thiết bị và dây nối ĐÃ CÓ
                                  │
  5. "show run [R1]" gõ trực tiếp? ► chạy show running-config KHÔNG qua AI,
                                     che dòng mật khẩu, không đưa vào ngữ cảnh model
                                  │
- 6. Đặt IP mà chưa nói cổng nào? ─► port_choice: hỏi lại người dùng chọn cổng
+ 6. [không phải viewer] Câu đặt IP có địa chỉ IP, nêu tên thiết bị managed của project,
+    chưa nói cổng, thiết bị có dây nối phù hợp? ─► port_choice: hỏi chọn cổng
                                  │
- 7. Có muốn thiết kế không? (_wants_design: router AI hoặc rule từ khóa)
-        └► AIService.advise(): tư vấn thiết kế + sơ đồ + snippet cấu hình
+ 7. [không phải viewer] _wants_design(): Intent Router AI được gọi TẠI ĐÂY
+    (bỏ qua router nếu câu bắt đầu bằng show/ping/traceroute; router lỗi → rule từ khóa)
+        └► nhãn design → AIService.advise(): tư vấn + sơ đồ đề xuất mới + snippet cấu hình
                                  │
  8. Còn lại ─────────────────────► AIService.handle(): LLM trả về AIAction với intent
                                      ├─ chat         → trả lời, không chạm thiết bị
                                      ├─ monitor      → chạy lệnh đọc
                                      ├─ troubleshoot → chạy lệnh đọc + AI phân tích
                                      └─ configure    → tạo batch preview (chờ duyệt)
+        Nếu handle() lỗi SCHEMA_MISMATCH ngay sau một đề xuất thiết kế
+        (và user không phải viewer) → chuyển sang AIService.advise()
 ```
+
+> Intent Router **không** chạy trước mọi tin nhắn: các nhánh 1–6 được xử lý trước, và viewer không bao giờ đi qua nhánh 7.
 
 **Hai tầng phân loại:**
 
@@ -724,7 +741,9 @@ Code trong `ai/routes.py::chat` xét tin nhắn **theo đúng thứ tự dưới
 
 > Nhãn của model **chỉ dùng để chọn pipeline**. Quyền không do model quyết định: mọi pipeline đều tự kiểm tra role, quyền project, policy và workflow duyệt. Nếu router lỗi (hết quota, mạng, JSON hỏng), hệ thống tự quay về rule từ khóa.
 
-**Ngữ cảnh gửi cho AI** (`AIService.build_context`): hostname, role, device_type, status của các thiết bị **managed + provisioned trong đúng project**; danh sách lệnh đọc được phép (đã loại `show running-config`); template cấu hình đang bật; bảng tương đương lệnh ASA; topology và addressing đã suy ra từ snapshot (đã loại mạng quản trị). **Không bao giờ gửi:** mật khẩu, IP quản trị, running-config đầy đủ.
+**Ngữ cảnh gửi cho AI** (`AIService.build_context`): hostname, role, device_type, status của các thiết bị **managed + provisioned trong đúng project**; danh sách lệnh đọc được phép (đã loại `show running-config`); template cấu hình đang bật; bảng tương đương lệnh ASA; topology và addressing đã suy ra từ snapshot (đã loại mạng quản trị). Hệ thống **chủ động không đưa** mật khẩu, IP quản trị và running-config đầy đủ vào phần ngữ cảnh tự động này.
+
+> **Giới hạn:** Tin nhắn người dùng và các lượt hội thoại gần đây (`_recent_history`) được gửi nguyên văn cho nhà cung cấp AI, kể cả cho Intent Router. Nếu người dùng tự gõ mật khẩu, IP quản trị hay dán cấu hình vào chat, nội dung đó **có thể được gửi đi**. Quy định cho người dùng: **không nhập thông tin nhạy cảm vào chat.**
 
 ### 8.4. Luồng Monitor / Troubleshoot (chỉ đọc)
 
@@ -749,7 +768,8 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
    - _require_project_config_access: ADMIN, hoặc OPERATOR owner/editor
    - validate_commands: chặn ký tự nối lệnh ; | & ` $( > < và xuống dòng
                          lệnh nguy hiểm / VLAN hệ thống / ip access-group → requires_confirmation
-   - management_guard: TỪ CHỐI thay đổi chạm vào interface quản trị (cổng NetAI dùng để SSH)
+   - management_guard (chỉ config mode, không áp dụng PAN-OS): từ chối thay đổi trên interface
+     quản trị NẾU xác định được interface đó (xem 9.4)
    - workflow.bind: kiểm tra grant, quota thay đổi đang chờ, assignment,
                     tính risk (low/high), lưu baseline_hash (hash running-config gần nhất)
    - đóng băng danh tính đích: target_hostname / management_ip / ssh_port / device_type
@@ -764,7 +784,8 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
    - trạng thái: approved (hết hạn sau approval_minutes, mặc định 60 phút)
 
 ③ APPLY (POST /api/changes/<id>/apply, 10 req/phút)
-   - change nguy hiểm: confirm_hostname phải đúng hostname; batch nguy hiểm: gõ "CONFIRM ALL"
+   - requires_confirmation = true: change đơn gửi confirm_hostname = đúng hostname;
+     batch 1 thiết bị gửi hostname, batch ≥ 2 thiết bị gửi "CONFIRM ALL"
    - deployment_allowed: kiểm tra lại toàn bộ quyền, digest, hạn duyệt, maintenance window,
      reservation (thiết bị thật), thiết bị không offline
    - claim: tạo DeviceLease (khóa duy nhất mỗi thiết bị) + đổi trạng thái có điều kiện → running
@@ -772,10 +793,12 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
    - b. so baseline_hash: running-config đổi kể từ lúc preview → fail
    - c. kiểm tra lại quyền SAU khi backup (thu hồi quyền luôn thắng)
    - d. SSH: run_config (config mode) hoặc run_exec; PAN-OS: configure → set... → commit
-         (lỗi thì revert config)
+         (lệnh bị từ chối/commit lỗi → THỬ `revert config` candidate chưa commit; revert lỗi
+          chỉ ghi warning. Đây không phải rollback sau khi đã commit)
    - e. VERIFY: chạy lệnh kiểm tra chỉ đọc, thử lại VERIFICATION_RETRIES lần
    - f. verify fail → failed (kèm rollback_commands để làm tay); pass → success
-   - g. backup sau thay đổi, tạo checkpoint undo/redo, thông báo, audit "change.apply"
+   - g. thử backup sau thay đổi (lỗi chỉ ghi warning, change vẫn success), thử tạo checkpoint
+        undo/redo (có thể bị bỏ qua, xem 8.8), thông báo, audit "change.apply"
    - release lease (kể cả khi lỗi)
 
 Trạng thái:  pending_approval → approved → running → success | failed
@@ -788,7 +811,7 @@ Ví dụ: *"thực hiện lệnh write trên toàn bộ thiết bị"*.
 
 1. AI trả `device_hostnames: ["*"]` (`*` = mọi thiết bị **của project này**). Backend tạo `change_batches` và một `change_requests` con cho mỗi thiết bị, tất cả ở trạng thái đóng băng.
 2. Người vận hành xem từng thiết bị, mode, lệnh và mức rủi ro rồi bấm **Approve batch**.
-3. Batch high-risk: phải gõ chính xác `CONFIRM ALL`.
+3. Nếu batch có `requires_confirmation = true` (chứa lệnh thuộc [9.3](#rules)): batch 1 thiết bị phải gõ đúng **hostname**, batch từ 2 thiết bị trở lên phải gõ chính xác `CONFIRM ALL`. Risk `high` một mình **không** kích hoạt bước này.
 4. Apply chạy **tuần tự theo hostname**. Mỗi thiết bị con lại được kiểm tra quyền khi đến lượt.
 5. Kết quả `success` / `failed` / `partial_success`. Với `partial_success`, người vận hành phải xem từng kết quả con và xử lý tay trước khi chạy lại.
 
@@ -801,7 +824,7 @@ Ví dụ: *"thực hiện lệnh write trên toàn bộ thiết bị"*.
 
 ### 8.8. Luồng Undo/Redo cấu hình (Checkpoints)
 
-- Mỗi thay đổi IOS apply và verify thành công trở thành một **bước** trong *Lịch sử cấu hình thiết bị*, lưu backup `pre_change` và `post_change`.
+- Thay đổi apply và verify thành công **có thể** trở thành một **bước** trong *Lịch sử cấu hình thiết bị*, lưu backup `pre_change` và `post_change`. Không tạo bước khi: `CONFIG_CHECKPOINTS_ENABLED=false`, change ở EXEC mode (vd `write memory`), loại thiết bị không được hỗ trợ (chỉ Cisco IOS), hoặc việc ghi checkpoint gặp lỗi (chỉ ghi log, apply vẫn thành công).
 - **Undo:** đọc running-config hiện tại, diff với `pre_change`, sinh lệnh đưa cấu hình về trạng thái cũ, rồi tạo một change `source: restore` (High Risk). Change này vẫn phải Approve → gõ hostname → Apply → Verify.
 - Các bước của mỗi thiết bị là một stack: chỉ undo được bước mới nhất. Không sinh lệnh cho secret, banner, certificate. Chưa hỗ trợ PAN-OS/ASA.
 
@@ -880,8 +903,9 @@ Rủi ro do **backend tự tính**, không lấy từ người dùng hay AI. **C
 | Role `core`/`distribution`/`isp`/`firewall` | High |
 | Routing, `ip route`, `ip address`, ACL, `username`, `enable`, `line`, `snmp-server`, `aaa`, `crypto`, `interface vlan/loopback` | High |
 | Chỉ gồm lệnh an toàn: `hostname`, `vlan N`, `name`, `interface Gi/Fa/Eth…`, `description`, `switchport access vlan N`, `switchport mode access` | **Low** |
-| Change khôi phục (`source: restore`) | High + bắt buộc xác nhận |
 | Mọi trường hợp còn lại | High |
+
+Sau khi `risk()` trả kết quả, `workflow.bind()` còn **ép thêm**: change có `requires_confirmation` → high; change khôi phục (`source: restore`, do Undo/Redo tạo) → high + bắt buộc xác nhận.
 
 > **Lưu ý nhãn môi trường:** Thiết bị có 5 giá trị `environment`: `pnetlab`, `physical`, `virtual`, `physical_lab`, `production`. Bộ phân loại rủi ro chỉ có quy tắc riêng cho `production`, `physical_lab` và `virtual`. Với thiết bị `pnetlab`/`physical`, rủi ro chỉ còn phụ thuộc role và nội dung lệnh. Project dùng một bộ nhãn khác (`pnetlab`/`physical`/`mixed`), không đồng nghĩa với nhãn của thiết bị.
 
@@ -898,14 +922,21 @@ Rủi ro do **backend tự tính**, không lấy từ người dùng hay AI. **C
 `changes/service.py::validate_commands` đặt `requires_confirmation = true` khi có:
 
 - lệnh khớp DANGEROUS_PATTERNS (vd `no shutdown`, `write memory`, `copy …`);
-- lệnh tạo, xóa hoặc gán cổng vào **VLAN hệ thống** (1, 1002–1005);
+- lệnh khớp đúng `vlan <id>`, `no vlan <id>` hoặc `switchport access vlan <id>` với id thuộc **VLAN hệ thống** (1, 1002–1005). Regex chỉ nhận đúng các dạng này, không nhận diện mọi cách sửa VLAN hệ thống (vd danh sách VLAN trên trunk);
 - `ip access-group <acl> in|out` (dễ tự khóa đường quản trị).
 
-Change đơn: gửi `confirm_hostname` = **đúng hostname**. Batch: gõ `CONFIRM ALL`.
+Change đơn: gửi `confirm_hostname` = **đúng hostname**. Batch (`ChangeBatch.confirmation_text`): 1 thiết bị → hostname, ≥ 2 thiết bị → `CONFIRM ALL`. Lưu ý `requires_confirmation` và `risk_level = high` là **hai cờ khác nhau**: mọi change cần xác nhận đều là high, nhưng change high (vd static route) không nhất thiết cần xác nhận.
 
 ### 9.4. Management Interface Guard, `changes/management_guard.py`
 
-Thay đổi đổi địa chỉ, `shutdown`, xóa hoặc đổi mục đích **interface đang giữ IP quản trị** (cổng NetAI dùng để SSH, vd `Vlan1` trên switch IOSv-L2) **bị từ chối ngay ở bước preview**, kèm thông báo nêu cổng nên dùng thay thế. Riêng các dòng `description` được phép.
+Đây là lớp bảo vệ **có điều kiện**, giúp tránh tự cắt đường SSH của NetAI. Khi chặn được, thay đổi bị từ chối ngay ở bước preview kèm thông báo nêu cổng nên dùng thay thế.
+
+- **Chỉ chạy** với change ở config mode trên thiết bị không phải PAN-OS.
+- **Xác định interface quản trị** từ backup running-config mới nhất (interface chứa IP quản trị). Nếu chưa có backup thì fallback `Vlan1`, nhưng chỉ cho switch có environment `pnetlab`.
+- **Không xác định được interface** (chưa có backup, không phải switch PNETLab) → **không chặn gì**.
+- Khi xác định được: chặn `no interface …`/`default interface …` của cổng đó, và mọi lệnh bên trong khối `interface <cổng đó>` trừ `description` / `no description`.
+
+Guard này **không bảo đảm** phát hiện mọi thao tác làm mất kết nối quản trị: ví dụ đổi route/gateway, ACL trên cổng khác, hoặc cổng không xác định được.
 
 ### 9.5. Policy hệ thống (ADMIN chỉnh qua `PATCH /api/policy`)
 
@@ -914,7 +945,7 @@ Thay đổi đổi địa chỉ, `shutdown`, xóa hoặc đổi mục đích **i
 | `independent_approval` | `true` | Teacher không tự duyệt change của mình |
 | `production_admin_only` | `true` | Change production chỉ ADMIN duyệt (hoặc OPERATOR có quyền edit project) |
 | `approval_minutes` | `60` | Hạn hiệu lực của một lần duyệt |
-| `ai_daily_limit` | `100` | Số lượt gọi AI mỗi user mỗi ngày |
+| `ai_daily_limit` | `100` | Số tin nhắn đi qua `AIService.handle()` mỗi user mỗi ngày. **Không** đếm lời gọi Intent Router, tư vấn thiết kế (`advise`, `mode=design`) hay phân tích troubleshoot, nên không phải giới hạn tổng số request hay chi phí gửi tới provider |
 | `pending_change_limit` | `20` | Số change đang chờ/chạy tối đa mỗi user |
 | `lab_limit`, `lab_runtime_minutes` | `5`, `120` | Hạn mức lab |
 | `forbidden_commands`, `high_risk_commands`, `physical_lab_low_risk_commands` | `[]` | Danh sách tiền tố lệnh do ADMIN bổ sung |
@@ -940,6 +971,7 @@ Thay đổi đổi địa chỉ, `shutdown`, xóa hoặc đổi mục đích **i
 | Đóng băng đích + digest: đổi thiết bị/lệnh/baseline/policy sau khi duyệt thì phải duyệt lại | `governance/workflow.py::digest` |
 | Lease thiết bị: không cho hai worker cùng ghi lên một thiết bị | `DeviceLease` |
 | Header bảo mật: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `no-store` | `app.py` |
+| Ngữ cảnh AI tự động không chứa credential/IP quản trị/running-config; **nhưng tin nhắn và lịch sử chat do người dùng nhập được gửi nguyên văn cho provider** | `ai/service.py`, `ai/intent.py` |
 
 [↑ Về mục lục](#top)
 
@@ -1075,7 +1107,7 @@ sudo systemctl start network-copilot
 
 **Database và `CREDENTIAL_ENCRYPTION_KEY` phải luôn đi cùng nhau.** Có DB mà không có khóa thì mọi credential SSH là vô dụng. Bản backup chứa dữ liệu nhạy cảm (credential đã mã hóa, cấu hình thiết bị, audit), nên cần mã hóa và lưu ngoài máy.
 
-Ngoài ra, hệ thống tự lưu **backup running-config** của thiết bị trước và sau mỗi lần apply (`config_backups`), xem tại `GET /api/devices/<id>/backups`.
+Ngoài ra, hệ thống lưu **backup running-config** của thiết bị trước mỗi lần apply (bắt buộc: backup lỗi thì không ghi) và thử lưu sau khi apply (không bắt buộc), trong bảng `config_backups`, xem tại `GET /api/devices/<id>/backups`. Bản backup này không thay thế việc sao lưu database.
 
 ### 12.2. Khôi phục
 
@@ -1106,12 +1138,12 @@ sudo systemctl restart network-copilot
 
 ### 13.1. Bảng mã lỗi API
 
-Mọi lỗi đều trả JSON có `request_id`. Tìm `request_id` trong log server để thấy traceback.
+Hầu hết lỗi trả JSON `{error, message, details, request_id}`; mọi response đều có header `X-Request-ID`. Tìm giá trị này trong log server để thấy traceback. Ngoại lệ: đăng nhập sai trả trực tiếp `{"error": "unauthorized", "message": "Invalid credentials."}` (401), không có `request_id` trong body.
 
 | HTTP | `error` | Ý nghĩa và cách xử lý |
 |---|---|---|
 | 400 | `project_required` | User có nhiều project: gửi header `X-Project-Id`. |
-| 400 | `validation_error` | Dữ liệu sai; xem `details`. |
+| 422 | `validation_error` | Dữ liệu sai; xem `details`. (Một số payload sai khác, vd body login không hợp lệ, trả 400.) |
 | 401 | — | Token thiếu, hết hạn hoặc bị thu hồi (đổi mật khẩu/role): đăng nhập lại. |
 | 403 | `forbidden` | Role hoặc quyền project không đủ. |
 | 403 | `policy_violation` | Policy chặn lệnh (không có trong allowlist, lệnh nguy hiểm, ký tự nối lệnh). |
@@ -1198,7 +1230,7 @@ show ip interface brief
 | Import không thấy lab | PNETLab mỗi tài khoản chỉ có 1 session; lab đang chạy thuộc tài khoản đã mở nó. Để trống lab path để dùng lab đang mở. |
 | "Console đang là VNC, đổi sang TELNET trong PNETLab" | Đổi kiểu console của node sang telnet. |
 | Bootstrap không đặt được IP | Node chưa chạy, hoặc thiếu dây nối tới **Management(Cloud0)**. |
-| PA-VM bootstrap lâu, timeout | Bình thường là nhiều phút; tăng `BOOTSTRAP_PANOS_BOOT_SECONDS`, chạy Gunicorn 1 worker. |
+| PA-VM bootstrap lâu, timeout | Bình thường là nhiều phút; chạy Gunicorn 1 worker. Muốn tăng thời gian chờ phải sửa `config.py` (xem ghi chú ở [mục 4.2](#env)). |
 | Job bootstrap/export trả 404 "This bootstrap job does not exist (or the service restarted)" | Job chỉ nằm trong bộ nhớ tiến trình: Gunicorn chạy nhiều worker, hoặc service vừa restart. Chuyển về `--workers 1 --threads N`; kiểm tra trạng thái node thực tế trước khi chạy lại. |
 
 ### 13.8. Giao diện
@@ -1263,6 +1295,9 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - Không có MFA đang hoạt động (xem [7.1](#rbac)).
 - Không hỗ trợ đầy đủ đa vendor; ASA/PAN-OS chỉ hỗ trợ một phần.
 - Kết quả AI và verification `best_effort` không phải chứng nhận mạng đã an toàn.
+- Không nói "AI không bao giờ thấy dữ liệu nhạy cảm": chỉ ngữ cảnh tự động được lọc, nội dung người dùng gõ vẫn được gửi đi.
+- Không nói management guard chặn mọi thao tác làm mất kết nối quản trị.
+- Không nói bootstrap console đi qua Preview → Approve → Apply.
 
 [↑ Về mục lục](#top)
 
@@ -1276,6 +1311,7 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - [ ] `flask db upgrade` chạy không lỗi; `flask db check` không báo lệch.
 - [ ] `pytest -q` pass toàn bộ.
 - [ ] Có đúng 1 tài khoản ADMIN; đăng nhập được ở `/`.
+- [ ] Đã phổ biến cho người dùng: không nhập mật khẩu/cấu hình nhạy cảm vào chat AI.
 - [ ] `GET /api/health` trả `{"status":"ok"}`.
 - [ ] AI Server có IP tĩnh trong mạng quản trị, ping được gateway và các thiết bị.
 - [ ] Project lab có thiết bị với hostname khớp PNETLab, credential đã lưu.
@@ -1283,10 +1319,10 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - [ ] Chat "show ip interface brief trên R1" trả về output đã parse.
 - [ ] Lệnh nguy hiểm (`reload`, `write erase`) bị chặn với `policy_violation`.
 - [ ] Một thay đổi VLAN đi đủ Preview → Approve → Apply → Verify, có backup và audit.
-- [ ] Batch nhiều thiết bị yêu cầu `CONFIRM ALL`.
+- [ ] Batch ≥ 2 thiết bị có lệnh cần xác nhận yêu cầu `CONFIRM ALL`; batch 1 thiết bị yêu cầu hostname.
 - [ ] Tài khoản VIEWER không tạo được cấu hình/project; OPERATOR không thấy project không được chia sẻ.
 - [ ] Monitoring bật và dashboard hiển thị trạng thái mới.
-- [ ] Gunicorn chạy `gthread`, 1 worker; service tự khởi động lại.
+- [ ] Gunicorn chạy `gthread`, 1 worker, số thread lớn hơn `REALTIME_MAX_STREAMS`; service tự khởi động lại.
 - [ ] Có backup DB + khóa mã hóa và đã thử khôi phục.
 
 ### 16.1. Kịch bản trình bày gợi ý
