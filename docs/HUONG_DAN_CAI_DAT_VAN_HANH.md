@@ -333,7 +333,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 |---|---|---|
 | `AI_PROVIDER` | `gemini` | `gemini` hoặc `anthropic`. |
 | `AI_MODEL` | `gemini-2.5-flash` | Model chính. Gợi ý: `gemini-2.5-flash-lite` (rẻ nhất), `gemini-2.5-flash`, `gemini-2.5-pro`. Với Anthropic: vd `claude-sonnet-5`. |
-| `AI_API_KEY` | *(trống)* | API key. Thiếu key thì mọi API khác vẫn chạy, riêng `/api/ai/chat` trả `503 ai_not_configured`. Gọi AI có thể phát sinh chi phí theo model; kiểm tra quota của tài khoản. |
+| `AI_API_KEY` | *(trống)* | API key. Thiếu key thì mọi API khác vẫn chạy. Trong `/api/ai/chat`, các nhánh cần gọi AI provider trả `503 ai_not_configured`; các nhánh xử lý trực tiếp không cần model (vd `show run R1`, onboarding tạo project) vẫn có thể hoạt động. Gọi AI có thể phát sinh chi phí theo model; kiểm tra quota của tài khoản. |
 | `AI_INTENT_ROUTER` | `true` | Bật phân loại bằng model khi luồng chat đi tới nhánh `_wants_design()` và đủ điều kiện; các tin nhắn khác xử lý theo nhánh tương ứng (xem [8.3](#flow-chat)). `false`: nhánh đó chỉ dùng rule từ khóa. |
 | `AI_ROUTER_MODEL` | *(trống, dùng `AI_MODEL`)* | Model cho router; nên chọn model nhanh, rẻ (vd `gemini-2.5-flash-lite`). |
 
@@ -633,7 +633,7 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 | Chat AI tạo cấu hình, Preview → Approve → Apply | ✓ | ✓ (được tự duyệt) | ✗ | ✗ |
 | AI Management (áp gợi ý chat lên PNETLab) | ✓ | khi project bật AI Management | ✗ | ✗ |
 | Bootstrap console, xuất PNETLab kèm khởi động node | ✓ | chỉ **owner** | ✗ | ✗ |
-| Xem nguyên văn lệnh trong change/batch (`may_read_commands`) | ✓ | ✓ | ✓ (mọi OPERATOR; quyền truy cập bản ghi vẫn kiểm tra riêng) | bị che |
+| Xem nguyên văn lệnh trong change/batch (`may_read_commands`) | ✓ | ✓ | ✓ (mọi OPERATOR; quyền truy cập bản ghi vẫn kiểm tra riêng) | bị che, trừ khi vẫn là owner của project theo `owner_id` (vd OPERATOR bị hạ xuống VIEWER mà vẫn giữ ownership); bí mật trong lệnh vẫn bị redact |
 | Audit log (`/api/audit-logs`) | ✓ (`?scope=all` xem mọi project) | ✗ | ✗ | ✗ |
 | Quản lý user, policy, draft/pending history | ✓ | ✗ | ✗ | ✗ |
 
@@ -826,7 +826,9 @@ Ví dụ: *"thực hiện lệnh write trên toàn bộ thiết bị"*.
 ### 8.7. Luồng AI Management (áp gợi ý chat lên PNETLab)
 
 - Chủ project bật *AI Management* trong cài đặt project.
-- Thiết bị đích phải là thiết bị Cisco PNETLab đã import, đã `provisioned`, được đánh dấu `isolated` và có credential SSH.
+- Backend kiểm tra mỗi thiết bị đích (`chat/routes.py`): hostname tồn tại và không trùng lặp trong project; `device_type` khớp với gợi ý (`cisco_ios`, `cisco_asa` hoặc `paloalto_panos`); `environment = pnetlab`; `deployable` (managed, provisioned, có IP quản trị); `isolated`; không `offline`; có credential SSH. Thiết bị **không bắt buộc** phải được tạo bằng import.
+- Ở bước duyệt/triển khai (`governance/workflow.py::_ai_management_consent`), đường đồng ý riêng của AI Management chỉ được chấp nhận khi project bật AI Management, project có `environment = pnetlab`, và người thao tác chính là OPERATOR đã tạo yêu cầu, có quyền edit project. Không thỏa các điều kiện này thì change đi theo các kiểm tra duyệt/triển khai thông thường (vd ADMIN).
+- Mức hỗ trợ thực tế vẫn khác nhau theo loại thiết bị: undo/redo chỉ có cho IOS, verification ngữ nghĩa chủ yếu cho IOS (xem 9.2b).
 - Nút *Duyệt và áp dụng trên PNETLab* trên từng gợi ý (`POST /api/chat/messages/<id>/apply-configurations`) là **một lần duyệt riêng cho mỗi gợi ý**. Sau đó lệnh vẫn đi qua backup → policy → verify → audit. Không áp dụng được cho thiết bị physical/production.
 - Hoặc tải ZIP gồm các file `.cfg` cho từng thiết bị (`POST /api/chat/messages/<id>/config-files`) rồi nhập tay vào PNETLab.
 
