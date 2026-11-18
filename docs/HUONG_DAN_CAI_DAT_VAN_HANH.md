@@ -78,7 +78,7 @@ Preview  →  Approve  →  Apply (backup trước)  →  Verify (kiểm tra sau
 |---|---|
 | **Giao diện web** | Trang Chat/Copilot (`/`), Projects + canvas sơ đồ mạng (`/projects`), Dashboard (`/dashboard`), Quản lý user (`/users`). HTML + CSS + Alpine.js (vendored), không cần build frontend. |
 | **Flask API** | Toàn bộ REST API `/api/...`, xác thực JWT, giới hạn tần suất, ghi audit. |
-| **AI layer** (`ai/`) | Gọi LLM với ngữ cảnh do hệ thống **chủ động loại** mật khẩu, IP quản trị và running-config đầy đủ; ép output theo JSON schema, validate bằng Pydantic. |
+| **AI layer** (`ai/`) | Gọi LLM với ngữ cảnh inventory/topology đã lọc mật khẩu, IP quản trị và running-config đầy đủ (output chẩn đoán gửi cho AI chỉ được che bí mật, xem [8.3](#flow-chat)); ép output theo JSON schema, validate bằng Pydantic. |
 | **Policy engine** (`commands/policy.py`, `governance/`) | Allowlist lệnh đọc, phát hiện lệnh nguy hiểm, phân loại rủi ro, kiểm tra quyền. |
 | **Change workflow** (`changes/`) | Preview, duyệt, backup, áp dụng, xác minh, đề xuất rollback, batch nhiều thiết bị. |
 | **SSH layer** (`ssh/`) | Paramiko (IOS/ASA) và Netmiko (`paloalto_panos`) cho mọi lệnh SSH. Ngoài ra `integrations/console.py` mở telnet console (bootstrap) và `integrations/pnetlab.py` gọi HTTP tới PNETLab. |
@@ -334,7 +334,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 | `AI_PROVIDER` | `gemini` | `gemini` hoặc `anthropic`. |
 | `AI_MODEL` | `gemini-2.5-flash` | Model chính. Gợi ý: `gemini-2.5-flash-lite` (rẻ nhất), `gemini-2.5-flash`, `gemini-2.5-pro`. Với Anthropic: vd `claude-sonnet-5`. |
 | `AI_API_KEY` | *(trống)* | API key. Thiếu key thì mọi API khác vẫn chạy, riêng `/api/ai/chat` trả `503 ai_not_configured`. Gọi AI có thể phát sinh chi phí theo model; kiểm tra quota của tài khoản. |
-| `AI_INTENT_ROUTER` | `true` | Trước mỗi tin nhắn, gọi một lệnh model ngắn để phân loại ý định (xem [8.3](#flow-chat)). `false`: chỉ dùng rule từ khóa. |
+| `AI_INTENT_ROUTER` | `true` | Bật phân loại bằng model khi luồng chat đi tới nhánh `_wants_design()` và đủ điều kiện; các tin nhắn khác xử lý theo nhánh tương ứng (xem [8.3](#flow-chat)). `false`: nhánh đó chỉ dùng rule từ khóa. |
 | `AI_ROUTER_MODEL` | *(trống, dùng `AI_MODEL`)* | Model cho router; nên chọn model nhanh, rẻ (vd `gemini-2.5-flash-lite`). |
 
 ### 4.4. Monitoring, realtime, giới hạn
@@ -624,7 +624,8 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 | Hành động | ADMIN | OPERATOR (owner/editor) | OPERATOR (viewer) | VIEWER |
 |---|:-:|:-:|:-:|:-:|
 | Xem project, topology, dashboard | ✓ | ✓ | ✓ | ✓ |
-| Tạo project (kể cả "Tạo project mới" trong chat) | ✓ | ✓ | ✓ | ✗ |
+| Tạo project qua trang Projects / `POST /api/projects` | ✓ | ✓ | ✓ | ✗ |
+| Tạo project bằng câu "tạo project mới" trong chat (onboarding) | ✗ (nhánh chỉ dành cho OPERATOR) | ✓ | ✗ (bị 403 vì đang ở project chỉ có quyền viewer, vd lab mặc định) | ✗ |
 | Chia sẻ project / cài đặt project | ✓ | chỉ **owner** | ✗ | ✗ |
 | Sửa thiết bị, sơ đồ, design L2/L3 | ✓ | ✓ | ✗ | ✗ |
 | Chat tư vấn AI, lệnh đọc (`show`, `ping`, `traceroute`) | ✓ | ✓ | ✓ | ✓ |
@@ -632,7 +633,7 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 | Chat AI tạo cấu hình, Preview → Approve → Apply | ✓ | ✓ (được tự duyệt) | ✗ | ✗ |
 | AI Management (áp gợi ý chat lên PNETLab) | ✓ | khi project bật AI Management | ✗ | ✗ |
 | Bootstrap console, xuất PNETLab kèm khởi động node | ✓ | chỉ **owner** | ✗ | ✗ |
-| Xem lệnh trong change/batch | ✓ | ✓ | owner project | bị che |
+| Xem nguyên văn lệnh trong change/batch (`may_read_commands`) | ✓ | ✓ | ✓ (mọi OPERATOR; quyền truy cập bản ghi vẫn kiểm tra riêng) | bị che |
 | Audit log (`/api/audit-logs`) | ✓ (`?scope=all` xem mọi project) | ✗ | ✗ | ✗ |
 | Quản lý user, policy, draft/pending history | ✓ | ✗ | ✗ | ✗ |
 
@@ -743,7 +744,7 @@ Code trong `ai/routes.py::chat` xét tin nhắn **theo đúng thứ tự dưới
 
 **Ngữ cảnh gửi cho AI** (`AIService.build_context`): hostname, role, device_type, status của các thiết bị **managed + provisioned trong đúng project**; danh sách lệnh đọc được phép (đã loại `show running-config`); template cấu hình đang bật; bảng tương đương lệnh ASA; topology và addressing đã suy ra từ snapshot (đã loại mạng quản trị). Hệ thống **chủ động không đưa** mật khẩu, IP quản trị và running-config đầy đủ vào phần ngữ cảnh tự động này.
 
-> **Giới hạn:** Tin nhắn người dùng và các lượt hội thoại gần đây (`_recent_history`) được gửi nguyên văn cho nhà cung cấp AI, kể cả cho Intent Router. Nếu người dùng tự gõ mật khẩu, IP quản trị hay dán cấu hình vào chat, nội dung đó **có thể được gửi đi**. Quy định cho người dùng: **không nhập thông tin nhạy cảm vào chat.**
+> **Giới hạn:** (1) Ở luồng **troubleshoot**, lệnh và output đọc từ thiết bị được gửi cho `provider.explain()` sau khi qua `redact_sensitive()`. Hàm này che mật khẩu/secret/key nhưng **không che địa chỉ IP**, nên output (vd `show ip interface brief`) **có thể chứa IP quản trị** ngay cả khi người dùng không gõ IP nào. (2) Tin nhắn người dùng và các lượt hội thoại gần đây (`_recent_history`) được gửi nguyên văn cho nhà cung cấp AI, kể cả cho Intent Router. Nếu người dùng tự gõ mật khẩu, IP quản trị hay dán cấu hình vào chat, nội dung đó **có thể được gửi đi**. Quy định cho người dùng: **không nhập thông tin nhạy cảm vào chat.**
 
 ### 8.4. Luồng Monitor / Troubleshoot (chỉ đọc)
 
@@ -755,7 +756,8 @@ AIAction(monitor|troubleshoot)
   → ai_policy.evaluate() cho từng lệnh: allowlist, chặn lệnh nguy hiểm, chặn nối lệnh
       └ bị chặn → audit "ai.command_blocked" + 403 policy_violation (chưa mở SSH)
   → command_service.execute_readonly(): SSH → chạy lệnh → parser → lưu command_executions
-  → troubleshoot: output đã redact được gửi lại LLM để giải thích nguyên nhân và bước kiểm tra tiếp
+  → troubleshoot: output được che bí mật (KHÔNG che IP) rồi gửi lại LLM để giải thích nguyên nhân
+    và bước kiểm tra tiếp
   → lưu transcript + audit "ai.action"
 ```
 
@@ -764,8 +766,13 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
 ### 8.5. Luồng Cấu hình: **Preview → Approve → Apply → Verify**
 
 ```text
-① PREVIEW (AI hoặc POST /api/changes/preview)
-   - _require_project_config_access: ADMIN, hoặc OPERATOR owner/editor
+① PREVIEW
+   - Kiểm tra quyền vào, khác nhau theo đường đi:
+       · AI configure (/api/ai/chat): _require_project_config_access → chỉ ADMIN,
+         hoặc OPERATOR có quyền owner/editor trên project
+       · POST /api/changes/preview: change_project() → TEACHER/STUDENT chỉ cần quyền viewer
+         trên project (sau đó grant config.create theo thiết bị được kiểm tra trong
+         workflow.bind); các role khác cần quyền editor
    - validate_commands: chặn ký tự nối lệnh ; | & ` $( > < và xuống dòng
                          lệnh nguy hiểm / VLAN hệ thống / ip access-group → requires_confirmation
    - management_guard (chỉ config mode, không áp dụng PAN-OS): từ chối thay đổi trên interface
@@ -789,7 +796,8 @@ Parser hỗ trợ: interface, route (IOS/ASA/PAN-OS), OSPF neighbor, VLAN, switc
    - deployment_allowed: kiểm tra lại toàn bộ quyền, digest, hạn duyệt, maintenance window,
      reservation (thiết bị thật), thiết bị không offline
    - claim: tạo DeviceLease (khóa duy nhất mỗi thiết bị) + đổi trạng thái có điều kiện → running
-   - a. BACKUP "show running-config" → config_backups   (backup lỗi thì không cấu hình gì)
+   - a. BACKUP "show running-config" (PAN-OS: "show config running") → config_backups
+        (backup lỗi thì không cấu hình gì)
    - b. so baseline_hash: running-config đổi kể từ lúc preview → fail
    - c. kiểm tra lại quyền SAU khi backup (thu hồi quyền luôn thắng)
    - d. SSH: run_config (config mode) hoặc run_exec; PAN-OS: configure → set... → commit
@@ -971,7 +979,7 @@ Guard này **không bảo đảm** phát hiện mọi thao tác làm mất kết
 | Đóng băng đích + digest: đổi thiết bị/lệnh/baseline/policy sau khi duyệt thì phải duyệt lại | `governance/workflow.py::digest` |
 | Lease thiết bị: không cho hai worker cùng ghi lên một thiết bị | `DeviceLease` |
 | Header bảo mật: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `no-store` | `app.py` |
-| Ngữ cảnh AI tự động không chứa credential/IP quản trị/running-config; **nhưng tin nhắn và lịch sử chat do người dùng nhập được gửi nguyên văn cho provider** | `ai/service.py`, `ai/intent.py` |
+| Ngữ cảnh inventory/topology gửi AI (`build_context`) không chứa credential/IP quản trị/running-config. **Nhưng** output chẩn đoán troubleshoot chỉ được che bí mật (vẫn có thể chứa IP quản trị), và tin nhắn/lịch sử chat do người dùng nhập được gửi nguyên văn cho provider | `ai/service.py`, `ai/intent.py`, `history_extension/protection.py` |
 
 [↑ Về mục lục](#top)
 
@@ -1121,7 +1129,11 @@ Ngoài ra, hệ thống lưu **backup running-config** của thiết bị trư�
 ```bash
 cd ~/network-copilot
 sqlite3 backend/network_copilot.db ".backup 'backend/pre-upgrade.db'"
-git pull                                   # hoặc giải nén archive mới
+git fetch origin
+git log --oneline origin/main -5           # chọn commit đích đã kiểm tra
+git checkout <commit-đích>                 # repo đang ở detached HEAD do bước cài đã checkout hash
+# Hoặc, nếu chủ động chạy bản mới nhất: git checkout main && git pull --ff-only
+# Cài bằng archive: giải nén archive mới thay cho các lệnh git ở trên
 cd backend && ./scripts/setup_ai_server.sh # cài dependency mới, migration, chạy test
 sudo systemctl restart network-copilot
 ```
@@ -1295,7 +1307,7 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - Không có MFA đang hoạt động (xem [7.1](#rbac)).
 - Không hỗ trợ đầy đủ đa vendor; ASA/PAN-OS chỉ hỗ trợ một phần.
 - Kết quả AI và verification `best_effort` không phải chứng nhận mạng đã an toàn.
-- Không nói "AI không bao giờ thấy dữ liệu nhạy cảm": chỉ ngữ cảnh tự động được lọc, nội dung người dùng gõ vẫn được gửi đi.
+- Không nói "AI không bao giờ thấy dữ liệu nhạy cảm" hay "AI không thấy IP quản trị": chỉ ngữ cảnh inventory/topology được lọc; output troubleshoot (có thể chứa IP) và nội dung người dùng gõ vẫn được gửi đi.
 - Không nói management guard chặn mọi thao tác làm mất kết nối quản trị.
 - Không nói bootstrap console đi qua Preview → Approve → Apply.
 
@@ -1317,10 +1329,10 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - [ ] Project lab có thiết bị với hostname khớp PNETLab, credential đã lưu.
 - [ ] `smoke_test_lab.py` SSH thành công tới mọi thiết bị.
 - [ ] Chat "show ip interface brief trên R1" trả về output đã parse.
-- [ ] Lệnh nguy hiểm (`reload`, `write erase`) bị chặn với `policy_violation`.
+- [ ] Gửi `reload` / `write erase` vào API read-only (`POST /api/commands/execute-readonly`) bị từ chối với `policy_violation`. (Trong change workflow, các lệnh này **không** tự bị cấm mà chỉ bật `requires_confirmation`, trừ khi ADMIN thêm vào `forbidden_commands`.)
 - [ ] Một thay đổi VLAN đi đủ Preview → Approve → Apply → Verify, có backup và audit.
 - [ ] Batch ≥ 2 thiết bị có lệnh cần xác nhận yêu cầu `CONFIRM ALL`; batch 1 thiết bị yêu cầu hostname.
-- [ ] Tài khoản VIEWER không tạo được cấu hình/project; OPERATOR không thấy project không được chia sẻ.
+- [ ] Tài khoản VIEWER không tạo được cấu hình/project; OPERATOR chỉ thấy project mình sở hữu, project được chia sẻ và lab mặc định (quyền viewer).
 - [ ] Monitoring bật và dashboard hiển thị trạng thái mới.
 - [ ] Gunicorn chạy `gthread`, 1 worker, số thread lớn hơn `REALTIME_MAX_STREAMS`; service tự khởi động lại.
 - [ ] Có backup DB + khóa mã hóa và đã thử khôi phục.
@@ -1331,7 +1343,7 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 2. Minh họa clone, venv, `.env` (đã che khóa), `db upgrade`, khởi chạy, `/api/health`.
 3. Chọn project, nhập thiết bị/topology từ PNETLab, Test kết nối SSH.
 4. Chat lần lượt: câu lý thuyết, yêu cầu thiết kế, lệnh kiểm tra thiết bị; giải thích 4 nhãn router và cây quyết định ở [8.3](#flow-chat).
-5. Thử một lệnh bị chặn (`reload`) để minh họa policy.
+5. Gọi `POST /api/commands/execute-readonly` với `"command": "reload"` để minh họa policy đọc trả `403 policy_violation`. Không minh họa bằng chat, vì AI có thể hiểu đó là yêu cầu cấu hình và tạo preview.
 6. Tạo thay đổi VLAN nhỏ: giải thích risk, phân quyền, duyệt, backup, apply, verification; mở audit log.
 7. Đăng nhập bằng tài khoản VIEWER để chứng minh không vượt quyền; nêu các giới hạn ở [15.1](#security).
 
