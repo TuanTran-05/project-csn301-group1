@@ -96,33 +96,77 @@ class _NoSessionAPI(Exception):
     """The server is not a PNETLab with the session API (auto mode falls back)."""
 
 
+def _int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _ethernets(node: dict) -> dict:
+    """A node's interfaces as {index: interface}, whatever shape PNETLab sent."""
+    ethernets = node.get("ethernets") or node.get("ethernet") or {}
+    if isinstance(ethernets, list):
+        ethernets = dict(enumerate(ethernets))
+    if not isinstance(ethernets, dict):
+        return {}
+    return {str(k): v for k, v in ethernets.items() if isinstance(v, dict)}
+
+
+def _remote(eth: dict) -> tuple[int, str]:
+    """(peer node id, peer interface index) of a point-to-point cable, or (0, "")."""
+    for node_key, if_key in (("remote_id", "remote_if"), ("remote_node", "remote_if"),
+                             ("dst_id", "dst_if"), ("dest_id", "dest_if")):
+        peer = _int(eth.get(node_key))
+        if peer > 0:
+            peer_if = eth.get(if_key)
+            return peer, "" if peer_if is None else str(peer_if)
+    return 0, ""
+
+
 def session_links(nodes: dict) -> list[dict]:
     """EVE-NG style topology entries from the session API's node ``ethernets``.
 
     Every interface bound to a network (``network_id`` > 0) becomes a
     node -> network entry, the shape the importer already understands.
+    A cable drawn straight between two nodes is a PNETLab point-to-point
+    link: the interface has no network but names its peer (``remote_id`` /
+    ``remote_if``); each such cable becomes one node -> node entry.
     """
-    entries = []
+    by_id = {}
     for key, node in nodes.items():
-        if not isinstance(node, dict):
-            continue
-        ethernets = node.get("ethernets") or {}
-        if isinstance(ethernets, list):
-            ethernets = dict(enumerate(ethernets))
-        for index, eth in ethernets.items():
-            if not isinstance(eth, dict):
+        if isinstance(node, dict):
+            by_id[str(node.get("id", key))] = node
+
+    entries, seen = [], set()
+    for node_id, node in by_id.items():
+        for index, eth in _ethernets(node).items():
+            label = eth.get("name") or index
+            network_id = _int(eth.get("network_id"))
+            if network_id > 0:
+                entries.append({
+                    "source": f"node{node_id}", "source_type": "node",
+                    "source_label": label,
+                    "destination": f"network{network_id}", "destination_type": "network",
+                    "destination_label": "",
+                })
                 continue
-            try:
-                network_id = int(eth.get("network_id") or 0)
-            except (TypeError, ValueError):
+            peer, peer_if = _remote(eth)
+            if peer <= 0 or str(peer) == node_id:
                 continue
-            if network_id <= 0:
+            peer_eth = _ethernets(by_id.get(str(peer)) or {}).get(peer_if) or {}
+            peer_label = (eth.get("remote_if_name") or eth.get("remote_name")
+                          or peer_eth.get("name") or peer_if)
+            # Both ends report the same cable: keep it once.
+            cable = frozenset({(node_id, str(index)), (str(peer), peer_if)})
+            if cable in seen:
                 continue
+            seen.add(cable)
             entries.append({
-                "source": f"node{node.get('id', key)}", "source_type": "node",
-                "source_label": eth.get("name") or str(index),
-                "destination": f"network{network_id}", "destination_type": "network",
-                "destination_label": "",
+                "source": f"node{node_id}", "source_type": "node",
+                "source_label": label,
+                "destination": f"node{peer}", "destination_type": "node",
+                "destination_label": peer_label,
             })
     return entries
 
@@ -319,7 +363,13 @@ class PNETLabClient:
             networks = {str(n.get("id", i)): n for i, n in enumerate(networks) if isinstance(n, dict)}
         nodes = {str(k): v for k, v in nodes.items() if isinstance(v, dict)}
         networks = {str(k): v for k, v in networks.items() if isinstance(v, dict)}
-        return nodes, session_links(nodes), networks
+        links = session_links(nodes)
+        # Some builds also list the cables themselves, EVE-NG style.
+        for key in ("topology", "links"):
+            extra = current.get(key)
+            if isinstance(extra, list):
+                links.extend(e for e in extra if isinstance(e, dict) and e.get("source") and e.get("destination"))
+        return nodes, links, networks
 
     # -- public ------------------------------------------------------------------
 
