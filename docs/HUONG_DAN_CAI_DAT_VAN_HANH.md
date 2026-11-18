@@ -4,8 +4,9 @@
 > **Môn học:** CSN301 · **Nhóm:** Group 1
 > **Hệ điều hành triển khai:** Ubuntu Server 24.04 LTS / Debian 12 (Python ≥ 3.11). Máy dev: Windows / Linux / macOS
 > **Mô hình:** Flask backend all-in-one (API + giao diện web + scheduler) chạy trên node "AI Server" trong PNETLab, SQLite, LLM Gemini (mặc định) hoặc Anthropic
-> **Cập nhật:** 18/11/2026 · Nhánh mã nguồn: `main` (commit `75f45b3`)
+> **Cập nhật:** 18/11/2026 · Nhánh mã nguồn: `main`, commit `75f45b3d3f39fcc1680a2dbedc307656e975454c`
 > **Mục tiêu:** Từ lúc `git clone` về đến khi hệ thống chạy được trong lab: cài môi trường, cấu hình biến, triển khai, giải thích từng luồng hoạt động, cơ chế rule/policy, phân loại chat, phân quyền user, vận hành hằng ngày và xử lý lỗi.
+> **Mức kiểm chứng:** Tài liệu được đối chiếu với mã nguồn tại commit trên. Trong môi trường Linux (Python 3.13), các bước cài đặt, migration, seed, `/api/health`, đăng nhập và toàn bộ test suite (1995 test pass) **đã được chạy thử**. Các bước với thiết bị thật, PNETLab và AI key thật **chưa được kiểm chứng trong lab của nhóm**: cần thay IP, tài khoản, mật khẩu theo lab và kiểm tra kết quả thực tế.
 
 <a id="top"></a>
 
@@ -256,6 +257,8 @@ Cách 2: chỉ tạo ADMIN, không seed thiết bị:
 python scripts/manage_users.py ensure-admin admin        # hỏi mật khẩu, không hiển thị
 ```
 
+> `ensure-admin` sẽ **nâng quyền và kích hoạt lại** một tài khoản nếu username đó đã tồn tại (giữ nguyên mật khẩu cũ). Hãy chọn đúng username.
+
 Hệ thống chỉ có **duy nhất một ADMIN** (unique index `uq_single_admin`). Repository không chứa mật khẩu mặc định nào.
 
 ### Bước 6: Chạy server
@@ -278,7 +281,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 # {"access_token":"eyJ...", ...}
 ```
 
-> Nhóm đã chạy thử toàn bộ các bước trên với Python 3.13: migration, seed, `/api/health` và đăng nhập đều thành công.
+> Các bước trên đã được chạy thử với Python 3.13 khi biên soạn: migration, seed, `/api/health` và đăng nhập đều thành công. `/api/health` chỉ chứng minh ứng dụng đang trả lời, chưa chứng minh AI hay SSH hoạt động.
 
 [↑ Về mục lục](#top)
 
@@ -311,7 +314,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 | `PNETLAB_EXPORT_FOLDER` | `/Courses/CSN301-StudentLab/Group-1` | Thư mục trên PNETLab mà tài khoản export có quyền ghi. |
 | `PNETLAB_BOOT_TIMEOUT` | `900` | Thời gian chờ node boot khi export và khởi động (giây). |
 | `PNETLAB_BOOT_RETRY_SECONDS` | `30` | Chu kỳ thử lại console khi node đang boot. |
-| `PNETLAB_EXPORT_PING_CHECK` | `true` | Ping IP quản trị trước khi cấp, để tránh trùng IP trên LAN lab. |
+| `PNETLAB_EXPORT_PING_CHECK` | `true` | Ping IP quản trị trước khi cấp, để tránh trùng IP trên LAN lab. Ping không trả lời **không bảo đảm** IP còn trống (thiết bị có thể chặn ICMP). |
 | `BOOTSTRAP_PANOS_BOOT_SECONDS` | `900` | Chờ PA-VM boot khi bootstrap. |
 | `PANOS_COMMIT_TIMEOUT` | `600` | Timeout `commit` PAN-OS. |
 | `VERIFICATION_RETRIES` / `VERIFICATION_RETRY_SECONDS` | `2` / `5` | Số lần và khoảng cách đọc lại khi verify sau apply thất bại (link/trunk cần thời gian lên). |
@@ -324,7 +327,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 |---|---|---|
 | `AI_PROVIDER` | `gemini` | `gemini` hoặc `anthropic`. |
 | `AI_MODEL` | `gemini-2.5-flash` | Model chính. Gợi ý: `gemini-2.5-flash-lite` (rẻ nhất), `gemini-2.5-flash`, `gemini-2.5-pro`. Với Anthropic: vd `claude-sonnet-5`. |
-| `AI_API_KEY` | *(trống)* | API key. Thiếu key thì mọi API khác vẫn chạy, riêng `/api/ai/chat` trả `503 ai_not_configured`. |
+| `AI_API_KEY` | *(trống)* | API key. Thiếu key thì mọi API khác vẫn chạy, riêng `/api/ai/chat` trả `503 ai_not_configured`. Gọi AI có thể phát sinh chi phí theo model; kiểm tra quota của tài khoản. |
 | `AI_INTENT_ROUTER` | `true` | Trước mỗi tin nhắn, gọi một lệnh model ngắn để phân loại ý định (xem [8.3](#flow-chat)). `false`: chỉ dùng rule từ khóa. |
 | `AI_ROUTER_MODEL` | *(trống, dùng `AI_MODEL`)* | Model cho router; nên chọn model nhanh, rẻ (vd `gemini-2.5-flash-lite`). |
 
@@ -339,7 +342,7 @@ curl -s -X POST http://127.0.0.1:5000/api/auth/login \
 | `REALTIME_ENABLED` | `true` | Server-Sent Events cho trang chat. `false` thì UI tự chuyển sang polling. |
 | `REALTIME_POLL_SECONDS` / `REALTIME_MAX_SECONDS` / `REALTIME_MAX_STREAMS` | `2` / `55` / `20` | Chu kỳ kiểm tra, thời gian giữ một stream, số stream tối đa mỗi tiến trình. |
 | `MAX_PROJECTS_PER_USER` / `MAX_DEVICES_PER_PROJECT` / `MAX_LINKS_PER_PROJECT` | `20` / `300` / `1000` | Hạn mức (ADMIN miễn hạn mức project; `0` = tắt). |
-| `RATELIMIT_ENABLED` / `RATELIMIT_STORAGE_URI` | `true` / `memory://` | Giới hạn tần suất request. |
+| `RATELIMIT_ENABLED` / `RATELIMIT_STORAGE_URI` | `true` / `memory://` | Giới hạn tần suất request. `memory://` đếm riêng trong từng tiến trình, không dùng chung giữa nhiều worker. |
 
 ### 4.5. Biến chỉ dùng cho script
 
@@ -593,6 +596,8 @@ Quyền thực tế = Vai trò tài khoản (global role)
 
 Trang `/users` hiện tạo `ADMIN`/`OPERATOR`/`VIEWER`. `TEACHER`/`STUDENT` dùng qua các API governance (`/api/groups`, `/api/permissions`…), xem [`docs/scoped-backend.md`](scoped-backend.md).
 
+**MFA:** Database có các cột MFA, nhưng tại commit này MFA **không được thực thi**. Login trả `mfa_setup_required: false`, token của ADMIN chưa bật MFA được cấp kèm cờ `mfa_pending` và vẫn dùng được bình thường (đã thử gọi `/api/auth/me`). Không nên tuyên bố hệ thống có MFA.
+
 **Cơ chế token:** JWT chứa `token_version`. Đổi mật khẩu, đổi role hoặc vô hiệu hóa tài khoản sẽ tăng `token_version`, nên **mọi token cũ bị thu hồi ngay**. Role dùng để phân quyền luôn được **đọc từ database**, không lấy từ token, nên hạ quyền có hiệu lực tức thì. Không thể hạ quyền hoặc vô hiệu hóa ADMIN cuối cùng, và ADMIN không tự hạ quyền chính mình được.
 
 ### 7.2. Lớp 2: Mức truy cập project (`projects/service.py::access_level`)
@@ -638,7 +643,7 @@ Không thuộc các trường hợp    → không có quyền (API trả 404, kh
 
 - STUDENT **bị cấm** các action `config.approve`, `student.create`, `group.create`, `assignment.manage`, `lab.template`, `lab.delete`.
 - Grant con mất hiệu lực khi grant cha hết hạn hoặc bị thu hồi, khi người cấp bị khóa, hoặc khi người cấp không còn quản lý group.
-- **Smart Approval:** group bật `is_auto_approve` cho phép Student tự triển khai thay đổi **Low Risk** của chính mình. Thay đổi High Risk luôn cần Teacher/ADMIN duyệt.
+- **Smart Approval:** chỉ áp dụng khi đủ tất cả điều kiện: đó là change của chính Student, Student có grant `config.deploy`, thiết bị thuộc group, group đó bật `is_auto_approve`, rủi ro **Low** và change không cần xác nhận gõ tay. Thiếu một điều kiện thì cần Teacher/ADMIN duyệt.
 
 ### 7.5. Phiên chat và quyền riêng tư
 
@@ -876,6 +881,17 @@ Rủi ro do **backend tự tính**, không lấy từ người dùng hay AI. **C
 | Routing, `ip route`, `ip address`, ACL, `username`, `enable`, `line`, `snmp-server`, `aaa`, `crypto`, `interface vlan/loopback` | High |
 | Chỉ gồm lệnh an toàn: `hostname`, `vlan N`, `name`, `interface Gi/Fa/Eth…`, `description`, `switchport access vlan N`, `switchport mode access` | **Low** |
 | Change khôi phục (`source: restore`) | High + bắt buộc xác nhận |
+| Mọi trường hợp còn lại | High |
+
+> **Lưu ý nhãn môi trường:** Thiết bị có 5 giá trị `environment`: `pnetlab`, `physical`, `virtual`, `physical_lab`, `production`. Bộ phân loại rủi ro chỉ có quy tắc riêng cho `production`, `physical_lab` và `virtual`. Với thiết bị `pnetlab`/`physical`, rủi ro chỉ còn phụ thuộc role và nội dung lệnh. Project dùng một bộ nhãn khác (`pnetlab`/`physical`/`mixed`), không đồng nghĩa với nhãn của thiết bị.
+
+### 9.2b. Mức xác minh sau thay đổi (`changes/capabilities.py`)
+
+| Tier | Nhóm cấu hình IOS | Ý nghĩa |
+|---|---|---|
+| `level_a_core` | VLAN, access/trunk, mô tả và trạng thái cổng, IPv4 cổng, static route, lưu cấu hình | Xác minh **ngữ nghĩa** (đọc lại thiết bị và so với ý định) |
+| `level_a_extended` | ACL IPv4 chuẩn, DHCP pool, OSPF một area | Có recognizer giới hạn; cần bằng chứng lab trước khi coi là hoàn chỉnh |
+| `best_effort` | Mọi lệnh khác | Chỉ kiểm tra chung (output không có lỗi); **không bảo đảm** thay đổi đúng ý định |
 
 ### 9.3. Lệnh cần xác nhận gõ tay (typed confirmation)
 
@@ -1111,7 +1127,7 @@ Mọi lỗi đều trả JSON có `request_id`. Tìm `request_id` trong log serv
 
 | Triệu chứng | Nguyên nhân | Xử lý |
 |---|---|---|
-| `TypeError: unsupported operand type(s) for \|` khi import | Python 3.10 | Dùng Python ≥ 3.11 (Ubuntu 24.04 hoặc `python3.11`). |
+| Lỗi ngay khi import (thường là `TypeError` liên quan cú pháp `X \| None`) | Python 3.10 | Dùng Python ≥ 3.11 (Ubuntu 24.04 hoặc `python3.11`). |
 | `setup_ai_server.sh` dừng ở bước venv | Thiếu gói venv | `sudo apt install python3.12-venv` (đúng phiên bản). |
 | Lỗi Fernet / `CREDENTIAL_ENCRYPTION_KEY` khi lưu credential | Khóa trống hoặc sai định dạng | Sinh lại bằng lệnh ở Bước 3 (chỉ khi chưa có credential nào được lưu). |
 | `no such table` | Chưa migration hoặc đang mở DB khác | `flask --app wsgi db upgrade`; kiểm tra `DATABASE_URL`. |
@@ -1183,7 +1199,7 @@ show ip interface brief
 | "Console đang là VNC, đổi sang TELNET trong PNETLab" | Đổi kiểu console của node sang telnet. |
 | Bootstrap không đặt được IP | Node chưa chạy, hoặc thiếu dây nối tới **Management(Cloud0)**. |
 | PA-VM bootstrap lâu, timeout | Bình thường là nhiều phút; tăng `BOOTSTRAP_PANOS_BOOT_SECONDS`, chạy Gunicorn 1 worker. |
-| Job bootstrap/export trả 404 khi poll | Gunicorn chạy nhiều worker: chuyển về `--workers 1 --threads N`. |
+| Job bootstrap/export trả 404 "This bootstrap job does not exist (or the service restarted)" | Job chỉ nằm trong bộ nhớ tiến trình: Gunicorn chạy nhiều worker, hoặc service vừa restart. Chuyển về `--workers 1 --threads N`; kiểm tra trạng thái node thực tế trước khi chạy lại. |
 
 ### 13.8. Giao diện
 
@@ -1240,6 +1256,18 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 
 ---
 
+### 15.1. Những điều không được tuyên bố khi trình bày
+
+- `setup_ai_server.sh` **không** tạo systemd service, không cài Gunicorn và không cấu hình IP cho node (câu "installed systemd service" trong README đã cũ).
+- Không có rollback tự động; rollback chỉ là gợi ý.
+- Không có MFA đang hoạt động (xem [7.1](#rbac)).
+- Không hỗ trợ đầy đủ đa vendor; ASA/PAN-OS chỉ hỗ trợ một phần.
+- Kết quả AI và verification `best_effort` không phải chứng nhận mạng đã an toàn.
+
+[↑ Về mục lục](#top)
+
+---
+
 <a id="checklist"></a>
 ## 16. Checklist nghiệm thu
 
@@ -1260,6 +1288,16 @@ pytest tests/changes -q            # chỉ chạy một nhóm
 - [ ] Monitoring bật và dashboard hiển thị trạng thái mới.
 - [ ] Gunicorn chạy `gthread`, 1 worker; service tự khởi động lại.
 - [ ] Có backup DB + khóa mã hóa và đã thử khôi phục.
+
+### 16.1. Kịch bản trình bày gợi ý
+
+1. Giới thiệu mục tiêu, kiến trúc (mục 1) và môi trường lab thực tế của nhóm (IP, image, phiên bản).
+2. Minh họa clone, venv, `.env` (đã che khóa), `db upgrade`, khởi chạy, `/api/health`.
+3. Chọn project, nhập thiết bị/topology từ PNETLab, Test kết nối SSH.
+4. Chat lần lượt: câu lý thuyết, yêu cầu thiết kế, lệnh kiểm tra thiết bị; giải thích 4 nhãn router và cây quyết định ở [8.3](#flow-chat).
+5. Thử một lệnh bị chặn (`reload`) để minh họa policy.
+6. Tạo thay đổi VLAN nhỏ: giải thích risk, phân quyền, duyệt, backup, apply, verification; mở audit log.
+7. Đăng nhập bằng tài khoản VIEWER để chứng minh không vượt quyền; nêu các giới hạn ở [15.1](#security).
 
 [↑ Về mục lục](#top)
 
