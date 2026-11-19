@@ -64,7 +64,62 @@ def test_an_invalid_proposal_is_retried_with_the_reason(client, app, admin_heade
     response, provider = _ask(client, app, admin_headers, [cabled, PROPOSAL])
     assert response.status_code == 200, response.get_json()
     assert provider.calls == 2
-    assert "already cabled" in provider.prompts[1]["context"]["previous_attempt_error"]
+    assert "uplink to DSW1" in provider.prompts[1]["context"]["previous_attempt_error"]
+
+
+def _small_lab(make_device):
+    """Router EIU-R1 - switch EIU-S1, with switches PC1 and PC2 standing in for PCs."""
+    r1 = make_device("EIU-R1", "172.16.3.45", "core")
+    s1 = make_device("EIU-S1", "172.16.3.46", "access")
+    pc1 = make_device("PC1", "172.16.3.47", "access")
+    pc2 = make_device("PC2", "172.16.3.48", "access")
+    for a, ia, b, ib in ((r1, "GigabitEthernet0/0", s1, "GigabitEthernet0/0"),
+                         (s1, "GigabitEthernet0/1", pc1, "GigabitEthernet0/0"),
+                         (s1, "GigabitEthernet0/2", pc2, "GigabitEthernet0/0")):
+        db.session.add(TopologyLink(project_id=r1.project_id, device_a_id=a.id, interface_a=ia,
+                                    device_b_id=b.id, interface_b=ib, link_type="physical"))
+    db.session.commit()
+    return r1, s1
+
+
+def test_a_port_cabled_to_a_pc_can_be_put_in_a_vlan(client, app, admin_headers, make_device):
+    _small_lab(make_device)
+    proposal = {
+        "explanation": "PC1 vào VLAN 10, PC2 vào VLAN 20.",
+        "addressing_pool": None,
+        "design": {
+            **EMPTY,
+            "vlans": [{"vlan_id": 10, "name": "VLAN_10"}, {"vlan_id": 20, "name": "VLAN_20"}],
+            "access_ports": [
+                {"hostname": "EIU-S1", "interface": "GigabitEthernet0/1", "vlan_id": 10},
+                {"hostname": "EIU-S1", "interface": "GigabitEthernet0/2", "vlan_id": 20},
+            ],
+        },
+    }
+    response, provider = _ask(client, app, admin_headers, proposal,
+                              message="Put PC1 in VLAN 10 and PC2 in VLAN 20")
+    assert response.status_code == 200, response.get_json()
+    assert provider.calls == 1
+    ports = {(p["interface"], p["vlan_id"]) for p in response.get_json()["design"]["access_ports"]}
+    assert ports == {("GigabitEthernet0/1", 10), ("GigabitEthernet0/2", 20)}
+
+    s1 = next(d for d in provider.prompts[0]["context"]["devices"] if d["hostname"] == "EIU-S1")
+    assert s1["end_host_ports"] == [
+        {"interface": "GigabitEthernet0/1", "connected_to": "PC1"},
+        {"interface": "GigabitEthernet0/2", "connected_to": "PC2"},
+    ]
+
+
+def test_the_uplink_to_the_router_is_never_an_access_port(client, app, admin_headers, make_device):
+    _small_lab(make_device)
+    bad = {
+        "explanation": "x", "addressing_pool": None,
+        "design": {**EMPTY, "vlans": [{"vlan_id": 10, "name": "VLAN_10"}],
+                   "access_ports": [{"hostname": "EIU-S1", "interface": "GigabitEthernet0/0", "vlan_id": 10}]},
+    }
+    response, provider = _ask(client, app, admin_headers, [bad, bad])
+    assert response.status_code == 422
+    assert "uplink to EIU-R1" in provider.prompts[1]["context"]["previous_attempt_error"]
 
 
 def test_two_invalid_proposals_answer_a_clear_error(client, app, admin_headers, make_device):
@@ -120,3 +175,14 @@ def test_apply_refuses_a_message_that_is_not_a_design(client, app, admin_headers
     body = client.post("/api/ai/chat", headers=admin_headers, json={"message": "xin chào"}).get_json()
     response = client.post(f"/api/chat/messages/{body['chat_message_id']}/apply-design", headers=admin_headers)
     assert response.status_code == 404
+
+
+def test_a_failed_design_answers_in_english_on_the_english_page(client, app, admin_headers, make_device):
+    _lab(make_device)
+    unknown = {**PROPOSAL, "design": {**EMPTY, "ospf": [{"hostname": "R99", "process_id": 1}]}}
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(responses=unknown)
+    session = client.post("/api/chat/sessions", headers=admin_headers).get_json()
+    response = client.post("/api/ai/chat", headers=admin_headers, json={
+        "message": "Run OSPF on R99", "session_id": session["id"], "mode": "design", "language": "en"})
+    assert response.status_code == 422
+    assert response.get_json()["message"].startswith("The AI could not produce a valid design")

@@ -145,8 +145,14 @@ def _verify_once(change, client):
             from ..parsers import extract_interface_stanza
             expected = check["expectation"]["data"].get("description")
             stanza = extract_interface_stanza(output, check["expectation"]["data"]["interface"])
-            desired = (f" description {expected}" if expected is not None else " no description")
-            passed = desired in stanza
+            if expected is not None:
+                passed = f" description {expected}" in stanza
+            else:
+                # IOS never prints "no description": a removed description
+                # is simply a stanza without a description line.
+                passed = bool(stanza) and not any(
+                    line.strip().casefold().startswith("description ") for line in stanza
+                )
             details = ["Interface description expectation satisfied."] if passed else ["Interface description expectation was not satisfied."]
         elif check.get("strategy") in {"interface_admin_state", "interface_ipv4"}:
             from ..parsers import parse_ip_interface_brief

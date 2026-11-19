@@ -23,6 +23,7 @@ from ..projects.model import Project
 from ..audit.service import record_event
 from . import design_assistant, port_choice, intent
 from .schemas import MAX_CHAT_MESSAGE_LENGTH, ChatRequest
+from .language import ui_text
 from .service import SCHEMA_MISMATCH, AIService
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,34 @@ def _wants_design(message: str, session_id: int, project_id: int) -> bool:
             logger.info("Chat message routed as %s %s", route.intent, route.devices or "")
             return route.intent == "design"
     return requests_network_design(message) or _continues_design(session_id, project_id, message)
+
+
+_L2L3_REQUEST = re.compile(
+    r"\bvlans?\b|\bsubnets?\b|\bgateways?\b|\bip\b|\bdải\b|địa chỉ|\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}",
+    re.I,
+)
+
+
+def _design_mode_hint(exc: ValidationError, project, message: str) -> ValidationError:
+    """Point to Network design when an addressing request failed as a drawing.
+
+    With Network design off, "VLAN 10 uses 172.20.5.0/26 …" for a project that
+    already has devices reaches the diagram advisor, which draws pictures and
+    cannot change the project's VLANs or addresses. Say where it belongs
+    instead of a bare "could not produce a diagram".
+    """
+    from ..devices.model import Device
+
+    if not _L2L3_REQUEST.search(message or ""):
+        return exc
+    if not db.session.query(Device.id).filter_by(project_id=project.id).first():
+        return exc
+    return ValidationError(ui_text(
+        "Project này đã có thiết bị. Để AI thiết kế VLAN, địa chỉ IP và gateway cho các "
+        "thiết bị đó, hãy bật nút Thiết kế mạng rồi gửi lại yêu cầu.",
+        "This project already has devices. To have the AI design VLANs, IP addresses and "
+        "gateways for them, turn on Network design and send the request again.",
+    ))
 
 
 def _after_design(session_id: int) -> bool:
@@ -292,7 +321,13 @@ def chat():
     elif not project_read_only and user.role != "VIEWER" and _wants_design(
         data.message, data.session_id, project.id
     ):
-        result = AIService().advise(data.message, data.session_id, project.id)
+        try:
+            result = AIService().advise(data.message, data.session_id, project.id)
+        except ValidationError as exc:
+            hint = _design_mode_hint(exc, project, data.message)
+            if hint is exc:
+                raise
+            raise hint from exc
     else:
         try:
             result = AIService().handle(
@@ -314,10 +349,11 @@ def chat():
         )
         if generated_addresses:
             pool = result.get("addressing_pool") or project.addressing_pool or "10.100.0.0/16"
-            result["explanation"] = (
-                result.get("explanation", "")
-                + f"\n\nCác địa chỉ IP còn thiếu được đề xuất từ dải {pool}; "
-                "chưa được áp dụng lên thiết bị."
+            result["explanation"] = result.get("explanation", "") + "\n\n" + ui_text(
+                f"Các địa chỉ IP còn thiếu được đề xuất từ dải {pool}; "
+                "chưa được áp dụng lên thiết bị.",
+                f"Missing IP addresses are suggested from {pool}; "
+                "nothing has been applied to the devices.",
             )
     saved = record_chat_message(
         user_id, username, "assistant", result.get("explanation", ""), result,

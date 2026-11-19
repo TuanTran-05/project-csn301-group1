@@ -29,6 +29,7 @@ from .model import (
     DesignSvi,
     DesignVlan,
 )
+from .interfaces import same_interface
 from .service import list_links
 
 
@@ -104,6 +105,32 @@ def _ospf_networks(device, links, svis, extra=()) -> list[ipaddress.IPv4Network]
             prefix = getattr(row, "prefix_length", 32)
             networks.add(ipaddress.ip_network(f"{row.ip}/{prefix}", strict=False))
     return sorted(networks, key=lambda n: (int(n.network_address), n.prefixlen))
+
+
+def _trunk_switch_side(sub, links, entry, trunked: set) -> None:
+    """Make the switch port facing a router-on-a-stick a trunk.
+
+    The subinterfaces tag each VLAN with dot1Q, so the switch end of that
+    cable has to carry tagged frames. A link already drawn as a trunk gets its
+    trunk commands from the link itself; a plain physical cable would stay an
+    access port in VLAN 1 and no VLAN would reach the router.
+    """
+    for link in links:
+        if link.link_type != "physical" or link.channel_id:
+            continue
+        for side, other in (("a", "b"), ("b", "a")):
+            router, interface, *_ = _ends(link, side)
+            if router is None or router.id != sub.device_id or not same_interface(interface, sub.interface):
+                continue
+            switch, switch_interface, *_ = _ends(link, other)
+            if (switch is None or not switch.managed or switch.device_type != "cisco_ios"
+                    or switch.role not in SWITCH_ROLES):
+                continue
+            key = (switch.id, switch_interface.lower())
+            if key in trunked:
+                continue
+            trunked.add(key)
+            entry(switch)["links"].extend([f"interface {switch_interface}", "switchport mode trunk"])
 
 
 def build_plan(project, link_ids: list[int] | None = None) -> dict:
@@ -185,6 +212,7 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
         entry(loop.device)["svis"].extend([
             f"interface Loopback{loop.number}", f"ip address {loop.ip} 255.255.255.255",
         ])
+    trunked: set[tuple[int, str]] = set()
     for sub in subifs:
         network = ipaddress.ip_network(f"{sub.ip}/{sub.prefix_length}", strict=False)
         item = entry(sub.device)
@@ -195,6 +223,7 @@ def build_plan(project, link_ids: list[int] | None = None) -> dict:
         parent = f"interface {sub.interface}"
         if parent not in item["links"] and parent not in item["svis"]:
             item["svis"][:0] = [parent, "no shutdown"]
+        _trunk_switch_side(sub, all_links, entry, trunked)
     for route in routes:
         network = ipaddress.ip_network(f"{route.network}/{route.prefix_length}")
         item = entry(route.device)

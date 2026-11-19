@@ -33,6 +33,7 @@ from ..devices.model import Device
 from ..errors import ForbiddenError, PolicyViolationError, ValidationError
 from ..extensions import db
 from ..parsers import parse_command_output
+from .language import ui_text
 from .provider import build_provider
 from .schemas import (
     AIAction,
@@ -381,9 +382,10 @@ class AIService:
                 break
             except (ValidationError, PydanticValidationError, ValueError) as exc:
                 if attempt:
-                    raise ValidationError(
-                        "AI chưa tạo được sơ đồ hợp lệ. Vui lòng thử lại."
-                    ) from exc
+                    raise ValidationError(ui_text(
+                        "AI chưa tạo được sơ đồ hợp lệ. Vui lòng thử lại.",
+                        "The AI could not produce a valid diagram. Please try again.",
+                    )) from exc
         return {
             "intent": "advice",
             **advice.model_dump(),
