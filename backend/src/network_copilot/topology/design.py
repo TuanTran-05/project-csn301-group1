@@ -1,6 +1,7 @@
 """Design intent beyond cabling: VLANs, access ports, SVIs, static routes, OSPF."""
 
 import ipaddress
+import re
 
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -170,6 +171,26 @@ def _make_vlan(project, payload):
     return DesignVlan(project_id=project.id, vlan_id=data.vlan_id, name=data.name)
 
 
+END_HOST_KINDS = ("pc", "server")
+# CSN301 labs use small IOSv-L2 switches in place of PCs (VPCS cannot be
+# managed over SSH) and keep the host name: PC1, HOST2, SERVER3, ...
+_END_HOST_NAME = re.compile(r"^(?:PC|HOST|SERVER|SRV|LAPTOP|CLIENT)[-_]?\d*$", re.I)
+
+
+def access_port_allowed_on(link, peer) -> bool:
+    """Whether a cabled interface may become an access port.
+
+    True only for a plain physical cable to an end host: an unmanaged PC or
+    server, or an access-role switch named like a host (PC1) that the lab
+    uses in place of a PC. A cable between two real switches stays an uplink.
+    """
+    if link.link_type in ("trunk", "routed") or link.channel_id or peer is None:
+        return False
+    if peer.kind in END_HOST_KINDS:
+        return True
+    return peer.kind == "switch" and peer.role == "access" and bool(_END_HOST_NAME.match(peer.hostname or ""))
+
+
 def _make_access_port(project, payload):
     data = validate(AccessPortSchema, payload, "Access port")
     device = _device(project, data.device_id, roles=SWITCH_ROLES)
@@ -179,8 +200,18 @@ def _make_access_port(project, payload):
             db.or_(TopologyLink.device_a_id == device.id, TopologyLink.device_b_id == device.id))
         if same_interface(data.interface, link.interface_a if link.device_a_id == device.id else link.interface_b)
     ]
-    if cabled:
-        raise ConflictError(f"{data.interface} on {device.hostname} is already cabled to another device.")
+    for link in cabled:
+        # A cable to an end host (a PC, a server, or a lab switch standing in
+        # for a PC) is exactly where an access port goes. A trunk, a routed
+        # link, a port-channel member or a cable to a router, firewall or
+        # layer-3/upstream switch is an uplink and must stay as it is.
+        peer = link.device_b if link.device_a_id == device.id else link.device_a
+        if not access_port_allowed_on(link, peer):
+            raise ConflictError(
+                f"{data.interface} on {device.hostname} is an uplink to "
+                f"{peer.hostname if peer else 'another device'}; an access port can only "
+                "be set on a port cabled to an end host."
+            )
     if db.session.query(DesignAccessPort).filter(
         DesignAccessPort.device_id == device.id,
         db.func.lower(DesignAccessPort.interface) == data.interface.lower(),
