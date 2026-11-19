@@ -70,14 +70,46 @@ def test_a_change_from_the_chat_applies_without_saving_a_baseline_by_hand(app, c
     assert any("ip address 172.20.5.163 255.255.255.240" in batch for batch in lab["fake"].config_batches)
 
 
-def test_an_existing_baseline_is_not_saved_again(db, lab):
+def test_an_unchanged_baseline_is_not_stored_twice(db, lab):
     db.session.add(ConfigBackup(device_id=lab["device"].id, reason="approval_baseline",
-                                running_config="hostname PC1"))
+                                running_config="hostname PC1\n!\nend"))
     db.session.commit()
 
     assert ensure_baseline(lab["device"]) is True
     assert _baselines(db, lab["device"]) == 1
-    assert lab["fake"].show_commands == []
+
+
+def test_a_stale_baseline_is_refreshed_so_the_chat_change_still_applies(app, client, db, lab):
+    # The device was changed outside NetAI (console, a reload, a failed
+    # post-change backup): the newest saved config no longer matches it.
+    # Before, the apply refused with "Running configuration changed since
+    # preview" and the user had to press "Lưu cấu hình nền" by hand first.
+    db.session.add(ConfigBackup(device_id=lab["device"].id, reason="approval_baseline",
+                                running_config="hostname OLD\n!\nend"))
+    db.session.commit()
+    app.config["AI_PROVIDER_INSTANCE"] = FakeAIProvider(PLAN)
+
+    chat = client.post("/api/ai/chat", headers=lab["headers"], json={"message": "đặt IP cho PC1 trên Gi0/0"})
+
+    assert chat.status_code == 200, chat.get_json()
+    assert _baselines(db, lab["device"]) == 2
+    batch_id = chat.get_json()["batch"]["id"]
+    approved = client.post(f"/api/change-batches/{batch_id}/approve", headers=lab["headers"])
+    assert approved.status_code == 200, approved.get_json()
+    applied = client.post(f"/api/change-batches/{batch_id}/apply", headers=lab["headers"],
+                          json={"confirmation": "PC1"})
+    assert applied.status_code == 200, applied.get_json()
+    assert any("ip address 172.20.5.163 255.255.255.240" in batch for batch in lab["fake"].config_batches)
+
+
+def test_an_unreachable_device_keeps_its_existing_baseline(db, lab):
+    db.session.add(ConfigBackup(device_id=lab["device"].id, reason="approval_baseline",
+                                running_config="hostname PC1"))
+    db.session.commit()
+    lab["factory"].set_failing("PC1", SSHConnectionError("PC1", "timed out"))
+
+    assert ensure_baseline(lab["device"]) is True
+    assert _baselines(db, lab["device"]) == 1
 
 
 def test_an_isolated_virtual_device_needs_no_baseline(db, lab):

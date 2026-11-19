@@ -24,28 +24,43 @@ def needs_baseline(device: Device) -> bool:
 
 
 def ensure_baseline(device: Device) -> bool:
-    """Save the device's first baseline if it has none; True when one exists.
+    """Make the newest saved config match the device; True when a baseline exists.
 
-    Without it a change to a PNETLab or physical device stops at approval
-    with "capture a baseline", which a new user cannot guess. So NetAI saves
-    one itself, when the device first answers on SSH (after the console
-    bootstrap) and again, if still missing, before it previews a change.
-    A device that cannot be reached is left as it is: the change is still
-    refused at approval, exactly as before.
+    A change to a PNETLab or physical device is frozen against the newest
+    backup at preview, and the apply refuses when the device no longer
+    matches it. Saving only a *first* baseline was not enough: once the
+    device changed outside NetAI (console, reload, a failed post-change
+    backup) that old backup was stale and every change stopped with
+    "Running configuration changed since preview" until the user pressed
+    "Lưu cấu hình nền" by hand. So NetAI reads the running config before it
+    previews a change and stores it when it differs from the newest backup.
+    A device that cannot be reached keeps whatever baseline it has.
     """
     if not needs_baseline(device) or not device.managed:
         return True
-    if db.session.query(ConfigBackup.id).filter_by(device_id=device.id).first() is not None:
-        return True
+    latest = (
+        db.session.query(ConfigBackup)
+        .filter_by(device_id=device.id)
+        .order_by(ConfigBackup.id.desc())
+        .first()
+    )
     from ..governance.model import DeviceLease
 
     if db.session.get(DeviceLease, device.id) is not None:
-        return False
+        return latest is not None
     try:
-        capture_backup(device, reason="approval_baseline")
+        output = build_client_for_device(device).run_show(backup_command_for(device)).output
     except Exception as exc:  # unreachable, no login yet: leave it to the manual button
         logger.warning("Could not save a baseline for %s: %s", device.hostname, exc)
-        return False
+        return latest is not None
+    from ..governance.workflow import config_hash
+
+    if latest is not None and latest.running_config is not None and \
+            config_hash(latest.running_config) == config_hash(output or ""):
+        return True
+    db.session.add(ConfigBackup(device_id=device.id, running_config=output, reason="approval_baseline"))
+    db.session.commit()
+    logger.info("Stored approval_baseline backup for %s.", device.hostname)
     return True
 
 

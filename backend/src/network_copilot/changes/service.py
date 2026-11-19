@@ -529,11 +529,16 @@ def create_preview(
     group_id: int | None = None,
     assignment_id: int | None = None,
 ) -> ChangeRequest:
-    """Validate a change and store it as pending_approval. Never touches SSH.
+    """Validate a change and store it as pending_approval.
 
+    The only SSH it opens is a read of the running config, so the baseline
+    the change is frozen against is current (see ensure_baseline).
     ``project_id`` confines the target to one project; routes always pass it.
     """
     device = device_service.get_device(device_id, project_id)
+    from ..backups.service import ensure_baseline
+
+    ensure_baseline(device)
 
     change = prepare_change(
         user_id,
