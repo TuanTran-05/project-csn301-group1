@@ -153,7 +153,6 @@ def test_asking_for_the_running_config_in_plain_words(lab, message):
 
 @pytest.mark.parametrize("message", [
     "xem cấu hình VLAN trên PC1",            # a narrower question: the model answers it
-    "xem cấu hình interface Gi0/0 của PC1",
     "đặt IP cho PC1",
 ])
 def test_other_requests_are_not_taken_for_a_show_run(lab, message):

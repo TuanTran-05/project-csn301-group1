@@ -175,3 +175,38 @@ def test_a_diagram_change_naming_a_device_still_goes_to_the_design(client, app, 
     reply = chat.say("vẽ lại sơ đồ mạng, thêm 1 switch nối với ROUTER-R1", {"intent": "design"}, DESIGN)
 
     assert reply["intent"] == "advice"
+
+
+BAD_DIAGRAM = {"explanation": "x", "diagram": {"title": "x", "nodes": [], "links": []}}
+
+
+def _failed_drawing(client, app, operator, language):
+    provider = FakeAIProvider(responses=[{"intent": "design"}, BAD_DIAGRAM, BAD_DIAGRAM])
+    app.config["AI_PROVIDER_INSTANCE"] = provider
+    return client.post("/api/ai/chat", headers=operator, json={
+        "message": "Use 172.20.5.0/24 with VLAN 10 for PC1 and VLAN 20 for PC2, gateways on ROUTER-R1",
+        "language": language,
+    })
+
+
+def test_an_addressing_request_without_design_mode_points_to_network_design(client, app, operator):
+    response = _failed_drawing(client, app, operator, "en")
+    assert response.status_code == 422
+    message = response.get_json()["message"]
+    assert "turn on Network design" in message
+
+
+def test_the_hint_follows_the_vietnamese_page(client, app, operator):
+    response = _failed_drawing(client, app, operator, "vi")
+    assert response.status_code == 422
+    assert "bật nút Thiết kế mạng" in response.get_json()["message"]
+
+
+def test_a_failed_drawing_in_an_empty_project_keeps_the_plain_error_in_english(client, app, db, operator):
+    from network_copilot.devices.model import Device
+
+    db.session.query(Device).delete()
+    db.session.commit()
+    response = _failed_drawing(client, app, operator, "en")
+    assert response.status_code == 422
+    assert response.get_json()["message"] == "The AI could not produce a valid diagram. Please try again."

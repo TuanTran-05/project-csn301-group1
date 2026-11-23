@@ -191,6 +191,9 @@ def _parse_admin_state(commands: list[str]) -> OperationExpectation | None:
 
 
 def _parse_interface_ipv4(commands: list[str]) -> OperationExpectation | None:
+    # A switch port has to leave switching first; that is part of addressing it.
+    if len(commands) == 3 and _fullmatch(r"no\s+switchport", commands[1]):
+        commands = [commands[0], commands[2]]
     if len(commands) != 2:
         return None
     interface = _parse_interface(commands[0])

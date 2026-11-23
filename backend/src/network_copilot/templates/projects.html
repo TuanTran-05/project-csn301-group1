@@ -645,7 +645,8 @@
                   </details>
                   <details class="topology-more-actions">
                     <summary aria-label="Thêm thao tác sơ đồ" title="Thêm thao tác">⋮</summary>
-                    <div class="topology-more-menu">
+                    <div class="topology-more-menu"
+                         @click="$event.target.closest('button') && $el.closest('details').removeAttribute('open')">
                       <button type="button" :class="{ 'primary-btn': linkMode }" @click="toggleLinkMode()" x-show="canEdit"
                               title="Kéo từ thiết bị nguồn sang thiết bị đích (hoặc bấm lần lượt hai thiết bị); cổng trống được chọn tự động">
                         <span x-text="linkMode ? 'Đang nối dây… (Esc để dừng)' : 'Nối dây'"></span>

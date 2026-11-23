@@ -107,3 +107,38 @@ def test_lint_flags_single_member_channels(client, admin_headers, base):
         "device_a_id": a["id"], "device_b_id": b["id"], "link_type": "trunk", "channel_id": 4})
     issues = client.get(f"{base}/lint", headers=admin_headers).get_json()["issues"]
     assert "channel_single" in {i["code"] for i in issues}
+
+
+def test_router_on_a_stick_over_a_plain_cable_trunks_the_switch_port(client, admin_headers, base):
+    router, sw = device(client, admin_headers, base), device(client, admin_headers, base, "switch")
+    pc = device(client, admin_headers, base, "pc")
+    client.post(f"{base}/links", headers=admin_headers, json={
+        "device_a_id": router["id"], "interface_a": "Gi0/0", "device_b_id": sw["id"], "interface_b": "Gi0/0"})
+    client.post(f"{base}/links", headers=admin_headers, json={
+        "device_a_id": sw["id"], "interface_a": "Gi0/1", "device_b_id": pc["id"], "interface_b": "Gi0/0"})
+    client.post(f"{base}/design/vlans", headers=admin_headers, json={"vlan_id": 10, "name": "USERS"})
+    res = client.post(f"{base}/design/subinterfaces", headers=admin_headers, json={
+        "device_id": router["id"], "interface": "Gi0/0", "vlan_id": 10, "ip": "172.20.5.1", "prefix_length": 26})
+    assert res.status_code == 201, res.get_json()
+    # the switch port cabled to the PC can take the VLAN; the uplink cannot
+    assert client.post(f"{base}/design/access-ports", headers=admin_headers, json={
+        "device_id": sw["id"], "interface": "Gi0/1", "vlan_id": 10}).status_code == 201
+    refused = client.post(f"{base}/design/access-ports", headers=admin_headers, json={
+        "device_id": sw["id"], "interface": "Gi0/0", "vlan_id": 10})
+    assert refused.status_code == 409 and "uplink" in refused.get_json()["message"]
+
+    cmds = commands_for(plan(client, admin_headers, base), sw["hostname"])
+    assert cmds.count("switchport mode trunk") == 1
+    assert cmds[cmds.index("switchport mode trunk") - 1] == "interface Gi0/0"
+    assert "switchport access vlan 10" in cmds
+
+
+def test_a_trunk_link_is_not_trunked_twice_for_router_on_a_stick(client, admin_headers, base):
+    router, sw = device(client, admin_headers, base), device(client, admin_headers, base, "switch")
+    client.post(f"{base}/links", headers=admin_headers, json={
+        "device_a_id": router["id"], "interface_a": "Gi0/0", "device_b_id": sw["id"], "link_type": "trunk"})
+    client.post(f"{base}/design/vlans", headers=admin_headers, json={"vlan_id": 10, "name": "USERS"})
+    client.post(f"{base}/design/subinterfaces", headers=admin_headers, json={
+        "device_id": router["id"], "interface": "Gi0/0", "vlan_id": 10, "ip": "192.168.10.1", "prefix_length": 24})
+    cmds = commands_for(plan(client, admin_headers, base), sw["hostname"])
+    assert cmds.count("switchport mode trunk") == 1

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticVa
 
 from ..errors import AppError, ValidationError
 from ..extensions import db
+from .language import ui_text
 
 DESIGN_PROMPT = """You design the Layer 2 / Layer 3 configuration of a Cisco lab
 network from a request written in everyday Vietnamese or English. The user
@@ -37,8 +38,11 @@ Rules:
 - vlans: vlan_id 2-4094 except 1002-1005; name is letters, digits, _ or -
   (max 32), e.g. KE_TOAN, KY_THUAT, KHACH, MGMT.
 - access_ports: only on devices whose role is "access" or "distribution";
-  interface is "GigabitEthernet0/N" with N below that device's port_count and
-  not in its cabled_interfaces; vlan_id must be in vlans.
+  vlan_id must be in vlans. The interface is either one listed in that
+  device's end_host_ports (the port cabled to a PC or host: use it when the
+  user puts a named device such as "PC1" in a VLAN), or a free
+  "GigabitEthernetX/Y" port that is not in its cabled_interfaces. Never an
+  uplink: a cabled interface that is not in end_host_ports.
 - svis: the gateway of a VLAN, on an "access" or "distribution" switch,
   normally the distribution (layer 3) switch. Use ip "auto" with
   prefix_length 24 unless the user gave an address or subnet; "auto" picks a
@@ -175,17 +179,24 @@ def build_context(project, conversation: list[dict]) -> dict:
     """Devices, cables and current design, without any management address."""
     from ..devices.model import Device
     from ..topology import ipam
-    from ..topology.design import export_design
+    from ..topology.design import SWITCH_ROLES, access_port_allowed_on, export_design
     from ..topology.service import list_links
     from ..topology.templates import template_for_device
 
-    devices = db.session.query(Device).filter_by(project_id=project.id).order_by(Device.hostname).all()
+    devices =db.session.query(Device).filter_by(project_id=project.id).order_by(Device.hostname).all()
     names = {device.id: device.hostname for device in devices}
     links = list_links(project.id)
     cabled: dict[int, list[str]] = {}
+    end_hosts: dict[int, list[dict]] = {}
     for link in links:
         cabled.setdefault(link.device_a_id, []).append(link.interface_a)
         cabled.setdefault(link.device_b_id, []).append(link.interface_b)
+        for own, interface, peer in ((link.device_a, link.interface_a, link.device_b),
+                                     (link.device_b, link.interface_b, link.device_a)):
+            if own is not None and own.role in SWITCH_ROLES and access_port_allowed_on(link, peer):
+                end_hosts.setdefault(own.id, []).append(
+                    {"interface": interface, "connected_to": peer.hostname}
+                )
     return {
         "project": project.name,
         "addressing_pool": str(ipam.pool_for(project)),
@@ -199,6 +210,7 @@ def build_context(project, conversation: list[dict]) -> dict:
                 "lifecycle": device.lifecycle,
                 "port_count": template_for_device(device)["ports"],
                 "cabled_interfaces": sorted(cabled.get(device.id, [])),
+                "end_host_ports": sorted(end_hosts.get(device.id, []), key=lambda p: p["interface"]),
             }
             for device in devices
         ],
@@ -309,7 +321,11 @@ def propose(provider, message: str, project, conversation: list[dict]) -> dict:
             error = f"The answer is not valid JSON: {exc}"
     else:
         raise ValidationError(
-            "AI chưa tạo được thiết kế hợp lệ cho project này. Hãy mô tả lại yêu cầu rõ hơn.",
+            ui_text(
+                "AI chưa tạo được thiết kế hợp lệ cho project này. Hãy mô tả lại yêu cầu rõ hơn.",
+                "The AI could not produce a valid design for this project. "
+                "Please describe the request more precisely.",
+            ),
             {"reason": [error]},
         )
     return {
