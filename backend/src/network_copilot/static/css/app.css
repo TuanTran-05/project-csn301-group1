@@ -3151,7 +3151,12 @@ kbd { background: var(--surface-raised); border: 1px solid var(--border); border
   background: #fff;
   box-shadow: 0 4px 14px rgba(20, 48, 72, 0.045);
 }
-.app-shell .project-ai-diagram-card .ai-diagram-scroll { max-height: 220px; overflow: auto; }
+.app-shell .project-ai-diagram-card .ai-diagram-scroll { max-height: 380px; overflow: auto; }
+/* Draw the suggested diagram at its natural size instead of stretching it to
+   the full card width, which zoomed it far past the scroll box. */
+.app-shell .project-ai-diagram-card .ai-network-diagram { width: auto; max-width: 100%; height: auto; max-height: 360px; margin: 0 auto; }
+.bubble-markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 0 3px; border-radius: 4px; background: rgba(15, 45, 70, 0.07); }
+.bubble-markdown .md-heading { display: inline-block; margin-top: 2px; }
 
 .app-shell .topology-section-bar {
   align-items: center;

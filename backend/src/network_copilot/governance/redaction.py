@@ -15,6 +15,33 @@ _CREDENTIAL_LINE = re.compile(
 )
 
 
+# Prose that only mentions a credential word ("### Key concepts", "Key points")
+# is not a credential line; masking it only garbles AI answers.
+_PROSE_LINE = re.compile(
+    r"^\s*#|\bkey\s+(?:concepts?|points?|takeaways?|terms?|ideas?|features?|differences?|steps?|benefits?)\b",
+    re.I,
+)
+
+
+def _mask_credential_line(match: re.Match) -> str:
+    line = match.group(0)
+    return line if _PROSE_LINE.search(line) else "[REDACTED credential line]"
+
+
+def _redact_except_prose(text: str) -> str:
+    """Inline masking for every line except prose headings such as "Key concepts"."""
+    lines = text.split("\n")
+    kept = {index: line for index, line in enumerate(lines) if _PROSE_LINE.search(line)}
+    if not kept:
+        return redact_sensitive_data(text)
+    marker = "\x00prose{}\x00"
+    masked = redact_sensitive_data("\n".join(
+        marker.format(index) if index in kept else line for index, line in enumerate(lines)))
+    for index, line in kept.items():
+        masked = masked.replace(marker.format(index), line, 1)
+    return masked
+
+
 def may_read_commands(user) -> bool:
     """Whether a non-Admin may read the commands of changes and batches.
 
@@ -52,8 +79,8 @@ def redact_output(value, commands: bool = False):
     """
     if isinstance(value, str):
         value = _PRIVATE_KEY.sub("[REDACTED private key]", value)
-        value = _CREDENTIAL_LINE.sub("[REDACTED credential line]", value)
-        return redact_sensitive_data(value)
+        value = _CREDENTIAL_LINE.sub(_mask_credential_line, value)
+        return _redact_except_prose(value)
     if isinstance(value, dict):
         safe = redact_sensitive_data(value) if commands else redact_sensitive(value)
         return {key: redact_output(item, commands) for key, item in safe.items()}

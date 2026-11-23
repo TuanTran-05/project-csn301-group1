@@ -159,6 +159,11 @@ def _register_request_hooks(app: Flask) -> None:
     @app.before_request
     def assign_request_id():
         g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        # The VI / EN button: the browser sends it on every API call so that
+        # messages built on the server follow the page language.
+        language = (request.headers.get("X-UI-Language") or "").strip().lower()
+        if language in ("vi", "en"):
+            g.ui_language = language
         from flask_jwt_extended import verify_jwt_in_request
         if request.headers.get("Authorization"):
             verify_jwt_in_request()

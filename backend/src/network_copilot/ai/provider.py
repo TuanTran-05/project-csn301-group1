@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Protocol
 
+from .language import with_reply_language
 from ..errors import AIProviderError, AIProviderNotConfiguredError
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ class GeminiProvider:
         schema: dict | None = None,
     ) -> str:
         config = {
-            "system_instruction": system_prompt,
+            "system_instruction": with_reply_language(system_prompt),
             "max_output_tokens": DEFAULT_MAX_TOKENS,
             "temperature": DEFAULT_TEMPERATURE,
         }
@@ -238,7 +239,7 @@ class AnthropicProvider:
                 model=self.model,
                 max_tokens=DEFAULT_MAX_TOKENS,
                 temperature=DEFAULT_TEMPERATURE,
-                system=system_prompt,
+                system=with_reply_language(system_prompt),
                 messages=[
                     {"role": "user", "content": _build_prompt(user_message, context)}
                 ],

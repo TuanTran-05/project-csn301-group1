@@ -492,7 +492,7 @@
                 </figcaption>
                 <div class="ai-diagram-scroll" tabindex="0" aria-label="Sơ đồ AI gợi ý, cuộn ngang để xem đầy đủ"
                      x-html="aiSuggestion ? networkDiagram(aiSuggestion.diagram) : ''"></div>
-                <p class="hint" x-text="aiSuggestion && aiSuggestion.explanation"></p>
+                <p class="hint bubble-markdown" data-i18n-skip style="white-space: pre-wrap" x-html="aiSuggestion && window.NCMarkdown ? window.NCMarkdown(aiSuggestion.explanation) : ''"></p>
                 <div class="row-actions project-ai-actions">
                   <button type="button" class="primary-btn" x-show="canEdit && aiSuggestion && !aiSuggestion.imported"
                           :disabled="aiImportBusy" @click="importChatDiagram()">
@@ -752,7 +752,7 @@
                       </pattern>
                     </defs>
                     <rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridpat)" class="grid-bg" x-show="snap" />
-                    <text x="480" y="280" class="canvas-empty" text-anchor="middle" x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
+                    <text x="480" y="280" class="canvas-empty" text-anchor="middle" data-i18n x-show="!devices.length">Kéo một thiết bị từ cột bên trái vào đây</text>
                     <g x-effect="paintSvg($el, decorationsSvg)"></g>
                     <g x-effect="paintSvg($el, topologySvg)"></g>
                     <line x-ref="linkPreview" class="link-preview" style="display:none" />
@@ -1438,6 +1438,7 @@
   <script src="{{ url_for('static', filename='js/i18n-dict.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/i18n.js') }}" defer></script>
   <script defer src="{{ url_for('static', filename='js/network_diagram.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/markdown_lite.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/canvas.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/design_aids.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/projects.js') }}"></script>
