@@ -11,7 +11,7 @@ window.NCDiagram = Object.freeze({
       router: "Router",
       switch: "Switch",
       server: "Server",
-      host: "Thiết bị đầu cuối",
+      host: (window.netaiI18n && window.netaiI18n.lang === "en") ? "End device" : "Thiết bị đầu cuối",
     };
     const nodes = diagram.nodes.slice(0, 16).filter((node) => node && kinds.includes(node.kind));
     const rows = kinds.map((kind) => nodes.filter((node) => node.kind === kind)).filter((row) => row.length);

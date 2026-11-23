@@ -140,7 +140,8 @@
                 <span x-text="message.username || 'AI'"></span>
                 <span x-text="new Date(message.created_at).toLocaleTimeString('vi-VN')"></span>
               </div>
-              <div class="bubble-content" x-text="message.content"></div>
+              <div class="bubble-content" x-show="message.role !== 'assistant'" x-text="message.content"></div>
+              <div class="bubble-content bubble-markdown" x-show="message.role === 'assistant'" x-html="window.NCMarkdown ? window.NCMarkdown(message.content) : ''"></div>
 
               <template x-if="message.role === 'assistant' && message.payload && message.payload.diagram">
                 <figure class="ai-diagram-card">
@@ -787,6 +788,7 @@
   <script src="{{ url_for('static', filename='js/i18n-dict.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/i18n.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/network_diagram.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/markdown_lite.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/history-toolbar.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/history-panel.js') }}" defer></script>

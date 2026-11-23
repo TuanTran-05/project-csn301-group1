@@ -64,9 +64,14 @@
     var i = 0;
     return template.replace(/\{n\}|\{ip\}|\{s\}/g, function () { return values[i++]; });
   }
-  var patterns = dict.patterns.map(function (pair) {
-    return { vi: compile(pair[0]), en: compile(pair[1]), forms: pair.map(compile) };
-  });
+  // The most specific pattern must win: "Đã thêm {s}." would otherwise catch
+  // "Đã thêm {n} thiết bị và {n} đường nối…" first and translate only its
+  // first two words. More fixed (non-hole) text means more specific.
+  function fixedLength(template) { return norm(template).replace(/\{n\}|\{ip\}|\{s\}/g, "").length; }
+  var patterns = dict.patterns.map(function (pair, index) {
+    return { vi: compile(pair[0]), en: compile(pair[1]), forms: pair.map(compile),
+      weight: fixedLength(pair[0]), index: index };
+  }).sort(function (a, b) { return (b.weight - a.weight) || (a.index - b.index); });
 
   function translate(text, target) {
     var core = norm(text);
@@ -111,8 +116,22 @@
     ".bubble-content,.ai-diagram-scroll,.account-name,.lang-switch";
   var ATTRS = ["placeholder", "title", "aria-label", "alt"];
 
+  // An element marked data-i18n is interface text even inside a skipped
+  // container (the "drag a device here" hint lives inside the canvas <svg>).
   function skipped(el) {
+    if (el && el.closest && el.closest("[data-i18n]")) return false;
     return !el || (el.closest && el.closest(SKIP));
+  }
+
+  function translateMarked(root) {
+    if (!root.querySelectorAll) return;
+    var marked = root.querySelectorAll("[data-i18n]");
+    for (var i = 0; i < marked.length; i += 1) {
+      var children = marked[i].childNodes;
+      for (var j = 0; j < children.length; j += 1) {
+        if (children[j].nodeType === 3) translateTextNode(children[j]);
+      }
+    }
   }
 
   function translateTextNode(node) {
@@ -172,6 +191,7 @@
       else translateAttrs(node);
       node = walker.nextNode();
     }
+    translateMarked(root);
   }
 
   function translateTitle() {
@@ -220,6 +240,22 @@
   window.confirm = function (message) { return nativeConfirm(translateMessage(message, lang)); };
   window.alert = function (message) { return nativeAlert(translateMessage(message, lang)); };
   window.prompt = function (message, value) { return nativePrompt(translateMessage(message, lang), value); };
+
+  // ---- tell the server which language the page shows ----------------------------
+  // Messages built on the server (and the AI's answers) follow this header.
+  var nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+  if (nativeFetch) {
+    window.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      var sameOriginApi = /^\/api\//.test(url) || url.indexOf(window.location.origin + "/api/") === 0;
+      if (!sameOriginApi || typeof input !== "string") return nativeFetch(input, init);
+      var options = Object.assign({}, init || {});
+      var headers = new Headers(options.headers || {});
+      if (!headers.has("X-UI-Language")) headers.set("X-UI-Language", lang);
+      options.headers = headers;
+      return nativeFetch(input, options);
+    };
+  }
 
   // ---- the VI / EN buttons --------------------------------------------------------
   function syncSwitches() {

@@ -6,6 +6,7 @@ import re
 from flask import current_app
 from pydantic import ValidationError as PydanticValidationError
 
+from ..ai.language import ui_text
 from ..ai.schemas import NetworkDiagram
 from ..chat.model import ChatMessage, ChatSession
 from ..devices import service as device_service
@@ -31,7 +32,9 @@ _IMPORT_MARKER_KEY = "_topology_imported_project_ids"
 
 
 def _hostname(label: str, fallback: str, used: set[str]) -> str:
-    base = re.sub(r"[^A-Z0-9]+", "-", label.upper()).strip("-") or fallback
+    # "R1 (Router)" is a label for the picture; the device itself is R1.
+    name = re.sub(r"\s*\([^)]*\)", " ", label).strip() or label
+    base = re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-") or fallback
     base = base[:64].rstrip("-") or fallback
     candidate = base
     suffix = 2
@@ -67,11 +70,11 @@ def _device_payload(project, message_id: int, node, hostname: str, position, add
 def _link_description(link) -> str | None:
     parts = [link.label.strip()] if link.label.strip() else []
     if link.network:
-        parts.append(f"Mạng: {link.network}")
+        parts.append(f"{ui_text('Mạng', 'Network')}: {link.network}")
     if link.ip_source:
-        parts.append(f"IP nguồn: {link.ip_source}")
+        parts.append(f"{ui_text('IP nguồn', 'Source IP')}: {link.ip_source}")
     if link.ip_target:
-        parts.append(f"IP đích: {link.ip_target}")
+        parts.append(f"{ui_text('IP đích', 'Target IP')}: {link.ip_target}")
     return " · ".join(parts)[:255] or None
 
 
