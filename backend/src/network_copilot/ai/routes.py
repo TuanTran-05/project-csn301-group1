@@ -227,7 +227,10 @@ def chat():
             field = ".".join(str(part) for part in error["loc"]) or "_root"
             details.setdefault(field, []).append(error["msg"])
         if any(error["type"] == "string_too_long" for error in exc.errors()):
+            english = (request.get_json(silent=True) or {}).get("language") == "en"
             raise ValidationError(
+                f"Message too long: at most {MAX_CHAT_MESSAGE_LENGTH} characters. "
+                "Split the request into several steps." if english else
                 f"Tin nhắn quá dài: tối đa {MAX_CHAT_MESSAGE_LENGTH} ký tự. "
                 "Hãy chia yêu cầu thành nhiều bước.",
                 details,

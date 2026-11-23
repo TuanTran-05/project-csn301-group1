@@ -186,3 +186,48 @@ def test_a_failed_design_answers_in_english_on_the_english_page(client, app, adm
         "message": "Run OSPF on R99", "session_id": session["id"], "mode": "design", "language": "en"})
     assert response.status_code == 422
     assert response.get_json()["message"].startswith("The AI could not produce a valid design")
+
+
+def test_the_demo_flow_designs_ports_gateways_and_the_trunk(client, app, admin_headers, make_device):
+    """Small lab: design PC1/PC2 into VLANs with gateways on EIU-R1, apply it, generate the config."""
+    r1, s1 = _small_lab(make_device)
+    proposal = {
+        "explanation": "PC1 vào VLAN 10, PC2 vào VLAN 20, gateway trên EIU-R1.",
+        "addressing_pool": None,
+        "design": {
+            **EMPTY,
+            "vlans": [{"vlan_id": 10, "name": "VLAN_10"}, {"vlan_id": 20, "name": "VLAN_20"}],
+            "access_ports": [
+                {"hostname": "EIU-S1", "interface": "GigabitEthernet0/1", "vlan_id": 10},
+                {"hostname": "EIU-S1", "interface": "GigabitEthernet0/2", "vlan_id": 20},
+            ],
+            "subinterfaces": [
+                {"hostname": "EIU-R1", "interface": "GigabitEthernet0/0", "vlan_id": 10,
+                 "ip": "172.20.5.1", "prefix_length": 26},
+                {"hostname": "EIU-R1", "interface": "GigabitEthernet0/0", "vlan_id": 20,
+                 "ip": "172.20.5.65", "prefix_length": 26},
+            ],
+        },
+    }
+    body = _ask(client, app, admin_headers, proposal, message="Put PC1 in VLAN 10 and PC2 in VLAN 20")[0]
+    assert body.status_code == 200, body.get_json()
+    applied = client.post(f"/api/chat/messages/{body.get_json()['chat_message_id']}/apply-design",
+                          headers=admin_headers)
+    assert applied.status_code == 200, applied.get_json()
+
+    plan = client.post(f"/api/projects/{r1.project_id}/topology/config-plan", headers=admin_headers, json={})
+    assert plan.status_code == 200, plan.get_json()
+    commands = {d["hostname"]: d["commands"] for d in plan.get_json()["devices"]}
+    s1_cmds = commands["EIU-S1"]
+    assert "switchport access vlan 10" in s1_cmds and "switchport access vlan 20" in s1_cmds
+    assert s1_cmds[s1_cmds.index("switchport mode trunk") - 1] == "interface GigabitEthernet0/0"
+    r1_cmds = commands["EIU-R1"]
+    assert "interface GigabitEthernet0/0.10" in r1_cmds and "ip address 172.20.5.65 255.255.255.192" in r1_cmds
+    preview = client.post(f"/api/projects/{r1.project_id}/topology/config-preview", headers=admin_headers, json={})
+    assert preview.status_code in (200, 201), preview.get_json()
+    assert len(preview.get_json()["batch"]["changes"]) == len(commands)
+    s1_change = next(c for c in preview.get_json()["batch"]["changes"]
+                     if "switchport access vlan 10" in c["commands"])
+    # the PNETLab switch gets dot1q before trunk mode at preview time
+    assert "switchport trunk encapsulation dot1q" not in s1_change["commands"] or \
+        s1_change["commands"].index("switchport trunk encapsulation dot1q") < s1_change["commands"].index("switchport mode trunk")

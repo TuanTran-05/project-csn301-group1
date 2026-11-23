@@ -64,7 +64,7 @@
             <strong x-text="currentProject ? currentProject.name : 'Project mặc định'"></strong>
             <small
               x-show="Number(currentProject && currentProject.device_count) > 0"
-              x-text="currentProject.device_count + ' thiết bị trong project'"></small>
+              x-text="(currentProject ? currentProject.device_count : 0) + ' thiết bị trong project'"></small>
             <small
               x-show="Number(currentProject && currentProject.device_count) === 0"
             >Chưa có thiết bị. Thêm thiết bị ›</small>

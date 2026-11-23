@@ -197,6 +197,47 @@ def _with_trunk_encapsulation(commands: list[str]) -> list[str]:
     return result
 
 
+_PHYSICAL_INTERFACE = re.compile(
+    r"^interface\s+(?:gi(?:gabitethernet)?|fa(?:stethernet)?|te(?:ngigabitethernet)?|"
+    r"eth(?:ernet)?|e)\s*\d", re.I,
+)
+_IP_ADDRESS = re.compile(r"^ip\s+address\s+\S+\s+\S+", re.I)
+_NO_SWITCHPORT = re.compile(r"^no\s+switchport$", re.I)
+_DEFAULT_GATEWAY = re.compile(r"^ip\s+default-gateway\s+(\S+)$", re.I)
+_DEFAULT_ROUTE = re.compile(r"^ip\s+route\s+0\.0\.0\.0\s+0\.0\.0\.0\s+", re.I)
+
+
+def _with_switch_host_addressing(device: Device, commands: list[str]) -> list[str]:
+    """Let a layer-2 switch take an address on a physical port and a gateway.
+
+    CSN301 labs use IOSv-L2 switches in place of PCs. On those images a
+    physical port is a switchport: "ip address" there is rejected until
+    "no switchport" makes it routed. They also run with "ip routing" on, so
+    "ip default-gateway" is ignored and the host never reaches its gateway;
+    a default route does the same job and is harmless where routing is off.
+    """
+    result: list[str] = []
+    physical = routed = False
+    has_default_route = any(_DEFAULT_ROUTE.match(c.strip()) for c in commands)
+    for command in commands:
+        text = command.strip()
+        if _INTERFACE_BLOCK.match(text):
+            physical, routed = bool(_PHYSICAL_INTERFACE.match(text)), False
+        elif text.lower() in ("exit", "end"):
+            physical = routed = False
+        if physical and _NO_SWITCHPORT.match(text):
+            routed = True
+        elif physical and not routed and _IP_ADDRESS.match(text):
+            result.append("no switchport")
+            routed = True
+        result.append(command)
+        gateway = _DEFAULT_GATEWAY.match(text)
+        if gateway and not has_default_route:
+            result.append(f"ip route 0.0.0.0 0.0.0.0 {gateway.group(1)}")
+            has_default_route = True
+    return result
+
+
 _IDENTITY_CHANGE = re.compile(r"^(?:hostname|ip\s+domain[-\s]name)\s+\S+", re.I)
 _SSH_KEYPAIR_PINNED = re.compile(r"(?m)^ip ssh rsa keypair-name\s+\S+")
 
@@ -435,6 +476,8 @@ def prepare_change(
         check_management_interface(device, body)
     if device.device_type == "cisco_ios" and device.environment == "pnetlab" and execution_mode == "config":
         body = _with_trunk_encapsulation(body)
+        if device.kind == "switch":
+            body = _with_switch_host_addressing(device, body)
         # PNETLab nodes got their SSH key from the console bootstrap, which
         # before SSH_KEY_LABEL generated it unlabelled.
         body = _with_pinned_ssh_key(device, body)

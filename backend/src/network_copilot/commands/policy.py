@@ -138,6 +138,14 @@ def _vrf_command(pattern: str) -> Callable[[str], bool]:
     return matcher
 
 
+def _running_config_interface(command: str) -> bool:
+    from ..parsers.switchports import normalize_interface_name
+    match = re.fullmatch(r"show running-config interface (\S+)", command, re.I)
+    if not match: return False
+    try: normalize_interface_name(match.group(1)); return True
+    except ValueError: return False
+
+
 def _switchport_detail(command: str) -> bool:
     from ..parsers.switchports import normalize_interface_name
     match = re.fullmatch(r"show interfaces (\S+) switchport", command, re.I)
@@ -185,6 +193,11 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         "show interfaces status",
         _exact("show interfaces status"),
         description="Switchport status",
+    ),
+    CommandRule(
+        "show interfaces description",
+        _exact("show interfaces description"),
+        description="Interface descriptions and line state",
     ),
     CommandRule("show interfaces <interface> switchport", _switchport_detail, SWITCHING_ROLES, "Switchport detail"),
     CommandRule("show interfaces trunk", _exact("show interfaces trunk"), SWITCHING_ROLES, "Trunk state"),
@@ -238,6 +251,11 @@ READ_ONLY_RULES: tuple[CommandRule, ...] = (
         "show running-config",
         _exact("show running-config"),
         description="Running configuration, used for pre-change backups",
+    ),
+    CommandRule(
+        "show running-config interface <interface>",
+        _running_config_interface,
+        description="One interface of the running configuration (typed by the user, never sent to the model)",
     ),
     CommandRule(
         "show version", _exact("show version"), description="Platform and image details"
@@ -377,7 +395,10 @@ class CommandPolicy:
 
 default_policy = CommandPolicy()
 
-AI_EXCLUDED_RULE_NAMES = frozenset({"show running-config", "show startup-config", "show config running"})
+AI_EXCLUDED_RULE_NAMES = frozenset({
+    "show running-config", "show running-config interface <interface>",
+    "show startup-config", "show config running",
+})
 AI_SAFE_READ_ONLY_RULES = tuple(
     rule for rule in READ_ONLY_RULES if rule.name not in AI_EXCLUDED_RULE_NAMES
 )
