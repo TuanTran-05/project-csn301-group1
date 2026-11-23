@@ -2,7 +2,7 @@ import re
 
 from ..audit.service import redact_sensitive
 from ..extensions import db
-from ..history_extension.protection import redact_sensitive_data
+from ..history_extension.protection import REDACTED, redact_sensitive_data
 
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----", re.S
@@ -18,20 +18,27 @@ _CREDENTIAL_LINE = re.compile(
 # Prose that only mentions a credential word ("### Key concepts", "Key points")
 # is not a credential line; masking it only garbles AI answers.
 _PROSE_LINE = re.compile(
-    r"^\s*#|\bkey\s+(?:concepts?|points?|takeaways?|terms?|ideas?|features?|differences?|steps?|benefits?)\b",
+    r"^\s*#|\*\*|__|\bkey\s+(?:concepts?|points?|takeaways?|terms?|ideas?|features?|differences?|steps?|benefits?)\b",
     re.I,
 )
+# "Key Networking Concepts": a capitalised English word after "key" is prose;
+# a secret such as "key Cisco123" has digits and is not.
+_TITLE_AFTER_KEY = re.compile(r"\b[Kk]ey\s+[A-Z][a-z]+(?![\w$])")
+
+
+def _is_prose(line: str) -> bool:
+    return bool(_PROSE_LINE.search(line) or _TITLE_AFTER_KEY.search(line))
 
 
 def _mask_credential_line(match: re.Match) -> str:
     line = match.group(0)
-    return line if _PROSE_LINE.search(line) else "[REDACTED credential line]"
+    return line if _is_prose(line) else "[REDACTED credential line]"
 
 
 def _redact_except_prose(text: str) -> str:
     """Inline masking for every line except prose headings such as "Key concepts"."""
     lines = text.split("\n")
-    kept = {index: line for index, line in enumerate(lines) if _PROSE_LINE.search(line)}
+    kept = {index: line for index, line in enumerate(lines) if _is_prose(line)}
     if not kept:
         return redact_sensitive_data(text)
     marker = "\x00prose{}\x00"
@@ -81,9 +88,29 @@ def redact_output(value, commands: bool = False):
         value = _PRIVATE_KEY.sub("[REDACTED private key]", value)
         value = _CREDENTIAL_LINE.sub(_mask_credential_line, value)
         return _redact_except_prose(value)
-    if isinstance(value, dict):
+    if isinstance(value, (dict, list)):
         safe = redact_sensitive_data(value) if commands else redact_sensitive(value)
-        return {key: redact_output(item, commands) for key, item in safe.items()}
-    if isinstance(value, list):
-        return [redact_output(item, commands) for item in value]
+        return _remask(value, safe, commands)
     return value
+
+
+def _remask(original, masked, commands):
+    """Walk the structure-level mask and redo text leaves with the string rules.
+
+    The structure-level pass masks inline "key ..." matches in every string,
+    including a heading such as "### Key concepts" in an AI answer. A leaf
+    masked whole (a credential field, a hidden command list) stays as it is;
+    any other text leaf is masked again from its original by redact_output,
+    which keeps prose headings and still masks credential lines.
+    """
+    if isinstance(masked, dict):
+        source = original if isinstance(original, dict) else {}
+        return {key: _remask(source.get(key), item, commands) for key, item in masked.items()}
+    if isinstance(masked, list):
+        source = original if isinstance(original, list) and len(original) == len(masked) else [None] * len(masked)
+        return [_remask(src, item, commands) for src, item in zip(source, masked)]
+    if isinstance(masked, str):
+        if masked == REDACTED or not isinstance(original, str):
+            return redact_output(masked) if masked != REDACTED else masked
+        return redact_output(original)
+    return masked
