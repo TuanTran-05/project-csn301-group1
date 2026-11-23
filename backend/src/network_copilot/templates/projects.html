@@ -571,7 +571,7 @@
                             <td x-text="node.hostname"></td>
                             <td><span class="pill" x-text="node.template"></span></td>
                             <td x-text="node.ethernet"></td>
-                            <td x-text="node.management_ip ? node.management_ip + (node.ip_proposed ? ' (tự cấp)' : '') : '—'"></td>
+                            <td x-text="node.management_ip ? node.management_ip + (node.ip_proposed ? (window.netaiI18n && window.netaiI18n.lang === 'en' ? ' (auto)' : ' (tự cấp)') : '') : '—'"></td>
                             <td x-text="pnetExportManagementPort(node)"></td>
                             <td x-text="pnetExportNodeNote(node)"></td>
                           </tr>

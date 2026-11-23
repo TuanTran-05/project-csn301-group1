@@ -92,3 +92,24 @@ def test_real_credentials_are_still_masked():
     mixed = "### Key Concepts:\npassword cisco123"
     masked = redact_output(mixed)
     assert "### Key Concepts:" in masked and "cisco123" not in masked
+
+
+def test_prose_heading_survives_inside_api_payloads():
+    payload = {"items": [{"role": "assistant",
+                          "content": "Intro.\n\n### Key Concepts:\n- R1 is the gateway.\npassword cisco123",
+                          "password": "hunter2"}]}
+    for commands in (True, False):
+        item = redact_output(payload, commands=commands)["items"][0]
+        assert "### Key Concepts:" in item["content"]
+        assert "cisco123" not in item["content"]
+        assert item["password"] != "hunter2"
+
+
+def test_other_prose_headings_with_key_are_kept():
+    for heading in ("**Key Networking Concepts:**", "Key Design Choices", "**Key Concepts**:"):
+        content = f"Intro.\n{heading}\n- R1 is the gateway."
+        out = redact_output({"items": [{"content": content}]}, commands=True)["items"][0]["content"]
+        assert heading in out
+    for secret in ("crypto isakmp key Cisco123 address 1.1.1.1", "key-string 7 0822455D0A16", "key 7 Secret1"):
+        masked = redact_output(secret)
+        assert "Cisco123" not in masked and "0822455D0A16" not in masked and "Secret1" not in masked
